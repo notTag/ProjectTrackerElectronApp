@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+.DS_Store
+assets/app-icon-normalized.png
+assets/app-icon.iconset/
+assets/app-icon.icns
