@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
+import ThemePicker from '@/components/ThemePicker.vue'
 import { useProjectsStore } from '@/stores/projects'
 import type { ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
@@ -296,7 +298,7 @@ const renderMarkdown = (markdown: string | null) => {
 
   if (listOpen) html.push('</ul>')
   if (inCode) html.push('</code></pre>')
-  return html.join('')
+  return DOMPurify.sanitize(html.join(''))
 }
 </script>
 
@@ -308,6 +310,7 @@ const renderMarkdown = (markdown: string | null) => {
         <h1>Local projects</h1>
       </div>
       <div class="topbar-actions">
+        <ThemePicker />
         <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
         <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
         <button :disabled="store.scanning || store.state.scanDirectories.length === 0" @click="rescan">

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +22,19 @@ const normalizePath = (value: string) => path.resolve(value).split(path.sep).joi
 const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
+const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
+
+const isInsideAny = (target: string, parents: string[]) =>
+  parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
+
+const assertScannedProjectPath = (projectPath: string) => {
+  const normalized = normalizePath(projectPath)
+  const scanDirectories = stateRepository.getState().scanDirectories.map(normalizePath)
+  if (!isInsideAny(normalized, scanDirectories)) {
+    throw new Error('Project path is outside configured scan directories.')
+  }
+  return normalized
+}
 
 const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) => {
   const senderUrl = event.senderFrame?.url
@@ -61,14 +74,28 @@ const createWindow = async () => {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
+  })
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowedDevNavigation = !!devServerUrl && url.startsWith(allowedDevOrigin)
+    const allowedFileNavigation = !devServerUrl && url.startsWith('file://')
+    if (allowedDevNavigation || allowedFileNavigation) return
+
+    event.preventDefault()
+    if (isHttpUrl(url)) void shell.openExternal(url)
   })
 
   if (devServerUrl) {
     await mainWindow.loadURL(devServerUrl)
   } else {
-    await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    await mainWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'))
   }
 }
 
@@ -181,7 +208,7 @@ const registerIpc = () => {
   ipcMain.handle('project:open-shell', async (event, projectPath: unknown) => {
     assertTrustedSender(event)
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
-    const normalized = normalizePath(projectPath)
+    const normalized = assertScannedProjectPath(projectPath)
 
     try {
       if (process.platform === 'darwin') {
@@ -205,7 +232,7 @@ const registerIpc = () => {
   ipcMain.handle('project:read-readme', (event, projectPath: unknown) => {
     assertTrustedSender(event)
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
-    const normalized = normalizePath(projectPath)
+    const normalized = assertScannedProjectPath(projectPath)
     if (!statSync(normalized).isDirectory()) throw new Error('Project path is not a directory.')
 
     const readmeName = readdirSync(normalized).find((entry) => /^readme(\.|$)/i.test(entry))

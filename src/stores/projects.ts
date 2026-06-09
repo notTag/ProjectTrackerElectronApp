@@ -21,6 +21,7 @@ interface ProjectsStoreState {
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
+let saveQueue = Promise.resolve()
 
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
@@ -54,11 +55,17 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
-    async save(nextState?: ProjectTrackerState) {
+    async save(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
       this.saving = true
       this.error = null
       try {
-        this.state = await projectTrackerApi.saveProjectState(nextState ?? this.state)
+        saveQueue = saveQueue
+          .catch(() => undefined)
+          .then(async () => {
+            const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
+            this.state = await projectTrackerApi.saveProjectState(candidate)
+          })
+        await saveQueue
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
@@ -76,11 +83,10 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async addScanDirectory(directory: string) {
-      const next = {
-        ...this.state,
-        scanDirectories: unique([...this.state.scanDirectories, directory])
-      }
-      await this.save(next)
+      await this.save((currentState) => ({
+        ...currentState,
+        scanDirectories: unique([...currentState.scanDirectories, directory])
+      }))
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
@@ -99,12 +105,11 @@ export const useProjectsStore = defineStore('projects', {
           this.error = `Scan failed for ${result.failures[0].path}: ${result.failures[0].message}`
           return false
         }
-        const next = mergeScannedProjects(
-          { ...this.state, scanDirectories },
+        await this.save((currentState) => mergeScannedProjects(
+          { ...currentState, scanDirectories },
           result.snapshot.projects,
           result.failures
-        )
-        await this.save(next)
+        ))
         this.notice =
           result.failures.length > 0
             ? `Scan finished with ${result.failures.length} issue${result.failures.length === 1 ? '' : 's'}.`
@@ -119,16 +124,15 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {
-      const next = {
-        ...this.state,
+      await this.save((currentState) => ({
+        ...currentState,
         snapshot: {
-          ...this.state.snapshot,
-          projects: this.state.snapshot.projects.map((project) =>
+          ...currentState.snapshot,
+          projects: currentState.snapshot.projects.map((project) =>
             project.path === path ? { ...project, ...patch } : project
           )
         }
-      }
-      await this.save(next)
+      }))
     },
 
     async setPriority(path: string, priority: ProjectPriority) {
@@ -136,21 +140,22 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async setStatus(path: string, status: ProjectStatus) {
-      const hiddenPaths =
-        status === 'hidden'
-          ? unique([...this.state.hiddenPaths, path])
-          : this.state.hiddenPaths.filter((entry) => entry !== path)
-      const next = {
-        ...this.state,
-        hiddenPaths,
-        snapshot: {
-          ...this.state.snapshot,
-          projects: this.state.snapshot.projects.map((project) =>
-            project.path === path ? { ...project, status } : project
-          )
+      await this.save((currentState) => {
+        const hiddenPaths =
+          status === 'hidden'
+            ? unique([...currentState.hiddenPaths, path])
+            : currentState.hiddenPaths.filter((entry) => entry !== path)
+        return {
+          ...currentState,
+          hiddenPaths,
+          snapshot: {
+            ...currentState.snapshot,
+            projects: currentState.snapshot.projects.map((project) =>
+              project.path === path ? { ...project, status } : project
+            )
+          }
         }
-      }
-      await this.save(next)
+      })
     },
 
     async setNotes(path: string, notes: string) {
@@ -158,29 +163,32 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async toggleHidden(path: string) {
-      const project = this.state.snapshot.projects.find((entry) => entry.path === path)
-      const hiddenPaths = this.state.hiddenPaths.includes(path)
-        ? this.state.hiddenPaths.filter((entry) => entry !== path)
-        : [...this.state.hiddenPaths, path]
-      const status: ProjectStatus = project?.status === 'hidden' ? 'unknown' : 'hidden'
-      const next = {
-        ...this.state,
-        hiddenPaths,
-        snapshot: {
-          ...this.state.snapshot,
-          projects: this.state.snapshot.projects.map((entry) =>
-            entry.path === path ? { ...entry, status } : entry
-          )
+      await this.save((currentState) => {
+        const project = currentState.snapshot.projects.find((entry) => entry.path === path)
+        const hiddenPaths = currentState.hiddenPaths.includes(path)
+          ? currentState.hiddenPaths.filter((entry) => entry !== path)
+          : [...currentState.hiddenPaths, path]
+        const status: ProjectStatus = project?.status === 'hidden' ? 'unknown' : 'hidden'
+        return {
+          ...currentState,
+          hiddenPaths,
+          snapshot: {
+            ...currentState.snapshot,
+            projects: currentState.snapshot.projects.map((entry) =>
+              entry.path === path ? { ...entry, status } : entry
+            )
+          }
         }
-      }
-      await this.save(next)
+      })
     },
 
     async toggleThirdParty(path: string) {
-      const thirdPartyPaths = this.state.thirdPartyPaths.includes(path)
-        ? this.state.thirdPartyPaths.filter((entry) => entry !== path)
-        : [...this.state.thirdPartyPaths, path]
-      await this.save({ ...this.state, thirdPartyPaths })
+      await this.save((currentState) => {
+        const thirdPartyPaths = currentState.thirdPartyPaths.includes(path)
+          ? currentState.thirdPartyPaths.filter((entry) => entry !== path)
+          : [...currentState.thirdPartyPaths, path]
+        return { ...currentState, thirdPartyPaths }
+      })
     },
 
     async openShell(path: string) {
