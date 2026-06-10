@@ -2,9 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
 
-const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const invokePlain = async <T>(channel: string, payload?: unknown): Promise<T> => {
+const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
   const result =
     payload === undefined
       ? await ipcRenderer.invoke(channel)
