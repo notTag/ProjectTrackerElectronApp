@@ -18,6 +18,11 @@ let stateRepository: StateRepository
 
 app.setName(APP_NAME)
 
+// Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
+// rasterization (correct DOM, scrambled on-screen text). Software compositing
+// renders correctly, so disable hardware acceleration. Must run before app ready.
+app.disableHardwareAcceleration()
+
 const normalizePath = (value: string) => path.resolve(value).split(path.sep).join(path.posix.sep)
 const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
@@ -71,7 +76,7 @@ const createWindow = async () => {
     icon: getIconPath(),
     backgroundColor: '#f7f7f2',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true

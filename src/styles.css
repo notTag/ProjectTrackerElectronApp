@@ -98,16 +98,14 @@ button.secondary {
 }
 
 .topbar-actions {
-  gap: 14px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .topbar-actions button {
   min-width: 58px;
   padding: 0 14px;
-}
-
-.topbar-actions button + button {
-  margin-left: 2px;
 }
 
 .topbar h1,
