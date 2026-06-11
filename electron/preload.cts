@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
-  openProjectShell: (projectPath: string) => invokePlain('project:open-shell', projectPath),
+  openProjectIn: (projectPath: string, targetId: string) =>
+    invokePlain('project:open-in', { projectPath, targetId }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath)
 })

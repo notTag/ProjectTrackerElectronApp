@@ -11,7 +11,10 @@ interface ProjectTrackerElectronApi {
     thirdPartyPaths: string[]
   ): Promise<ScanResult>
   pickScanDirectory(): Promise<string | null>
-  openProjectShell(path: string): Promise<{ ok: true; fallbackCommand?: string }>
+  openProjectIn(
+    path: string,
+    targetId: string
+  ): Promise<{ ok: true; appLabel: string; fallbackCommand?: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
 }
 

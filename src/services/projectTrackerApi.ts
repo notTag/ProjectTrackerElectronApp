@@ -55,8 +55,8 @@ export const projectTrackerApi = {
     return requireElectron().pickScanDirectory()
   },
 
-  openProjectShell(path: string) {
-    return requireElectron().openProjectShell(path)
+  openProjectIn(path: string, targetId: string) {
+    return requireElectron().openProjectIn(path, targetId)
   },
 
   readProjectReadme(path: string) {
