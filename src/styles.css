@@ -465,7 +465,7 @@ textarea {
 .path-row {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 /* Unobtrusive remove affordance: muted by default; on hover it shows a square
