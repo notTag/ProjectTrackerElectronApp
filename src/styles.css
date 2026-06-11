@@ -73,8 +73,41 @@ button.secondary {
   background: var(--color-surface-raised);
 }
 
+button,
+.sort-control,
+.toolbar input[type="search"] {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease;
+}
+
+/* Hover affordances for controls that previously had none. Secondary buttons
+   and the metric filter cards render with border: 0, so they use a hover wash
+   plus an inset accent ring; bordered controls (sort, search) get an accent
+   border like .filter-trigger; the primary accent button (Scan) just darkens. */
+button.secondary:not(:disabled):hover,
+.metric:not(.selected):hover {
+  background: var(--color-hover);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.topbar-actions button:not(.secondary):not(:disabled):hover {
+  filter: brightness(0.95);
+}
+
+.sort-control:hover,
+.toolbar input[type="search"]:hover {
+  border-color: var(--color-accent);
+  background: var(--color-hover);
+}
+
 .app-shell {
-  width: min(1180px, calc(100vw - 40px));
+  /* No fixed max-width: the shell tracks the viewport so the project grid can
+     add columns indefinitely on ultrawide displays. The auto-fill grid keeps
+     each card within a sane width range, so columns grow but cards don't. */
+  width: calc(100vw - 40px);
   margin: 0 auto;
   padding: 32px 0 56px;
 }
@@ -129,7 +162,7 @@ button.secondary {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   margin: 18px 0;
 }
 
@@ -438,7 +471,11 @@ code {
 
 .project-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Column count follows the available width: cards stay >= 460px wide, so the
+     grid yields 1 column at the 960px min window and adds columns as it grows
+     (~2 at the 1280 default, 3+ on wide displays). min(100%, ...) keeps a single
+     column without horizontal overflow on very narrow viewports. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
   gap: 14px;
 }
 
@@ -457,9 +494,7 @@ code {
 .project-card.expanded {
   cursor: default;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12);
-}
-
-.project-card.expanded-left {
+  /* Expanded card spans the whole row whatever the current column count. */
   grid-column: 1 / -1;
 }
 
