@@ -110,7 +110,7 @@ Important current pieces:
   - `saveProjectState(state)`
   - `scanProjectDirectories(scanDirectories, hiddenPaths, thirdPartyPaths)`
   - `pickScanDirectory()`
-  - `openProjectShell(path)`
+  - `openProjectIn(path, targetId)` — opens the project folder in a user-selected app (terminal or editor) from an allowlist
 
 ### Packaging
 

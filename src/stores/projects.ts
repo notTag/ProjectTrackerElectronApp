@@ -191,12 +191,12 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openShell(path: string) {
+    async openIn(path: string, targetId: string) {
       try {
-        const result = await projectTrackerApi.openProjectShell(path)
+        const result = await projectTrackerApi.openProjectIn(path, targetId)
         this.notice = result.fallbackCommand
-          ? `Terminal could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
-          : 'Opening Terminal.'
+          ? `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
+          : `Opening in ${result.appLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       }

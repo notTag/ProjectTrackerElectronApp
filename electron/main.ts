@@ -1,11 +1,12 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
+import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -25,7 +26,14 @@ app.disableHardwareAcceleration()
 
 const normalizePath = (value: string) => path.resolve(value).split(path.sep).join(path.posix.sep)
 const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+// Hand a folder to a macOS app via Launch Services. Resolves on a successful
+// hand-off; rejects (non-zero exit) when the app isn't installed, which the
+// caller turns into the clipboard fallback. Arg-array exec — no shell, so the
+// path can't be interpreted as a command.
+const openWithApp = (appName: string, target: string) =>
+  new Promise<void>((resolve, reject) => {
+    execFile('open', ['-a', appName, target], (error) => (error ? reject(error) : resolve()))
+  })
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
 
@@ -210,27 +218,27 @@ const registerIpc = () => {
     return normalizePath(result.filePaths[0])
   })
 
-  ipcMain.handle('project:open-shell', async (event, projectPath: unknown) => {
+  ipcMain.handle('project:open-in', async (event, payload: unknown) => {
     assertTrustedSender(event)
+    const { projectPath, targetId } = (payload ?? {}) as { projectPath?: unknown; targetId?: unknown }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+    if (typeof targetId !== 'string') throw new Error('Invalid open-in target.')
+    // Resolve against the shared allowlist so only known apps are ever launched.
+    const target = findOpenInTarget(targetId)
+    if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
 
     try {
       if (process.platform === 'darwin') {
-        const shellPath = process.env.SHELL || '/bin/zsh'
-        const command = `cd ${shellQuote(normalized)} && exec ${shellQuote(shellPath)} -l`
-        spawn('osascript', ['-e', `tell application "Terminal" to do script ${JSON.stringify(command)}`], {
-          detached: true,
-          stdio: 'ignore'
-        }).unref()
+        await openWithApp(target.appName, normalized)
       } else {
         await shell.openPath(normalized)
       }
-      return { ok: true }
+      return { ok: true, appLabel: target.label }
     } catch {
       const fallbackCommand = `cd ${JSON.stringify(normalized)}`
       clipboard.writeText(fallbackCommand)
-      return { ok: true, fallbackCommand }
+      return { ok: true, appLabel: target.label, fallbackCommand }
     }
   })
 
