@@ -338,7 +338,18 @@ const renderMarkdown = (markdown: string | null) => {
     <section v-if="showDirs" class="scan-paths">
       <h2>Scan directories</h2>
       <div v-if="store.state.scanDirectories.length" class="path-list">
-        <code v-for="directory in store.state.scanDirectories" :key="directory">{{ directory }}</code>
+        <span v-for="directory in store.state.scanDirectories" :key="directory" class="path-row">
+          <button
+            type="button"
+            class="path-remove"
+            :title="`Remove ${directory}`"
+            :aria-label="`Remove ${directory}`"
+            @click="store.removeScanDirectory(directory)"
+          >
+            ×
+          </button>
+          <code>{{ directory }}</code>
+        </span>
       </div>
       <p v-else>No scan directories selected.</p>
     </section>

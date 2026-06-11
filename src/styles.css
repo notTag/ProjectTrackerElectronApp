@@ -462,6 +462,38 @@ textarea {
   gap: 8px;
 }
 
+.path-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Unobtrusive remove affordance: muted by default, turns destructive on hover
+   so intent only reads on interaction. */
+.path-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.path-remove:hover,
+.path-remove:focus-visible {
+  color: var(--color-text-on-accent);
+  background: var(--color-destructive);
+}
+
 code {
   overflow-wrap: anywhere;
   color: var(--color-accent-cyan);

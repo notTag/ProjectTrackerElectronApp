@@ -89,6 +89,28 @@ export const useProjectsStore = defineStore('projects', {
       }))
     },
 
+    async removeScanDirectory(directory: string) {
+      await this.save((currentState) => {
+        const remaining = currentState.scanDirectories.filter((entry) => entry !== directory)
+        // Projects derive from the scan directories (mergeScannedProjects replaces
+        // the set on each scan), so drop anything no longer covered by a remaining
+        // directory. Checking against *all* remaining dirs handles nested scan
+        // roots — a project under both /a and /a/b survives removing just one.
+        const insideRemaining = (target: string) =>
+          remaining.some((dir) => target === dir || target.startsWith(`${dir}/`))
+        return {
+          ...currentState,
+          scanDirectories: remaining,
+          hiddenPaths: currentState.hiddenPaths.filter(insideRemaining),
+          thirdPartyPaths: currentState.thirdPartyPaths.filter(insideRemaining),
+          snapshot: {
+            ...currentState.snapshot,
+            projects: currentState.snapshot.projects.filter((project) => insideRemaining(project.path))
+          }
+        }
+      })
+    },
+
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
       this.scanning = true
       this.error = null
