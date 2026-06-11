@@ -468,8 +468,9 @@ textarea {
   gap: 6px;
 }
 
-/* Unobtrusive remove affordance: muted by default, turns destructive on hover
-   so intent only reads on interaction. */
+/* Unobtrusive remove affordance: muted by default; on hover it shows a square
+   hover wash using the active theme's hover token, matching the app's other
+   controls. */
 .path-remove {
   display: inline-flex;
   align-items: center;
@@ -480,7 +481,7 @@ textarea {
   min-height: 16px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 4px;
   color: var(--color-text-muted);
   background: transparent;
   font-size: 0.95rem;
@@ -490,8 +491,8 @@ textarea {
 
 .path-remove:hover,
 .path-remove:focus-visible {
-  color: var(--color-text-on-accent);
-  background: var(--color-destructive);
+  color: var(--color-text);
+  background: var(--color-hover);
 }
 
 code {
