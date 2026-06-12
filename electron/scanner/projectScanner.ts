@@ -35,6 +35,8 @@ const normalizePath = (value: string) => path.resolve(value).split(path.sep).joi
 const hasAnyMarker = (directory: string) =>
   PROJECT_MARKERS.some((marker) => existsSync(path.join(directory, marker)))
 
+export const hasReadme = (entries: string[]) => entries.some((entry) => /^readme(\.|$)/i.test(entry))
+
 const detectPackageManager = (directory: string) => {
   if (existsSync(path.join(directory, 'bun.lock')) || existsSync(path.join(directory, 'bun.lockb'))) return 'bun'
   if (existsSync(path.join(directory, 'pnpm-lock.yaml'))) return 'pnpm'
@@ -44,7 +46,7 @@ const detectPackageManager = (directory: string) => {
   return undefined
 }
 
-const toGithubUrl = (remoteUrl: string) => {
+export const toGithubUrl = (remoteUrl: string) => {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   const sshMatch = /^git@github\.com:([^/]+)\/(.+)$/.exec(trimmed)
   if (sshMatch) return `https://github.com/${sshMatch[1]}/${sshMatch[2]}`
@@ -117,7 +119,7 @@ export const scanProjectDirectories = (
         githubUrl: detectGithubUrl(directory),
         hasGit: existsSync(path.join(directory, '.git')),
         hasPackageJson: existsSync(path.join(directory, 'package.json')),
-        hasReadme: entries.some((entry) => entry.toLowerCase().startsWith('readme.')),
+        hasReadme: hasReadme(entries),
         lastModifiedAt: stat.mtime.toISOString(),
         lastScannedAt: now
       })

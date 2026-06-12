@@ -1,16 +1,21 @@
 <script setup lang="ts">
+import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
+import ThemePicker from '@/components/ThemePicker.vue'
+import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import type { ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
-type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'hidden' | null
+type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
 type ProjectTab = 'details' | 'readme'
 type SortField = 'name' | 'status' | 'priority'
 type SortDirection = 'asc' | 'desc'
 
 const store = useProjectsStore()
+const openInStore = useOpenInStore()
 const onboardingPath = ref('')
 const onboardingSkipped = ref(false)
 const onboardingOpen = computed(() => store.isFirstLaunch && !onboardingSkipped.value)
@@ -61,6 +66,9 @@ const priorityRank: Record<ProjectPriority, number> = {
 const isProjectHidden = (project: ProjectRecord) =>
   project.status === 'hidden' || store.state.hiddenPaths.includes(project.path)
 
+const isProjectThirdParty = (project: ProjectRecord) =>
+  store.state.thirdPartyPaths.includes(project.path)
+
 const getProjectDisplayName = (project: ProjectRecord) => {
   const scanDirectory = [...store.state.scanDirectories]
     .sort((a, b) => b.length - a.length)
@@ -79,8 +87,11 @@ const filteredProjects = computed(() =>
       selectedStatuses.value.length === 0 || selectedStatuses.value.includes(project.status)
     const matchesPriority =
       selectedPriorities.value.length === 0 || selectedPriorities.value.includes(project.priority)
+    const matchesMetric = activeMetric.value !== 'thirdparty' || isProjectThirdParty(project)
     const shouldShowHidden = selectedStatuses.value.includes('hidden')
-    return matchesQuery && matchesStatus && matchesPriority && (shouldShowHidden || !isProjectHidden(project))
+    return (
+      matchesQuery && matchesStatus && matchesPriority && matchesMetric && (shouldShowHidden || !isProjectHidden(project))
+    )
   })
 )
 
@@ -120,6 +131,7 @@ const counts = computed(() => ({
   active: store.projects.filter((project) => project.status === 'active').length,
   ongoing: store.projects.filter((project) => project.status === 'ongoing').length,
   completed: store.projects.filter((project) => project.status === 'completed').length,
+  thirdParty: store.projects.filter((project) => isProjectThirdParty(project) && !isProjectHidden(project)).length,
   hidden: store.projects.filter(isProjectHidden).length
 }))
 
@@ -145,7 +157,12 @@ onBeforeUnmount(() => {
 const setMetricFilter = (metric: Exclude<MetricFilter, null>) => {
   activeMetric.value = activeMetric.value === metric ? null : metric
 
-  if (!activeMetric.value || activeMetric.value === 'total' || activeMetric.value === 'visible') {
+  if (
+    !activeMetric.value ||
+    activeMetric.value === 'total' ||
+    activeMetric.value === 'visible' ||
+    activeMetric.value === 'thirdparty'
+  ) {
     selectedStatuses.value = []
     selectedPriorities.value = []
     return
@@ -296,7 +313,7 @@ const renderMarkdown = (markdown: string | null) => {
 
   if (listOpen) html.push('</ul>')
   if (inCode) html.push('</code></pre>')
-  return html.join('')
+  return DOMPurify.sanitize(html.join(''))
 }
 </script>
 
@@ -308,6 +325,8 @@ const renderMarkdown = (markdown: string | null) => {
         <h1>Local projects</h1>
       </div>
       <div class="topbar-actions">
+        <OpenInPicker />
+        <ThemePicker />
         <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
         <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
         <button :disabled="store.scanning || store.state.scanDirectories.length === 0" @click="rescan">
@@ -319,7 +338,18 @@ const renderMarkdown = (markdown: string | null) => {
     <section v-if="showDirs" class="scan-paths">
       <h2>Scan directories</h2>
       <div v-if="store.state.scanDirectories.length" class="path-list">
-        <code v-for="directory in store.state.scanDirectories" :key="directory">{{ directory }}</code>
+        <span v-for="directory in store.state.scanDirectories" :key="directory" class="path-row">
+          <button
+            type="button"
+            class="path-remove"
+            :title="`Remove ${directory}`"
+            :aria-label="`Remove ${directory}`"
+            @click="store.removeScanDirectory(directory)"
+          >
+            ×
+          </button>
+          <code>{{ directory }}</code>
+        </span>
       </div>
       <p v-else>No scan directories selected.</p>
     </section>
@@ -354,6 +384,10 @@ const renderMarkdown = (markdown: string | null) => {
         <span>High Priority</span>
         <strong>{{ counts.high }}</strong>
       </button>
+      <button class="metric" :class="{ selected: activeMetric === 'thirdparty' }" @click="setMetricFilter('thirdparty')">
+        <span>Third Party</span>
+        <strong>{{ counts.thirdParty }}</strong>
+      </button>
       <button class="metric" :class="{ selected: activeMetric === 'hidden' }" @click="setMetricFilter('hidden')">
         <span>Hidden</span>
         <strong>{{ counts.hidden }}</strong>
@@ -377,13 +411,10 @@ const renderMarkdown = (markdown: string | null) => {
 
     <section class="project-list" aria-label="Project list">
       <article
-        v-for="(project, projectIndex) in displayProjects"
+        v-for="project in displayProjects"
         :key="project.path"
         class="project-card"
-        :class="{
-          expanded: expandedProjectPath === project.path,
-          'expanded-left': expandedProjectPath === project.path && projectIndex % 2 === 0
-        }"
+        :class="{ expanded: expandedProjectPath === project.path }"
         @click="toggleProject(project)"
       >
         <div class="project-heading">
@@ -391,7 +422,13 @@ const renderMarkdown = (markdown: string | null) => {
             <h2>{{ getProjectDisplayName(project) }}</h2>
             <code>{{ project.path }}</code>
           </div>
-          <button class="icon-button" title="Open shell" @click.stop="store.openShell(project.path)">⌁</button>
+          <button
+            class="icon-button"
+            :title="`Open in ${openInStore.selectedTarget.label}`"
+            @click.stop="store.openIn(project.path, openInStore.selectedId)"
+          >
+            ⌁
+          </button>
         </div>
 
         <div class="project-meta">

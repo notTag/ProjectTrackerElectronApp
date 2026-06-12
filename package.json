@@ -1,5 +1,5 @@
 {
-  "name": "project-tracker-electron",
+  "name": "project-tracker",
   "version": "0.1.0",
   "description": "Native macOS Project Tracker desktop app",
   "author": "Project Tracker",
@@ -11,10 +11,13 @@
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "dist": "bun run build && electron-builder --mac",
-    "start": "electron ."
+    "start:prod": "node scripts/open-packaged-app.mjs",
+    "start:dev": "electron ."
   },
   "dependencies": {
+    "@nick_tag_tech/themes": "^0.1.2",
     "@vitejs/plugin-vue": "^5.2.4",
+    "dompurify": "^3.4.8",
     "electron-is-dev": "^3.0.1",
     "pinia": "^2.3.1",
     "sql.js": "^1.13.0",
@@ -22,6 +25,7 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.2.0",
     "@types/node": "^22.15.29",
     "@types/sql.js": "^1.4.9",
     "@vue/tsconfig": "^0.7.0",
@@ -38,6 +42,10 @@
   "build": {
     "appId": "com.projecttracker.desktop",
     "productName": "Project Tracker",
+    "executableName": "Project Tracker",
+    "directories": {
+      "output": "release"
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/app-icon.png",

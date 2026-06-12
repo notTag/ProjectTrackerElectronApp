@@ -2,9 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
 
-const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const invokePlain = async <T>(channel: string, payload?: unknown): Promise<T> => {
+const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
   const result =
     payload === undefined
       ? await ipcRenderer.invoke(channel)
@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
-  openProjectShell: (projectPath: string) => invokePlain('project:open-shell', projectPath),
+  openProjectIn: (projectPath: string, targetId: string) =>
+    invokePlain('project:open-in', { projectPath, targetId }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath)
 })

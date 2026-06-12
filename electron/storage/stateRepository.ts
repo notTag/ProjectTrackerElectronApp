@@ -37,8 +37,7 @@ export class StateRepository {
     if (!statement.step()) {
       statement.free()
       const seed = createSeedState()
-      this.saveState(seed)
-      return seed
+      return this.saveState(seed)
     }
 
     const row = statement.getAsObject() as { value: string }
