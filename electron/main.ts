@@ -37,6 +37,39 @@ const openWithApp = (appName: string, target: string) =>
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
 
+// Packaged apps launched from Finder/Launch Services don't inherit the user's
+// shell PATH, so `gh` won't resolve by name. Probe the common install locations.
+const GH_BIN_CANDIDATES = ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh']
+
+const runGhAuthToken = (bin: string) =>
+  new Promise<string | undefined>((resolve) => {
+    execFile(bin, ['auth', 'token'], { timeout: 5000 }, (error, stdout) => {
+      if (error) return resolve(undefined)
+      resolve(stdout.trim() || undefined)
+    })
+  })
+
+// Resolve a GitHub token so private repos (which the API hides behind a 404 when
+// unauthenticated) can be fetched. Prefer an explicit env token, then fall back
+// to the signed-in `gh` CLI. Cached once found; absence is re-probed each call.
+let cachedGithubToken: string | undefined
+const resolveGithubToken = async (): Promise<string | undefined> => {
+  if (cachedGithubToken) return cachedGithubToken
+  const fromEnv = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim()
+  if (fromEnv) {
+    cachedGithubToken = fromEnv
+    return cachedGithubToken
+  }
+  for (const bin of GH_BIN_CANDIDATES) {
+    const token = await runGhAuthToken(bin)
+    if (token) {
+      cachedGithubToken = token
+      return token
+    }
+  }
+  return undefined
+}
+
 const isInsideAny = (target: string, parents: string[]) =>
   parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
 
@@ -240,6 +273,52 @@ const registerIpc = () => {
       clipboard.writeText(fallbackCommand)
       return { ok: true, appLabel: target.label, fallbackCommand }
     }
+  })
+
+  ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {
+    assertTrustedSender(event)
+    if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
+    const match = /^https:\/\/github\.com\/([^/]+)\/([^/?#]+)/.exec(githubUrl.trim())
+    if (!match) throw new Error('Not a recognized GitHub repository URL.')
+    const owner = match[1]
+    const repo = match[2].replace(/\.git$/, '')
+
+    const token = await resolveGithubToken()
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': APP_NAME
+    }
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers })
+    if (response.status === 404) {
+      throw new Error(
+        token
+          ? 'Repository not found on GitHub.'
+          : 'Repository not found. If it is private, sign in with the GitHub CLI (gh auth login) or set GITHUB_TOKEN.'
+      )
+    }
+    if (response.status === 401) throw new Error('GitHub rejected the token. Re-run gh auth login or update GITHUB_TOKEN.')
+    if (response.status === 403) throw new Error('GitHub rate limit reached. Try again in a while.')
+    if (!response.ok) throw new Error(`GitHub request failed (HTTP ${response.status}).`)
+
+    const data = (await response.json()) as {
+      default_branch?: string
+      open_issues_count?: number
+      stargazers_count?: number
+      forks_count?: number
+      description?: string | null
+      pushed_at?: string
+    }
+    return toPlainJson({
+      defaultBranch: data.default_branch ?? 'main',
+      openIssues: data.open_issues_count ?? 0,
+      stars: data.stargazers_count ?? 0,
+      forks: data.forks_count ?? 0,
+      description: data.description ?? undefined,
+      pushedAt: data.pushed_at,
+      fetchedAt: new Date().toISOString()
+    })
   })
 
   ipcMain.handle('project:read-readme', (event, projectPath: unknown) => {

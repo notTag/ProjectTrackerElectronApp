@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { ProjectTrackerState, ScanResult } from './shared/projectTypes'
+import type { ProjectGithubData, ProjectTrackerState, ScanResult } from './shared/projectTypes'
 
 interface ProjectTrackerElectronApi {
   getProjectState(): Promise<ProjectTrackerState>
@@ -16,6 +16,7 @@ interface ProjectTrackerElectronApi {
     targetId: string
   ): Promise<{ ok: true; appLabel: string; fallbackCommand?: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
+  fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
 }
 
 declare global {

@@ -234,6 +234,12 @@ const selectTab = (project: ProjectRecord, tab: ProjectTab) => {
   if (tab === 'readme') void store.loadReadme(project.path)
 }
 
+const formatDate = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, '&amp;')
@@ -441,6 +447,44 @@ const renderMarkdown = (markdown: string | null) => {
           <span v-if="project.hasReadme">readme</span>
         </div>
 
+        <div class="project-github" @click.stop>
+          <a
+            v-if="project.githubUrl"
+            class="github-link"
+            :href="project.githubUrl"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub
+          </a>
+          <span v-else class="github-none">No GitHub repo</span>
+          <button
+            v-if="project.githubUrl"
+            class="secondary github-refresh"
+            :disabled="store.githubLoading[project.path]"
+            @click="store.fetchGithub(project.path)"
+          >
+            {{ store.githubLoading[project.path] ? 'Updating...' : 'Refresh GitHub' }}
+          </button>
+          <template v-if="project.github">
+            <span class="github-stat" title="Default branch">⎇ {{ project.github.defaultBranch }}</span>
+            <a
+              class="github-stat github-stat-link"
+              :href="`${project.githubUrl}/pulls`"
+              target="_blank"
+              rel="noreferrer"
+              title="View open pull requests"
+            >
+              {{ project.github.openIssues }} open
+            </a>
+            <span class="github-stat" title="Stars">★ {{ project.github.stars }}</span>
+            <span class="github-stat" title="Forks">⑂ {{ project.github.forks }}</span>
+            <span v-if="project.github.pushedAt" class="github-stat" title="Last push">
+              pushed {{ formatDate(project.github.pushedAt) }}
+            </span>
+          </template>
+        </div>
+
         <template v-if="expandedProjectPath === project.path">
           <div class="tabs" @click.stop>
             <button
@@ -478,10 +522,6 @@ const renderMarkdown = (markdown: string | null) => {
                   </option>
                 </select>
               </label>
-            </div>
-
-            <div v-if="project.githubUrl" class="project-links">
-              <a :href="project.githubUrl" target="_blank" rel="noreferrer">GitHub repository</a>
             </div>
 
             <textarea :value="project.notes" placeholder="Notes" @change="updateNotes(project, $event)" />
