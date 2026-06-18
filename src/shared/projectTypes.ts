@@ -4,6 +4,16 @@ export type ProjectPriority = 'high' | 'medium' | 'low' | 'none'
 
 export type ProjectSource = 'first-party' | 'third-party'
 
+export interface ProjectGithubData {
+  defaultBranch: string
+  openIssues: number
+  stars: number
+  forks: number
+  description?: string
+  pushedAt?: string
+  fetchedAt: string
+}
+
 export interface ProjectRecord {
   path: string
   name: string
@@ -13,6 +23,7 @@ export interface ProjectRecord {
   source: ProjectSource
   packageManager?: string
   githubUrl?: string
+  github?: ProjectGithubData
   hasGit: boolean
   hasPackageJson: boolean
   hasReadme: boolean
@@ -87,7 +98,8 @@ export const mergeScannedProjects = (
       status: existing?.status ?? project.status,
       priority: existing?.priority ?? project.priority,
       notes: existing?.notes ?? project.notes,
-      githubUrl: project.githubUrl ?? existing?.githubUrl
+      githubUrl: project.githubUrl ?? existing?.githubUrl,
+      github: existing?.github ?? project.github
     }
   })
 

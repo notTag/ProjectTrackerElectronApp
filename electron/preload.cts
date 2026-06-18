@@ -20,5 +20,6 @@ contextBridge.exposeInMainWorld('projectTracker', {
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string) =>
     invokePlain('project:open-in', { projectPath, targetId }),
-  readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath)
+  readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
+  fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl)
 })

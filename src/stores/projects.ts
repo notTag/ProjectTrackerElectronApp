@@ -18,6 +18,7 @@ interface ProjectsStoreState {
   error: string | null
   notice: string | null
   readmes: Record<string, { loading: boolean; content: string | null; fileName: string | null; error: string | null }>
+  githubLoading: Record<string, boolean>
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -31,7 +32,8 @@ export const useProjectsStore = defineStore('projects', {
     saving: false,
     error: null,
     notice: null,
-    readmes: {}
+    readmes: {},
+    githubLoading: {}
   }),
 
   getters: {
@@ -221,6 +223,34 @@ export const useProjectsStore = defineStore('projects', {
           : `Opening in ${result.appLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+      }
+    },
+
+    async fetchGithub(path: string) {
+      const project = this.projects.find((entry) => entry.path === path)
+      if (!project?.githubUrl) {
+        this.error = 'This project has no linked GitHub repository.'
+        return
+      }
+      this.githubLoading[path] = true
+      this.error = null
+      this.notice = null
+      try {
+        const github = await projectTrackerApi.fetchProjectGithub(project.githubUrl)
+        await this.save((currentState) => ({
+          ...currentState,
+          snapshot: {
+            ...currentState.snapshot,
+            projects: currentState.snapshot.projects.map((entry) =>
+              entry.path === path ? { ...entry, github } : entry
+            )
+          }
+        }))
+        this.notice = `Updated GitHub data for ${project.name}.`
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.githubLoading[path] = false
       }
     },
 

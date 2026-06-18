@@ -61,5 +61,9 @@ export const projectTrackerApi = {
 
   readProjectReadme(path: string) {
     return requireElectron().readProjectReadme(path)
+  },
+
+  fetchProjectGithub(githubUrl: string) {
+    return requireElectron().fetchProjectGithub(githubUrl)
   }
 }
