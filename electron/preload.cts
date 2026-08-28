@@ -21,5 +21,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   openProjectIn: (projectPath: string, targetId: string) =>
     invokePlain('project:open-in', { projectPath, targetId }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
-  fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl)
+  fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
+  fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
+  setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
 })

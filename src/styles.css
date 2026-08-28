@@ -42,6 +42,55 @@ body {
   background: var(--color-surface);
 }
 
+/*
+ * Custom macOS title bar. The native bar is hidden (titleBarStyle: 'hidden'),
+ * so this strip paints into that space with the active theme's header color and
+ * stays pinned + draggable while the page scrolls. Left padding clears the
+ * native traffic-light buttons that float over it.
+ */
+.titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  /* Left pad clears the native traffic lights; the title + empty gap stay drag
+     handles while the action cluster opts out so its buttons remain clickable. */
+  padding: 0 12px 0 80px;
+  background: var(--color-header-bg);
+  border-bottom: 1px solid var(--color-border);
+  -webkit-app-region: drag;
+}
+
+.titlebar-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-actions button {
+  min-width: 58px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 12px;
+}
+
+/* Match the picker triggers: Add/Dirs get the same 1px border so the whole
+   action cluster reads as one bordered control group. */
+.titlebar-actions button.secondary {
+  border: 1px solid var(--color-border);
+}
+
 ::selection {
   background: var(--color-selection);
 }
@@ -93,8 +142,16 @@ button.secondary:not(:disabled):hover,
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 
-.topbar-actions button:not(.secondary):not(:disabled):hover {
-  filter: brightness(0.95);
+.titlebar-actions button:not(.secondary):not(:disabled):hover {
+  filter: brightness(0.88);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Bordered secondaries highlight the border on hover (like the triggers),
+   so the generic inset-ring wash from button.secondary:hover is dropped. */
+.titlebar-actions button.secondary:not(:disabled):hover {
+  border-color: var(--color-accent);
+  box-shadow: none;
 }
 
 .sort-control:hover,
@@ -112,7 +169,6 @@ button.secondary:not(:disabled):hover,
   padding: 32px 0 56px;
 }
 
-.topbar,
 .toolbar,
 .metrics,
 .project-heading,
@@ -125,23 +181,6 @@ button.secondary:not(:disabled):hover,
   gap: 12px;
 }
 
-.topbar {
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.topbar-actions button {
-  min-width: 58px;
-  padding: 0 14px;
-}
-
-.topbar h1,
 .modal h2,
 .empty-state h2 {
   margin: 0;
@@ -156,9 +195,6 @@ button.secondary:not(:disabled):hover,
   text-transform: uppercase;
 }
 
-.topbar h1 {
-  font-size: 2.2rem;
-}
 
 .metrics {
   display: grid;
@@ -227,13 +263,13 @@ button.secondary:not(:disabled):hover,
 }
 
 .filter-trigger {
-  display: grid;
-  align-content: center;
-  min-width: 140px;
-  height: 42px;
-  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-height: 28px;
   border: 1px solid var(--color-border);
-  padding: 4px 12px;
+  padding: 0 10px;
   color: var(--color-text);
   text-align: left;
   background: var(--color-surface-raised);
@@ -267,14 +303,18 @@ button.secondary:not(:disabled):hover,
 
 .filter-trigger span {
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   line-height: 1;
 }
 
+.filter-trigger span::after {
+  content: ":";
+}
+
 .filter-trigger strong {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 700;
-  line-height: 1.15;
+  line-height: 1;
 }
 
 .filter-popover {
@@ -320,7 +360,10 @@ button.secondary:not(:disabled):hover,
   cursor: pointer;
 }
 
-.filter-popover span {
+/* Scoped to checkbox-label rows: the label text fills the row so the checkbox
+   sits flush left. NOT applied to .theme-option spans (swatch/check must keep
+   their fixed size — a bare `.filter-popover span` rule stretched them). */
+.filter-popover label span {
   flex: 1;
 }
 
@@ -542,10 +585,21 @@ code {
 }
 
 .icon-button {
+  /* Flex-center the glyph: a bare button relies on text layout, so a tall
+     line-height leaves ×/⚙ sitting off-centre in the 40px box. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 40px;
   min-width: 40px;
-  padding: 0;
+  height: 40px;
+  /* Optical nudge: the box is flex-centred, but ×/⚙ ink sits low in its line
+     box, so bottom padding shrinks the content box and lifts the glyph ~2px.
+     ponytail: eyeballed against Inter + the symbol fallback; retune if the
+     font stack or font-size changes. */
+  padding: 0 0 4px;
   font-size: 1.3rem;
+  line-height: 1;
 }
 
 .project-meta {
@@ -715,14 +769,30 @@ code {
 }
 
 .message-row {
+  /* Pin just below the sticky 48px titlebar so an error/notice stays visible
+     instead of scrolling under it. Opaque bg occludes cards scrolling beneath.
+     ponytail: 48px hardcoded to match .titlebar height; bump both together. */
+  position: sticky;
+  top: 48px;
+  z-index: 90;
   display: grid;
   gap: 8px;
   margin: 12px 0;
+  padding: 8px 0;
+  background: var(--color-surface);
 }
 
 .message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border-radius: 8px;
   padding: 10px 12px;
+}
+
+.message-dismiss {
+  margin-left: auto;
+  color: inherit;
 }
 
 .error {
@@ -786,9 +856,7 @@ code {
     padding-top: 20px;
   }
 
-  .topbar,
   .toolbar,
-  .topbar-actions,
   .path-picker {
     align-items: stretch;
     flex-direction: column;
@@ -821,4 +889,261 @@ code {
   .metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+
+/* Ticket board */
+.board-shell {
+  /* Fills the viewport below the 48px titlebar so lanes can be page-height and
+     scroll their own tickets instead of scrolling the whole page. */
+  height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0 20px;
+}
+
+.board-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-query {
+  flex: 0 1 320px;
+}
+
+.filter-count {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.ticket-number {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.ticket-assignee {
+  margin: 6px 0 0;
+  color: var(--color-accent-cyan);
+  font-size: 0.75rem;
+}
+
+.ticket-external {
+  color: var(--color-link);
+  font-size: 0.85rem;
+}
+
+.board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  color: var(--color-text-muted);
+}
+
+.board {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  /* "safe" keeps the first lane reachable when the lanes overflow — plain
+     center would push it past the scroll origin and clip it. */
+  justify-content: safe center;
+}
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Width is set inline from the saved lane width. min-width: 0 is what keeps
+     it there — a flex item defaults to min-width: auto, so an unbreakable line
+     inside a ticket (a URL, an issue body pasted as one paragraph) would
+     otherwise stretch the whole column past the width the user chose. */
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-raised);
+}
+
+.lane-unassigned {
+  border-style: dashed;
+  background: transparent;
+}
+
+.lane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.lane-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lane-heading h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.lane-count {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.ticket {
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  cursor: grab;
+  flex: 0 0 auto;
+}
+
+.ticket h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.ticket-preview {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ticket-modal,
+.lane-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ticket-title-input {
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.ticket-modal label,
+.lane-modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.ticket-modal textarea {
+  min-height: 140px;
+}
+
+.agent-prompt {
+  min-height: 180px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.82rem;
+}
+
+.agent-file-path {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.82rem;
+}
+
+.field-hint {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.project-heading-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.danger {
+  color: var(--color-danger, #c0392b);
+}
+
+.ticket-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ticket-labels li {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.ticket-meta {
+  display: flex;
+  gap: 10px;
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.ticket-branch {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-checklist ul {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ticket-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.ticket-checklist li span {
+  flex: 1;
+}
+
+.checklist-done {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.ticket-agent-run pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
 }

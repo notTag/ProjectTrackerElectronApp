@@ -33,14 +33,14 @@ Primary user: a developer managing many local projects who wants a quick desktop
 
 ## Current System
 
-The existing app lives in `dashboard/` and is a Vite/Vue/Pinia single-page app.
+The existing app lives in `web-app/` and is a Vite/Vue/Pinia single-page app.
 
 Important current pieces:
 
-- `dashboard/src/views/DashboardView.vue`: main dashboard experience.
-- `dashboard/src/stores/projects.ts`: project state and dashboard workflows.
-- `dashboard/src/services/projectTrackerApi.ts`: browser API client.
-- `dashboard/dev/projectStateServer.ts`: Vite middleware for state, scan, and folder picking.
+- `web-app/src/views/DashboardView.vue`: main dashboard experience.
+- `web-app/src/stores/projects.ts`: project state and dashboard workflows.
+- `web-app/src/services/projectTrackerApi.ts`: browser API client.
+- `web-app/dev/projectStateServer.ts`: Vite middleware for state, scan, and folder picking.
 - `scripts/scan-projects.sh`: current local project scanner to be ported to TypeScript.
 - `projecttracker-state.json`: current repo-local persisted state.
 
