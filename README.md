@@ -1,6 +1,16 @@
 # Project Tracker (Electron)
 
-Native macOS desktop app for managing local project directories. It scans folders on disk, tracks priority and status, and persists your dashboard state in a local SQLite database.
+Native macOS desktop app for managing local project directories. It scans folders on disk, tracks priority and status, and gives every project a Jira-style ticket board. State persists in a local SQLite database.
+
+## Features
+
+- **Dashboard** — scans configured folders, showing each project's status, priority, notes, README and GitHub stats
+- **Ticket boards** — one board per project, with any number of swim lanes tickets are dragged between
+- **Per-lane agents** — every lane, including the built-in No status column, carries its own agent prompt and an optional path to a markdown file that supplements it
+- **GitHub import** — pulls a repository's open issues in as tickets, deduplicated by issue number so re-pulling is safe
+- **Assignment** — tickets are shared and assigned to a user, with an *Assigned to me* filter
+
+> Agent prompts are stored and editable, but nothing executes them yet — wiring a provider is still to do.
 
 ## Prerequisites
 
@@ -73,30 +83,72 @@ bun run start:prod
 
 ```
 electron-app/
-├── electron/          # Main process, IPC handlers, scanner, SQLite storage
-├── src/               # Vue 3 renderer (dashboard UI)
+├── electron/
+│   ├── main.ts        # Window lifecycle, IPC handlers, GitHub API
+│   ├── preload.cts    # contextBridge (compiled to CommonJS)
+│   ├── scanner/       # Filesystem project discovery
+│   └── storage/       # SQLite schema and repository
+├── src/
+│   ├── views/         # DashboardView, BoardView
+│   ├── stores/        # Pinia stores
+│   ├── shared/        # Types and pure reducers — compiled into both processes
+│   └── services/      # IPC client wrapper
 ├── assets/            # App icon and static assets
 ├── dist/              # Built renderer (generated)
 ├── dist-electron/     # Built main process (generated)
 └── release/           # Packaged macOS app and installers (generated)
 ```
 
+## Architecture
+
+The app is **TypeScript end to end**. There is no backend server — the "backend" is Electron's main process, a Node.js runtime that owns everything privileged.
+
+| Process | Runtime | Responsibilities |
+|---------|---------|------------------|
+| **Main** (`electron/`) | Node.js, ES2022/NodeNext ESM | SQLite, filesystem scanning, GitHub API, window lifecycle, IPC handlers |
+| **Preload** (`electron/preload.cts`) | sandboxed bridge | `contextBridge` — the only surface the renderer can reach. Compiled to CommonJS (`.cts`), since sandboxed preloads cannot load ESM |
+| **Renderer** (`src/`) | Chromium, sandboxed | Vue 3 UI. No filesystem or database access; everything goes through `window.projectTracker` IPC |
+
+`src/shared/` is compiled into *both* sides, so a field added to `Ticket` updates the Vue components and the SQLite layer from one definition. That directory also holds the pure reducers (lane deletion, ticket numbering, GitHub import), which is what the unit tests exercise.
+
+SQLite is embedded rather than a service: **sql.js** is SQLite compiled to WebAssembly, running in-process in the main process. `sql-wasm.wasm` ships as a packaged extra resource.
+
 ## Data storage
 
-App state (scan directories, project metadata, hidden paths, etc.) is stored in a SQLite database at:
+State lives outside the repository, at Electron's `userData` path:
 
 ```
-~/Library/Application Support/project-tracker-electron/project-tracker.sqlite
+~/Library/Application Support/Project Tracker/project-tracker.sqlite
 ```
 
-State lives outside the repository and is managed by Electron's `userData` path.
+The schema is normalized. Projects, swim lanes and tickets are **shared rows** — an edit is what every member sees, not a per-user copy. Users attach to that shared data through membership (who can see a project) and assignment (who is working a ticket).
+
+| Table | Notes |
+|-------|-------|
+| `users` | one local user today; the schema does not assume that |
+| `projects` | keyed by absolute path |
+| `project_members` | who can see a project — scanning grants it |
+| `swim_lanes` | ordered by `position`; `is_unassigned` flags the undeletable No status column |
+| `tickets` | `assignee_id` is nullable and `ON DELETE SET NULL`, so removing a user releases their tickets rather than deleting the work |
+| `project_paths` | hidden / third-party classification, shared like the project |
+| `user_paths` | scan directories — genuinely per-machine, never shared |
+| `user_settings` | per-user scalars |
+| `schema_meta` | schema version, for future migrations |
+
+Two deliberate departures from strict normalization, both commented in `electron/storage/schema.ts`: `tickets.lane_id` is not a foreign key, because a ticket may sit in the virtual unassigned column that has no `swim_lanes` row until its prompt is configured; and labels, checklists and agent runs are JSON columns rather than child tables.
+
+### Known limits
+
+- The renderer still exchanges the **entire state** over IPC on every save, so each write replaces the visible rows. Normalized tables are the prerequisite for per-entity writes, not the delivery of them.
+- sql.js exports the whole database to disk on every write, so file I/O is O(database size).
+- Two app instances would clobber each other — writes are serialized within one instance only.
 
 ## Tech stack
 
 - [Electron](https://www.electronjs.org/) — desktop shell
-- [Vue 3](https://vuejs.org/) + [Pinia](https://pinia.vuejs.org/) — UI and state
+- [Vue 3](https://vuejs.org/) + [Pinia](https://pinia.vuejs.org/) + [vue-router](https://router.vuejs.org/) — UI, state and routing
 - [Vite](https://vitejs.dev/) — dev server and bundler
-- [sql.js](https://sql.js.org/) — local SQLite persistence
+- [sql.js](https://sql.js.org/) — SQLite compiled to WebAssembly, embedded in the main process
 - [electron-builder](https://www.electron.build/) — macOS packaging
 
 ## Troubleshooting

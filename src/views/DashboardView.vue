@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
@@ -14,6 +15,7 @@ type ProjectTab = 'details' | 'readme'
 type SortField = 'name' | 'status' | 'priority'
 type SortDirection = 'asc' | 'desc'
 
+const router = useRouter()
 const store = useProjectsStore()
 const openInStore = useOpenInStore()
 const onboardingPath = ref('')
@@ -224,6 +226,10 @@ const updateNotes = (project: ProjectRecord, event: Event) => {
   void store.setNotes(project.path, notes)
 }
 
+const openBoard = (project: ProjectRecord) => {
+  void router.push(`/board/${encodeURIComponent(project.path)}`)
+}
+
 const toggleProject = (project: ProjectRecord) => {
   expandedProjectPath.value = expandedProjectPath.value === project.path ? null : project.path
   activeTabs.value[project.path] ??= 'details'
@@ -324,23 +330,20 @@ const renderMarkdown = (markdown: string | null) => {
 </script>
 
 <template>
-  <main class="app-shell">
-    <section class="topbar">
-      <div>
-        <p class="eyebrow">Project Tracker</p>
-        <h1>Local projects</h1>
-      </div>
-      <div class="topbar-actions">
-        <OpenInPicker />
-        <ThemePicker />
-        <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
-        <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
-        <button :disabled="store.scanning || store.state.scanDirectories.length === 0" @click="rescan">
-          {{ store.scanning ? 'Scanning...' : 'Scan' }}
-        </button>
-      </div>
-    </section>
+  <header class="titlebar">
+    <span class="titlebar-title">Project Tracker</span>
+    <div class="titlebar-actions">
+      <OpenInPicker />
+      <ThemePicker />
+      <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
+      <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
+      <button :disabled="store.scanning || store.state.scanDirectories.length === 0" @click="rescan">
+        {{ store.scanning ? 'Scanning...' : 'Scan' }}
+      </button>
+    </div>
+  </header>
 
+  <main class="app-shell">
     <section v-if="showDirs" class="scan-paths">
       <h2>Scan directories</h2>
       <div v-if="store.state.scanDirectories.length" class="path-list">
@@ -361,8 +364,14 @@ const renderMarkdown = (markdown: string | null) => {
     </section>
 
     <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">{{ store.error }}</div>
-      <div v-if="store.notice" class="message notice">{{ store.notice }}</div>
+      <div v-if="store.error" class="message error">
+        {{ store.error }}
+        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
+      </div>
+      <div v-if="store.notice" class="message notice">
+        {{ store.notice }}
+        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
+      </div>
     </section>
 
     <section class="metrics">
@@ -428,13 +437,16 @@ const renderMarkdown = (markdown: string | null) => {
             <h2>{{ getProjectDisplayName(project) }}</h2>
             <code>{{ project.path }}</code>
           </div>
-          <button
-            class="icon-button"
-            :title="`Open in ${openInStore.selectedTarget.label}`"
-            @click.stop="store.openIn(project.path, openInStore.selectedId)"
-          >
-            ⌁
-          </button>
+          <div class="project-heading-actions">
+            <button class="icon-button" title="Open ticket board" @click.stop="openBoard(project)">▤</button>
+            <button
+              class="icon-button"
+              :title="`Open in ${openInStore.selectedTarget.label}`"
+              @click.stop="store.openIn(project.path, openInStore.selectedId)"
+            >
+              ⌁
+            </button>
+          </div>
         </div>
 
         <div class="project-meta">

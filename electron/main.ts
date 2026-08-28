@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -70,6 +70,36 @@ const resolveGithubToken = async (): Promise<string | undefined> => {
   return undefined
 }
 
+const parseGithubRepo = (githubUrl: string) => {
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/?#]+)/.exec(githubUrl.trim())
+  if (!match) throw new Error('Not a recognized GitHub repository URL.')
+  return { owner: match[1], repo: match[2].replace(/\.git$/, '') }
+}
+
+// Single door to the GitHub REST API so auth, headers and the status-to-message
+// mapping stay identical for every caller.
+const requestGithub = async <T>(apiPath: string): Promise<T> => {
+  const token = await resolveGithubToken()
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': APP_NAME
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const response = await fetch(`https://api.github.com${apiPath}`, { headers })
+  if (response.status === 404) {
+    throw new Error(
+      token
+        ? 'Repository not found on GitHub.'
+        : 'Repository not found. If it is private, sign in with the GitHub CLI (gh auth login) or set GITHUB_TOKEN.'
+    )
+  }
+  if (response.status === 401) throw new Error('GitHub rejected the token. Re-run gh auth login or update GITHUB_TOKEN.')
+  if (response.status === 403) throw new Error('GitHub rate limit reached. Try again in a while.')
+  if (!response.ok) throw new Error(`GitHub request failed (HTTP ${response.status}).`)
+  return (await response.json()) as T
+}
+
 const isInsideAny = (target: string, parents: string[]) =>
   parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
 
@@ -116,6 +146,10 @@ const createWindow = async () => {
     title: 'Project Tracker',
     icon: getIconPath(),
     backgroundColor: '#f7f7f2',
+    // Hide the native title bar so the renderer paints a themed strip into that
+    // space; the traffic lights stay and are inset to sit inside the strip.
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 12, y: 17 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -201,6 +235,14 @@ const configureApplicationMenu = () => {
 }
 
 const registerIpc = () => {
+  ipcMain.handle('theme:set-native', (event, type: unknown) => {
+    assertTrustedSender(event)
+    if (type !== 'light' && type !== 'dark') throw new Error('Invalid theme type.')
+    // Drives the macOS traffic-light glyph contrast so the controls stay legible
+    // against dark themes; the strip color itself is handled in renderer CSS.
+    nativeTheme.themeSource = type
+  })
+
   ipcMain.handle('project-state:get', (event) => {
     assertTrustedSender(event)
     return toPlainJson(stateRepository.getState())
@@ -278,38 +320,17 @@ const registerIpc = () => {
   ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {
     assertTrustedSender(event)
     if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
-    const match = /^https:\/\/github\.com\/([^/]+)\/([^/?#]+)/.exec(githubUrl.trim())
-    if (!match) throw new Error('Not a recognized GitHub repository URL.')
-    const owner = match[1]
-    const repo = match[2].replace(/\.git$/, '')
+    const { owner, repo } = parseGithubRepo(githubUrl)
 
-    const token = await resolveGithubToken()
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': APP_NAME
-    }
-    if (token) headers.Authorization = `Bearer ${token}`
-
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers })
-    if (response.status === 404) {
-      throw new Error(
-        token
-          ? 'Repository not found on GitHub.'
-          : 'Repository not found. If it is private, sign in with the GitHub CLI (gh auth login) or set GITHUB_TOKEN.'
-      )
-    }
-    if (response.status === 401) throw new Error('GitHub rejected the token. Re-run gh auth login or update GITHUB_TOKEN.')
-    if (response.status === 403) throw new Error('GitHub rate limit reached. Try again in a while.')
-    if (!response.ok) throw new Error(`GitHub request failed (HTTP ${response.status}).`)
-
-    const data = (await response.json()) as {
+    const data = await requestGithub<{
       default_branch?: string
       open_issues_count?: number
       stargazers_count?: number
       forks_count?: number
       description?: string | null
       pushed_at?: string
-    }
+    }>(`/repos/${owner}/${repo}`)
+
     return toPlainJson({
       defaultBranch: data.default_branch ?? 'main',
       openIssues: data.open_issues_count ?? 0,
@@ -319,6 +340,43 @@ const registerIpc = () => {
       pushedAt: data.pushed_at,
       fetchedAt: new Date().toISOString()
     })
+  })
+
+  ipcMain.handle('project:fetch-github-issues', async (event, githubUrl: unknown) => {
+    assertTrustedSender(event)
+    if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
+    const { owner, repo } = parseGithubRepo(githubUrl)
+
+    type GithubIssueResponse = {
+      number: number
+      title: string
+      body?: string | null
+      html_url: string
+      pull_request?: unknown
+    }
+
+    // ponytail: 5 pages (500 open issues) is far past any board that stays
+    // readable. Raise the cap if a real repo ever hits it.
+    const MAX_PAGES = 5
+    const PER_PAGE = 100
+    const issues: GithubIssueResponse[] = []
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const query = `state=open&per_page=${PER_PAGE}&page=${page}`
+      const batch = await requestGithub<GithubIssueResponse[]>(`/repos/${owner}/${repo}/issues?${query}`)
+      issues.push(...batch)
+      if (batch.length < PER_PAGE) break
+    }
+
+    // The issues endpoint returns pull requests too; only real issues become tickets.
+    const issuesOnly = issues.filter((issue) => !issue.pull_request)
+    return toPlainJson(
+      issuesOnly.map((issue) => ({
+        number: issue.number,
+        title: issue.title,
+        body: issue.body ?? '',
+        htmlUrl: issue.html_url
+      }))
+    )
   })
 
   ipcMain.handle('project:read-readme', (event, projectPath: unknown) => {

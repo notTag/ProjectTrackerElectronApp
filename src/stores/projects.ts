@@ -2,12 +2,22 @@ import { defineStore } from 'pinia'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
+  addGithubIssuesToBoard,
+  addTicketToBoard,
   createSeedState,
+  getBoard,
+  getBoardPreferences,
   mergeScannedProjects,
+  removeLaneFromBoard,
+  updateLaneInBoard,
+  type BoardPreferences,
+  type ProjectBoard,
   type ProjectPriority,
   type ProjectRecord,
   type ProjectStatus,
-  type ProjectTrackerState
+  type ProjectTrackerState,
+  type SwimLane,
+  type Ticket
 } from '@/shared/projectTypes'
 
 interface ProjectsStoreState {
@@ -45,6 +55,106 @@ export const useProjectsStore = defineStore('projects', {
   },
 
   actions: {
+    board(projectPath: string): ProjectBoard {
+      return getBoard(this.state, projectPath)
+    },
+
+    async updateBoard(projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard) {
+      await this.save((currentState) => ({
+        ...currentState,
+        boards: {
+          ...currentState.boards,
+          [projectPath]: mutate(getBoard(currentState, projectPath))
+        }
+      }))
+    },
+
+    boardPreferences(projectPath: string): BoardPreferences {
+      return getBoardPreferences(this.state, projectPath)
+    },
+
+    // Takes the whole next preferences object rather than a patch: callers build
+    // it with the toggle/setLaneWidth helpers, which already read the current
+    // value, so a patch would just be a second way to say the same thing.
+    async saveBoardPreferences(projectPath: string, preferences: BoardPreferences) {
+      await this.save((currentState) => ({
+        ...currentState,
+        boardPreferences: { ...currentState.boardPreferences, [projectPath]: preferences }
+      }))
+    },
+
+    async addLane(projectPath: string, name: string) {
+      const lane: SwimLane = { id: crypto.randomUUID(), name, agentPrompt: '', agentFilePath: '' }
+      await this.updateBoard(projectPath, (board) => ({ ...board, lanes: [...board.lanes, lane] }))
+    },
+
+    async updateLane(projectPath: string, laneId: string, patch: Partial<Omit<SwimLane, 'id'>>) {
+      await this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
+    },
+
+    async removeLane(projectPath: string, laneId: string) {
+      await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
+    },
+
+    async addTicket(projectPath: string, laneId: string, title: string, description = '') {
+      // Built inside the mutate callback so the ticket number is derived from the
+      // same board revision it is appended to.
+      await this.updateBoard(projectPath, (board) => addTicketToBoard(board, { laneId, title, description }))
+    },
+
+    // Every ticket edit funnels through here — modal fields, checklist toggles,
+    // and drag-and-drop between lanes alike — so this is the only place that has
+    // to stamp updatedAt for all of them.
+    async updateTicket(
+      projectPath: string,
+      ticketId: string,
+      patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
+    ) {
+      const updatedAt = new Date().toISOString()
+      await this.updateBoard(projectPath, (board) => ({
+        ...board,
+        tickets: board.tickets.map((ticket) =>
+          ticket.id === ticketId ? { ...ticket, ...patch, updatedAt } : ticket
+        )
+      }))
+    },
+
+    // Imports open GitHub issues into the board's dedicated import lane, which
+    // is created on first pull. Already-imported issues are left untouched, so
+    // this is safe to re-run.
+    async pullGithubIssues(projectPath: string) {
+      const project = this.projects.find((entry) => entry.path === projectPath)
+      if (!project?.githubUrl) {
+        this.error = 'This project has no linked GitHub repository.'
+        return
+      }
+      this.githubLoading[projectPath] = true
+      this.error = null
+      this.notice = null
+      try {
+        const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl)
+        let added = 0
+        await this.updateBoard(projectPath, (board) => {
+          const result = addGithubIssuesToBoard(board, issues)
+          added = result.added
+          return result.board
+        })
+        const skipped = issues.length - added
+        this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.githubLoading[projectPath] = false
+      }
+    },
+
+    async removeTicket(projectPath: string, ticketId: string) {
+      await this.updateBoard(projectPath, (board) => ({
+        ...board,
+        tickets: board.tickets.filter((ticket) => ticket.id !== ticketId)
+      }))
+    },
+
     async load() {
       this.loading = true
       this.error = null
