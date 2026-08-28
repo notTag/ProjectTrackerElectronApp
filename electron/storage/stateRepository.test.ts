@@ -127,3 +127,34 @@ describe('shared projects', () => {
     expect(aliceSees.boards![projectPath].tickets).toHaveLength(2)
   })
 })
+
+describe('board preferences', () => {
+  it('survives a reopen and stays private to the user who set it', async () => {
+    const userDataPath = freshUserDataPath()
+    const asAlice = await StateRepository.create(userDataPath, 'alice')
+    const seeded = asAlice.saveState({ ...stateWithBoard(), userId: 'alice' })
+    const projectPath = seeded.snapshot.projects[0].path
+
+    asAlice.saveState({
+      ...asAlice.getState(),
+      boardPreferences: {
+        [projectPath]: {
+          laneWidths: { idea: 420 },
+          hiddenLaneIds: ['github-issues'],
+          cardFields: ['number']
+        }
+      }
+    })
+
+    const aliceReopened = (await StateRepository.create(userDataPath, 'alice')).getState()
+    expect(aliceReopened.boardPreferences?.[projectPath]).toEqual({
+      laneWidths: { idea: 420 },
+      hiddenLaneIds: ['github-issues'],
+      cardFields: ['number']
+    })
+
+    const asBob = await StateRepository.create(userDataPath, 'bob')
+    asBob.addProjectMember(projectPath, 'bob')
+    expect(asBob.getState().boardPreferences).toEqual({})
+  })
+})

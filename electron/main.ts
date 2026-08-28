@@ -295,7 +295,11 @@ const registerIpc = () => {
 
   ipcMain.handle('project:open-in', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId } = (payload ?? {}) as { projectPath?: unknown; targetId?: unknown }
+    const { projectPath, targetId, command } = (payload ?? {}) as {
+      projectPath?: unknown
+      targetId?: unknown
+      command?: unknown
+    }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (typeof targetId !== 'string') throw new Error('Invalid open-in target.')
     // Resolve against the shared allowlist so only known apps are ever launched.
@@ -303,13 +307,20 @@ const registerIpc = () => {
     if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
 
+    // The clipboard is the hand-off: allowlisted apps are launched with `open -a`,
+    // which takes a directory and no argv, so a command cannot be passed to the
+    // shell directly. Nothing here is ever executed — the caller pastes it.
+    // ponytail: clipboard hand-off, swap for per-app osascript if pasting grates.
+    const copiedCommand = typeof command === 'string' && command.trim() ? command : undefined
+    if (copiedCommand) clipboard.writeText(copiedCommand)
+
     try {
       if (process.platform === 'darwin') {
         await openWithApp(target.appName, normalized)
       } else {
         await shell.openPath(normalized)
       }
-      return { ok: true, appLabel: target.label }
+      return { ok: true, appLabel: target.label, copiedCommand }
     } catch {
       const fallbackCommand = `cd ${JSON.stringify(normalized)}`
       clipboard.writeText(fallbackCommand)

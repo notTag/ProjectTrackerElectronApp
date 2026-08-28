@@ -62,6 +62,9 @@ export interface ProjectTrackerState {
   boards?: Record<string, ProjectBoard>
   // Also keyed by project path, but per-user rather than shared — see BoardPreferences.
   boardPreferences?: Record<string, BoardPreferences>
+  // Agents available to every board. Optional and empty by default — nothing
+  // configures them yet, so the ticket picker stays empty until something does.
+  agents?: Agent[]
 }
 
 export interface ScanFailure {
@@ -172,6 +175,9 @@ export interface Ticket {
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
+  // Which configured agent this ticket is earmarked for. Absent means none has
+  // been chosen, which is every ticket until agents exist in state.
+  agentId?: string
   agentRun?: TicketAgentRun
   // Set only on tickets imported from GitHub. Doubles as the dedupe key so
   // re-pulling issues updates nothing and duplicates nothing.
@@ -226,6 +232,39 @@ export const ticketSearchText = (ticket: Ticket) => {
   const labels = formatLabels(ticket.labels)
   const branchName = ticket.branchName ?? ''
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
+}
+
+// A coding agent a ticket can be handed to. Configured agents are persisted in
+// state; the list ships empty, so the picker offers only the shell hand-off
+// until one is added.
+export interface Agent {
+  id: string
+  name: string
+}
+
+// The lane prompt comes first because it is the standing instruction for every
+// ticket in that column; the ticket is the specific work it applies to.
+export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane): string => {
+  const lanePrompt = lane.agentPrompt.trim()
+  const laneFileReference = lane.agentFilePath.trim() ? `Follow the guidance in ${lane.agentFilePath.trim()}.` : ''
+  const ticketHeading = `Ticket #${ticket.number}: ${ticket.title}`
+  const ticketDescription = ticket.description.trim()
+  const sections = [lanePrompt, laneFileReference, ticketHeading, ticketDescription]
+  return sections.filter(Boolean).join('\n\n')
+}
+
+// Single quotes are the only POSIX quoting that leaves the contents completely
+// literal, so a prompt full of backticks, $ and newlines survives intact. An
+// embedded quote cannot appear inside them at all — it has to close the string,
+// escape itself, and reopen it.
+const shellQuote = (value: string): string => {
+  const escapedQuotes = value.split("'").join(`'\\''`)
+  return `'${escapedQuotes}'`
+}
+
+export const ticketShellCommand = (ticket: Ticket, lane: SwimLane): string => {
+  const prompt = ticketAgentPrompt(ticket, lane)
+  return `claude ${shellQuote(prompt)}`
 }
 
 export interface GithubIssue {

@@ -20,8 +20,10 @@ import {
   setLaneWidth,
   getUnassignedLane,
   ticketSearchText,
+  ticketShellCommand,
   toggleCardField,
   toggleHiddenLane,
+  type Agent,
   type TicketCardField,
   type User,
   UNASSIGNED_LANE_ID,
@@ -45,6 +47,10 @@ const pullingIssues = computed(() => Boolean(store.githubLoading[projectPath.val
 const users = computed<User[]>(() => store.state.users ?? [])
 const assigneeName = (assigneeId?: string) =>
   users.value.find((user) => user.id === assigneeId)?.name ?? 'Unassigned'
+
+// Empty until something writes agents into state, which nothing does yet — the
+// picker says so rather than pretending to offer a choice.
+const agents = computed<Agent[]>(() => store.state.agents ?? [])
 
 const filterQuery = ref('')
 const showOnlyMine = ref(false)
@@ -276,6 +282,16 @@ const formatDateTime = (value: string) => {
 }
 
 const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
+
+// A ticket's prompt is built from its own lane, so the same ticket produces a
+// different instruction once it moves column.
+const laneOfTicket = (ticket: Ticket) =>
+  laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
+
+const ticketCommand = (ticket: Ticket) => ticketShellCommand(ticket, laneOfTicket(ticket))
+
+const openTicketInShell = (ticket: Ticket) =>
+  store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 </script>
 
 <template>
@@ -330,8 +346,13 @@ const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id ==
     </section>
 
     <section class="board-filters">
-      <input v-model="filterQuery" class="filter-query" placeholder="Filter tickets…" />
-      <select v-model="filterLaneId">
+      <input
+        v-model="filterQuery"
+        class="filter-query"
+        :class="{ active: filterQuery }"
+        placeholder="Filter tickets…"
+      />
+      <select v-model="filterLaneId" :class="{ active: filterLaneId }">
         <option value="">All swim lanes</option>
         <option v-for="lane in laneColumns" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
       </select>
@@ -602,6 +623,35 @@ const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id ==
           placeholder="Add an item, then press Enter"
           @keyup.enter="addChecklistDraft(openTicket)"
         />
+      </section>
+
+      <section class="ticket-agent">
+        <p class="eyebrow">Agent completion</p>
+        <label>
+          Agent
+          <select
+            :value="openTicket.agentId ?? ''"
+            @change="
+              editTicket(openTicket, {
+                agentId: ($event.target as HTMLSelectElement).value || undefined
+              })
+            "
+          >
+            <option value="">{{ agents.length ? 'No agent' : 'No agents configured' }}</option>
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <p class="agent-hint">
+          Or hand the ticket to a shell. Opening copies this command to your clipboard:
+        </p>
+        <pre class="agent-command">{{ ticketCommand(openTicket) }}</pre>
+        <button
+          class="secondary"
+          :title="`Open ${projectTitle} in ${openInStore.selectedTarget.label} with this command copied`"
+          @click="openTicketInShell(openTicket)"
+        >
+          ⌁ Open in {{ openInStore.selectedTarget.label }}
+        </button>
       </section>
 
       <section v-if="openTicket.agentRun" class="ticket-agent-run">

@@ -325,11 +325,15 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openIn(path: string, targetId: string) {
+    async openIn(path: string, targetId: string, command?: string) {
       try {
-        const result = await projectTrackerApi.openProjectIn(path, targetId)
-        this.notice = result.fallbackCommand
-          ? `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
+        const result = await projectTrackerApi.openProjectIn(path, targetId, command)
+        if (result.fallbackCommand) {
+          this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
+          return
+        }
+        this.notice = result.copiedCommand
+          ? `Opening in ${result.appLabel}. The agent command is on your clipboard — paste it to run.`
           : `Opening in ${result.appLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)

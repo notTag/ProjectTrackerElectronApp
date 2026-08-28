@@ -24,6 +24,11 @@
 
   color: var(--color-text);
   background: var(--color-surface);
+  /* Inherited, so one declaration themes every scrollable surface. A
+     transparent track matters as much as the thumb colour: an opaque track
+     paints into a rounded container's corners and squares them off. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-text-muted) transparent;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 16px;
@@ -298,7 +303,7 @@ button.secondary:not(:disabled):hover,
 }
 
 .sort-control.active select {
-  background: var(--color-accent);
+  background-color: var(--color-accent);
 }
 
 .filter-trigger span {
@@ -479,6 +484,28 @@ textarea {
   padding: 8px 10px;
   color: var(--color-text);
   background: var(--color-surface-raised);
+}
+
+/* Chromium pins the native menulist arrow to the border edge and ignores
+   padding-right, so it renders jammed against the frame. Drawing the caret
+   ourselves is the only way to space it — two half-gradients rather than an
+   SVG data URI so it picks up currentColor and follows the active theme. */
+select {
+  appearance: none;
+  padding-right: 28px;
+  /* The hard stop is spread across 1px rather than sitting exactly on 50%:
+     an exact stop gives Chromium nothing to anti-alias, so each diagonal
+     rasterises as a staircase and the two halves step out of line where they
+     meet, reading as missing pixels. An even box size also keeps the caret on
+     whole pixels vertically, since `center` halves the leftover height. */
+  background-image:
+    linear-gradient(45deg, transparent calc(50% - 0.5px), currentColor calc(50% + 0.5px)),
+    linear-gradient(135deg, currentColor calc(50% - 0.5px), transparent calc(50% + 0.5px));
+  background-position:
+    right 16px center,
+    right 10px center;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
 }
 
 textarea {
@@ -825,6 +852,10 @@ code {
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  /* Above the sticky titlebar (z-100) and the pinned message row (z-90), both
+     of which are opaque and otherwise paint over the modal's top edge. A modal
+     covering the titlebar also stops its buttons firing behind the overlay. */
+  z-index: 200;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -833,6 +864,10 @@ code {
 
 .modal {
   width: min(560px, 100%);
+  /* The backdrop centres a fixed-inset grid item, which otherwise grows past
+     the viewport and clips its own tail off-screen with nothing to scroll. */
+  max-height: 100%;
+  overflow-y: auto;
   padding: 24px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
 }
@@ -917,6 +952,17 @@ code {
   font-size: 0.8rem;
 }
 
+/* An engaged filter announces itself on its border. The bordered controls tint
+   the border directly; the toggle buttons render with border: 0, so they reuse
+   the inset accent ring the other borderless controls in this file use. */
+.board-filters .active {
+  border-color: var(--color-accent);
+}
+
+.board-filters button.active {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
 .ticket-number {
   color: var(--color-text-muted);
   font-weight: 500;
@@ -971,6 +1017,12 @@ code {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface-raised);
+  transition: border-color 120ms ease;
+}
+
+.lane:hover,
+.ticket:hover {
+  border-color: var(--color-accent);
 }
 
 .lane-unassigned {
@@ -1011,11 +1063,13 @@ code {
   background: var(--color-surface);
   cursor: grab;
   flex: 0 0 auto;
+  transition: border-color 120ms ease;
 }
 
 .ticket h3 {
   margin: 0;
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .ticket-preview {
@@ -1023,9 +1077,52 @@ code {
   color: var(--color-text-muted);
   font-size: 0.8rem;
   overflow: hidden;
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+/* Sits on the lane's right edge rather than between lanes, so the drag always
+   resizes the lane it belongs to and never the gap. */
+.lane-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.lane-resize-handle:active {
+  background: linear-gradient(
+    to right,
+    transparent 4px,
+    var(--color-accent) 4px,
+    var(--color-accent) 8px,
+    transparent 8px
+  );
+}
+
+.card-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Scoped through .modal to outrank `.lane-modal label`, which stacks its label
+   contents in a column — a checkbox and its text belong on one line. */
+.modal .card-field-list label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  cursor: pointer;
 }
 
 .ticket-modal,
@@ -1033,6 +1130,12 @@ code {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Wider than the default modal: descriptions and the generated agent command
+   are both long monospace blocks that wrap badly at 560px. */
+.ticket-modal {
+  width: min(760px, 100%);
 }
 
 .ticket-title-input {
@@ -1146,4 +1249,32 @@ code {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.78rem;
   white-space: pre-wrap;
+}
+
+.ticket-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ticket-agent .agent-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.ticket-agent .agent-command {
+  align-self: stretch;
+  margin: 0;
+  padding: 8px;
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
