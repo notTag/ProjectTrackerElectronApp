@@ -1,11 +1,12 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { execFile } from 'node:child_process'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
+import { WARP_LAUNCH_CONFIG_NAME, warpLaunchConfigYaml } from './warpLaunchConfig.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
 
@@ -34,6 +35,31 @@ const openWithApp = (appName: string, target: string) =>
   new Promise<void>((resolve, reject) => {
     execFile('open', ['-a', appName, target], (error) => (error ? reject(error) : resolve()))
   })
+
+// Hand a URI to Launch Services. Same arg-array exec as openWithApp — no shell.
+const openUri = (uri: string) =>
+  new Promise<void>((resolve, reject) => {
+    execFile('open', [uri], (error) => (error ? reject(error) : resolve()))
+  })
+
+// Write the ticket's command where Warp looks for launch configurations, then
+// ask Warp to open it. One reused file rather than one per ticket: the config
+// is a hand-off, not a document worth keeping, and per-ticket files would pile
+// up in the user's Warp directory forever.
+// ponytail: single reused config. Two launches within the moment it takes Warp
+// to read the file would race; key the name per ticket if that ever bites.
+//
+// This executes the command rather than pasting it. What makes that safe is the
+// single-quote wrapping applied in ticketShellCommand: ticket text — which can
+// arrive from a GitHub issue — lands as one literal argument to `claude`, never
+// as shell code.
+const openWarpWithCommand = async (projectPath: string, command: string) => {
+  const configDirectory = path.join(app.getPath('home'), '.warp', 'launch_configurations')
+  const configPath = path.join(configDirectory, `${WARP_LAUNCH_CONFIG_NAME}.yaml`)
+  mkdirSync(configDirectory, { recursive: true })
+  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, command), 'utf8')
+  await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
+}
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
 
@@ -307,20 +333,26 @@ const registerIpc = () => {
     if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
 
-    // The clipboard is the hand-off: allowlisted apps are launched with `open -a`,
-    // which takes a directory and no argv, so a command cannot be passed to the
-    // shell directly. Nothing here is ever executed — the caller pastes it.
-    // ponytail: clipboard hand-off, swap for per-app osascript if pasting grates.
-    const copiedCommand = typeof command === 'string' && command.trim() ? command : undefined
-    if (copiedCommand) clipboard.writeText(copiedCommand)
+    // Warp gets the command through a launch configuration and runs it. Every
+    // other target is launched with `open -a`, which takes a directory and no
+    // argv, so the clipboard remains the hand-off there. Copy either way: a
+    // launch that never reaches the shell still leaves something to paste.
+    // ponytail: Warp only. Terminal.app and Ghostty each need their own
+    // mechanism (osascript `do script`, `--args -e`) — add when asked for.
+    const ticketCommand = typeof command === 'string' && command.trim() ? command : undefined
+    if (ticketCommand) clipboard.writeText(ticketCommand)
 
     try {
+      if (ticketCommand && target.id === 'warp' && process.platform === 'darwin') {
+        await openWarpWithCommand(normalized, ticketCommand)
+        return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
+      }
       if (process.platform === 'darwin') {
         await openWithApp(target.appName, normalized)
       } else {
         await shell.openPath(normalized)
       }
-      return { ok: true, appLabel: target.label, copiedCommand }
+      return { ok: true, appLabel: target.label, copiedCommand: ticketCommand }
     } catch {
       const fallbackCommand = `cd ${JSON.stringify(normalized)}`
       clipboard.writeText(fallbackCommand)

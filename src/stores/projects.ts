@@ -332,6 +332,10 @@ export const useProjectsStore = defineStore('projects', {
           this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
           return
         }
+        if (result.ranCommand) {
+          this.notice = `Running the agent command in ${result.appLabel}.`
+          return
+        }
         this.notice = result.copiedCommand
           ? `Opening in ${result.appLabel}. The agent command is on your clipboard — paste it to run.`
           : `Opening in ${result.appLabel}.`
