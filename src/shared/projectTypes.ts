@@ -257,7 +257,7 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane): string => {
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
 // embedded quote cannot appear inside them at all — it has to close the string,
 // escape itself, and reopen it.
-const shellQuote = (value: string): string => {
+export const shellQuote = (value: string): string => {
   const escapedQuotes = value.split("'").join(`'\\''`)
   return `'${escapedQuotes}'`
 }

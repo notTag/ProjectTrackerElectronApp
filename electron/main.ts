@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url'
 
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
-import { WARP_LAUNCH_CONFIG_NAME, warpLaunchConfigYaml } from './warpLaunchConfig.js'
+import {
+  WARP_LAUNCH_CONFIG_NAME,
+  ghosttyOpenArgs,
+  terminalOsascriptArgs,
+  warpLaunchConfigYaml
+} from './terminalLaunch.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
 
@@ -42,6 +47,11 @@ const openUri = (uri: string) =>
     execFile('open', [uri], (error) => (error ? reject(error) : resolve()))
   })
 
+const run = (bin: string, args: string[]) =>
+  new Promise<void>((resolve, reject) => {
+    execFile(bin, args, (error) => (error ? reject(error) : resolve()))
+  })
+
 // Write the ticket's command where Warp looks for launch configurations, then
 // ask Warp to open it. One reused file rather than one per ticket: the config
 // is a hand-off, not a document worth keeping, and per-ticket files would pile
@@ -59,6 +69,20 @@ const openWarpWithCommand = async (projectPath: string, command: string) => {
   mkdirSync(configDirectory, { recursive: true })
   writeFileSync(configPath, warpLaunchConfigYaml(projectPath, command), 'utf8')
   await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
+}
+
+const openTerminalWithCommand = (projectPath: string, command: string) =>
+  run('osascript', terminalOsascriptArgs(projectPath, command))
+
+const openGhosttyWithCommand = (projectPath: string, command: string) =>
+  run('open', ghosttyOpenArgs(projectPath, command))
+
+// Only the terminals can run a ticket's command; the editors in the allowlist
+// have no shell to run it in and keep the clipboard hand-off.
+const COMMAND_RUNNERS: Record<string, (projectPath: string, command: string) => Promise<void>> = {
+  warp: openWarpWithCommand,
+  terminal: openTerminalWithCommand,
+  ghostty: openGhosttyWithCommand
 }
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
@@ -333,18 +357,17 @@ const registerIpc = () => {
     if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
 
-    // Warp gets the command through a launch configuration and runs it. Every
-    // other target is launched with `open -a`, which takes a directory and no
-    // argv, so the clipboard remains the hand-off there. Copy either way: a
-    // launch that never reaches the shell still leaves something to paste.
-    // ponytail: Warp only. Terminal.app and Ghostty each need their own
-    // mechanism (osascript `do script`, `--args -e`) — add when asked for.
+    // Terminals get the command and run it; the editors are launched with
+    // `open -a`, which takes a directory and no argv, so the clipboard remains
+    // the hand-off there. Copy either way: a launch that never reaches the
+    // shell still leaves something to paste.
     const ticketCommand = typeof command === 'string' && command.trim() ? command : undefined
     if (ticketCommand) clipboard.writeText(ticketCommand)
+    const runCommand = process.platform === 'darwin' ? COMMAND_RUNNERS[target.id] : undefined
 
     try {
-      if (ticketCommand && target.id === 'warp' && process.platform === 'darwin') {
-        await openWarpWithCommand(normalized, ticketCommand)
+      if (ticketCommand && runCommand) {
+        await runCommand(normalized, ticketCommand)
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
       if (process.platform === 'darwin') {

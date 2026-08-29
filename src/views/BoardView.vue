@@ -642,8 +642,8 @@ const openTicketInShell = (ticket: Ticket) =>
           </select>
         </label>
         <p class="agent-hint">
-          Or hand the ticket to a shell. Warp runs this command on open; other apps get it on the
-          clipboard to paste:
+          Or hand the ticket to a shell. Warp, Terminal and Ghostty run this command on open;
+          editors get it on the clipboard to paste:
         </p>
         <pre class="agent-command">{{ ticketCommand(openTicket) }}</pre>
         <button
