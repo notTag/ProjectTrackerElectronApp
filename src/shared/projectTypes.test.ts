@@ -13,12 +13,25 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketShellCommand,
+  type SwimLane,
+  type Ticket,
   checklistProgress,
   parseLabels,
   removeChecklistItem,
   setChecklistItemDone,
   ticketSearchText,
   GITHUB_IMPORT_LANE_ID,
+  createDefaultBoardPreferences,
+  getBoardPreferences,
+  setLaneWidth,
+  toggleCardField,
+  toggleHiddenLane,
+  MAX_LANE_WIDTH,
+  MIN_LANE_WIDTH,
+  TICKET_CARD_FIELDS,
+  type BoardPreferences,
+  type ProjectTrackerState,
   type GithubIssue,
   type ProjectBoard
 } from './projectTypes'
@@ -227,5 +240,83 @@ describe('updateLaneInBoard', () => {
     const board = updateLaneInBoard(boardWithTickets(), 'prd', { agentFilePath: '/tmp/prd.md' })
     expect(board.lanes[1].agentFilePath).toBe('/tmp/prd.md')
     expect(board.unassignedLane).toBeUndefined()
+  })
+})
+
+describe('board preferences', () => {
+  const stateWith = (preferences: Partial<BoardPreferences>): ProjectTrackerState => ({
+    ...createSeedState(),
+    boardPreferences: { '/repo': preferences as BoardPreferences }
+  })
+
+  it('fills in fields missing from preferences saved before they existed', () => {
+    const preferences = getBoardPreferences(stateWith({ hiddenLaneIds: ['github-issues'] }), '/repo')
+    expect(preferences.hiddenLaneIds).toEqual(['github-issues'])
+    expect(preferences.laneWidths).toEqual({})
+    expect(preferences.cardFields).toContain('description')
+  })
+
+  it('defaults an unknown project to every card field visible and nothing hidden', () => {
+    const preferences = getBoardPreferences(createSeedState(), '/never-opened')
+    expect(preferences.hiddenLaneIds).toEqual([])
+    expect(preferences.cardFields).toHaveLength(TICKET_CARD_FIELDS.length)
+  })
+
+  it('toggles a lane out of view and back', () => {
+    const hidden = toggleHiddenLane(createDefaultBoardPreferences(), 'github-issues')
+    expect(hidden.hiddenLaneIds).toEqual(['github-issues'])
+    expect(toggleHiddenLane(hidden, 'github-issues').hiddenLaneIds).toEqual([])
+  })
+
+  it('toggles a card field off without touching the others', () => {
+    const preferences = toggleCardField(createDefaultBoardPreferences(), 'description')
+    expect(preferences.cardFields).not.toContain('description')
+    expect(preferences.cardFields).toContain('number')
+  })
+
+  it('clamps a lane width dragged past either limit', () => {
+    expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 10).laneWidths.idea).toBe(MIN_LANE_WIDTH)
+    expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 9999).laneWidths.idea).toBe(MAX_LANE_WIDTH)
+    expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 320.4).laneWidths.idea).toBe(320)
+  })
+})
+
+describe('ticketShellCommand', () => {
+  const lane = (overrides: Partial<SwimLane> = {}): SwimLane => ({
+    id: 'in-development',
+    name: 'In Development',
+    agentPrompt: '',
+    agentFilePath: '',
+    ...overrides
+  })
+
+  const ticket = (overrides: Partial<Ticket> = {}): Ticket => ({
+    id: 'ticket-1',
+    number: 7,
+    laneId: 'in-development',
+    title: 'Add the thing',
+    description: 'Make it work.',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  })
+
+  it('leads with the lane prompt, then the ticket', () => {
+    const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
+    expect(command).toBe("claude 'Ship small diffs.\n\nTicket #7: Add the thing\n\nMake it work.'")
+  })
+
+  it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
+    const command = ticketShellCommand(ticket({ description: '   ' }), lane())
+    expect(command).toBe("claude 'Ticket #7: Add the thing'")
+  })
+
+  it('names the lane markdown file when the lane has one', () => {
+    const command = ticketShellCommand(ticket({ description: '' }), lane({ agentFilePath: 'docs/dev.md' }))
+    expect(command).toContain('Follow the guidance in docs/dev.md.')
+  })
+
+  it("escapes a description's own single quotes so the shell string stays closed", () => {
+    const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
+    expect(command).toBe("claude 'Ticket #7: Add the thing\n\ndon'\\''t break'")
   })
 })
