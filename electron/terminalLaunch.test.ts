@@ -77,16 +77,18 @@ describe('ghosttyOpenArgs', () => {
   it('sets the working directory and the first-surface command', () => {
     const args = ghosttyOpenArgs('/tmp/my project', 'claude hello')
     expect(valueOf(args, '--working-directory')).toBe('/tmp/my project')
-    expect(valueOf(args, '--initial-command')).toBe('shell:claude hello')
+    expect(valueOf(args, '--initial-command')).toBe('shell:claude hello; exec "$SHELL" -l')
   })
 
   it('pins the command to a shell so its quoting is honoured', () => {
     const args = ghosttyOpenArgs('/tmp/project', AWKWARD_COMMAND)
-    expect(valueOf(args, '--initial-command')).toBe(`shell:${AWKWARD_COMMAND}`)
+    expect(valueOf(args, '--initial-command')).toContain(`shell:${AWKWARD_COMMAND}`)
   })
 
-  it('keeps the window up once the agent exits', () => {
+  // initial-command replaces the shell, so without this the window dies with
+  // the agent instead of handing the project directory back to the user.
+  it('leaves a live login shell behind once the agent exits', () => {
     const args = ghosttyOpenArgs('/tmp/project', 'claude hello')
-    expect(args).toContain('--wait-after-command=true')
+    expect(valueOf(args, '--initial-command').endsWith('; exec "$SHELL" -l')).toBe(true)
   })
 })

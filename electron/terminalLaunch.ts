@@ -67,13 +67,16 @@ export const terminalOsascriptArgs = (projectPath: string, command: string): str
 // Ghostty's direct-vs-shell heuristic, so the quoting in the command is read by
 // a shell exactly as it was written.
 //
-// ponytail: wait-after-command keeps the window up on a keypress once the agent
-// exits. Swap for a trailing `exec $SHELL -l` if a live shell is wanted there.
+// The trailing exec is what makes this behave like the other two. Warp and
+// Terminal run the command inside a session that outlives it; initial-command
+// instead replaces the shell, so without this the window would die the moment
+// the agent exited — `wait-after-command` only holds a dead terminal open until
+// a keypress. Exec'ing the login shell afterwards leaves a live one in the
+// project directory, which is what a hand-off is for.
 export const ghosttyOpenArgs = (projectPath: string, command: string): string[] => [
   '-na',
   'Ghostty.app',
   '--args',
   `--working-directory=${projectPath}`,
-  `--initial-command=shell:${command}`,
-  '--wait-after-command=true'
+  `--initial-command=shell:${command}; exec "$SHELL" -l`
 ]
