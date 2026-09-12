@@ -1,9 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+// electron-updater exposes `autoUpdater` as a lazy getter on a CommonJS module,
+// which Node's ESM named-export detection cannot see. Default import or bust.
+import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
 import {
@@ -467,6 +471,11 @@ app.whenReady().then(async () => {
   stateRepository = await StateRepository.create(app.getPath('userData'))
   registerIpc()
   await createWindow()
+
+  // ponytail: electron-updater's defaults already download in the background
+  // and swap the app in on quit, with a native notification once it lands.
+  // Add a restart-now prompt if waiting for the next quit proves too slow.
+  if (app.isPackaged) startUpdateCheck(electronUpdater.autoUpdater)
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow()
