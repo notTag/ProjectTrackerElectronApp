@@ -1278,3 +1278,8 @@ code {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.ticket-agent .agent-actions {
+  display: flex;
+  gap: 8px;
+}

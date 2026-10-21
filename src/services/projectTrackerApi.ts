@@ -59,6 +59,10 @@ export const projectTrackerApi = {
     return requireElectron().openProjectIn(path, targetId, command)
   },
 
+  runTicketAgent(path: string, agentId: string, prompt: string) {
+    return requireElectron().runTicketAgent(path, agentId, prompt)
+  },
+
   readProjectReadme(path: string) {
     return requireElectron().readProjectReadme(path)
   },

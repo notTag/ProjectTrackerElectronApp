@@ -1,7 +1,8 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import initSqlJs from 'sql.js'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
@@ -21,7 +22,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md' }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/' }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -73,6 +74,7 @@ describe('StateRepository', () => {
     const board = loaded.boards?.[projectPath]
     expect(board?.lanes.map((lane) => lane.id)).toEqual(['idea', 'prd'])
     expect(board?.lanes[1].agentFilePath).toBe('/tmp/prd.md')
+    expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
     expect(board?.tickets.map((ticket) => ticket.number)).toEqual([1, 2])
     expect(board?.tickets[0].labels).toEqual(['bug'])
@@ -87,6 +89,25 @@ describe('StateRepository', () => {
   })
 })
 
+
+describe('schema upgrades', () => {
+  it('adds lane columns to a database created before they existed', async () => {
+    const userDataPath = freshUserDataPath()
+    const sql = await initSqlJs()
+    const oldDatabase = new sql.Database()
+    oldDatabase.run(`CREATE TABLE swim_lanes (
+      id TEXT NOT NULL, project_path TEXT NOT NULL, name TEXT NOT NULL, agent_prompt TEXT NOT NULL,
+      agent_file_path TEXT NOT NULL, position INTEGER NOT NULL, is_unassigned INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (project_path, id))`)
+    writeFileSync(path.join(userDataPath, 'project-tracker.sqlite'), Buffer.from(oldDatabase.export()))
+
+    const repository = await StateRepository.create(userDataPath)
+    const saved = repository.saveState(stateWithBoard())
+    const projectPath = saved.snapshot.projects[0].path
+    const reopened = (await StateRepository.create(userDataPath)).getState()
+    expect(reopened.boards?.[projectPath].lanes[1].outputTarget).toBe('docs/prd/')
+  })
+})
 
 describe('shared projects', () => {
   it('shows one user the edits another made to the same ticket', async () => {

@@ -18,6 +18,7 @@ import {
   type User
 } from '../../src/shared/projectTypes.js'
 import {
+  ADDED_COLUMNS,
   PATH_KIND_HIDDEN,
   PATH_KIND_SCAN,
   PATH_KIND_THIRD_PARTY,
@@ -57,6 +58,7 @@ export class StateRepository {
 
     this.db.run('PRAGMA foreign_keys = ON')
     this.db.exec(SCHEMA_SQL)
+    this.addMissingColumns()
     this.recordSchemaVersion()
     this.ensureUser()
     this.persist()
@@ -74,6 +76,14 @@ export class StateRepository {
     while (statement.step()) rows.push(statement.getAsObject() as Row)
     statement.free()
     return rows
+  }
+
+  private addMissingColumns() {
+    for (const { table, column, definition } of ADDED_COLUMNS) {
+      const existingColumns = this.select(`PRAGMA table_info(${table})`)
+      const columnExists = existingColumns.some((row) => row.name === column)
+      if (!columnExists) this.db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   private recordSchemaVersion() {
@@ -219,7 +229,8 @@ export class StateRepository {
         id: String(row.id),
         name: String(row.name),
         agentPrompt: String(row.agent_prompt),
-        agentFilePath: String(row.agent_file_path)
+        agentFilePath: String(row.agent_file_path),
+        outputTarget: String(row.output_target)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
@@ -333,14 +344,15 @@ export class StateRepository {
     const insertLane = (lane: SwimLane, position: number, isUnassigned: boolean) => {
       this.db.run(
         `INSERT INTO swim_lanes (
-           id, project_path, name, agent_prompt, agent_file_path, position, is_unassigned
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           id, project_path, name, agent_prompt, agent_file_path, output_target, position, is_unassigned
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           lane.id,
           projectPath,
           lane.name,
           lane.agentPrompt,
           lane.agentFilePath,
+          lane.outputTarget ?? '',
           position,
           isUnassigned ? 1 : 0
         ]

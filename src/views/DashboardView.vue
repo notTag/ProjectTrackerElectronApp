@@ -337,7 +337,11 @@ const renderMarkdown = (markdown: string | null) => {
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
       <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
-      <button :disabled="store.scanning || store.state.scanDirectories.length === 0" @click="rescan">
+      <button
+        :disabled="store.scanning || store.state.scanDirectories.length === 0"
+        title="A '.git' must be present in order for the project to appear."
+        @click="rescan"
+      >
         {{ store.scanning ? 'Scanning...' : 'Scan' }}
       </button>
     </div>

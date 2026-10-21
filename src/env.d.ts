@@ -27,6 +27,7 @@ interface ProjectTrackerElectronApi {
     copiedCommand?: string
     ranCommand?: string
   }>
+  runTicketAgent(path: string, agentId: string, prompt: string): Promise<{ succeeded: boolean; output: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
