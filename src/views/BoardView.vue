@@ -197,9 +197,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleEscapeKey)
 })
 
-const startTicketDraft = () => {
-  const defaultLaneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID
-  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId: defaultLaneId }
+const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
+  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId }
 }
 
 const saveTicketDraft = async () => {
@@ -294,7 +293,7 @@ const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id ==
       <button
         class="secondary"
         title="Create ticket"
-        @click="startTicketDraft"
+        @click="startTicketDraft()"
       >
         + Ticket
       </button>
@@ -384,7 +383,7 @@ const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id ==
           </button>
         </header>
 
-        <div class="lane-body">
+        <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
           <article
             v-for="ticket in ticketsInLane(lane.id)"
             :key="ticket.id"
