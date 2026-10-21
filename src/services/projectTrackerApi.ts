@@ -55,8 +55,12 @@ export const projectTrackerApi = {
     return requireElectron().pickScanDirectory()
   },
 
-  openProjectIn(path: string, targetId: string) {
-    return requireElectron().openProjectIn(path, targetId)
+  openProjectIn(path: string, targetId: string, command?: string) {
+    return requireElectron().openProjectIn(path, targetId, command)
+  },
+
+  runTicketAgent(path: string, agentId: string, prompt: string) {
+    return requireElectron().runTicketAgent(path, agentId, prompt)
   },
 
   readProjectReadme(path: string) {

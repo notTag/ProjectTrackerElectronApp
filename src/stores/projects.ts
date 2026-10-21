@@ -29,6 +29,9 @@ interface ProjectsStoreState {
   notice: string | null
   readmes: Record<string, { loading: boolean; content: string | null; fileName: string | null; error: string | null }>
   githubLoading: Record<string, boolean>
+  // Keyed by ticket id. Lives in the store, not the board view, so a run keeps
+  // showing as running after the user leaves the board and comes back.
+  agentRunning: Record<string, boolean>
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -43,7 +46,8 @@ export const useProjectsStore = defineStore('projects', {
     error: null,
     notice: null,
     readmes: {},
-    githubLoading: {}
+    githubLoading: {},
+    agentRunning: {}
   }),
 
   getters: {
@@ -325,14 +329,44 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openIn(path: string, targetId: string) {
+    async openIn(path: string, targetId: string, command?: string) {
       try {
-        const result = await projectTrackerApi.openProjectIn(path, targetId)
-        this.notice = result.fallbackCommand
-          ? `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
+        const result = await projectTrackerApi.openProjectIn(path, targetId, command)
+        if (result.fallbackCommand) {
+          this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
+          return
+        }
+        if (result.ranCommand) {
+          this.notice = `Running the agent command in ${result.appLabel}.`
+          return
+        }
+        this.notice = result.copiedCommand
+          ? `Opening in ${result.appLabel}. The agent command is on your clipboard — paste it to run.`
           : `Opening in ${result.appLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+      }
+    },
+
+    // The lane is captured at start, not read back at the end: the ticket may be
+    // dragged to another column mid-run, and the record should say which lane's
+    // prompt actually produced the output.
+    async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
+      if (this.agentRunning[ticket.id]) return
+      this.agentRunning[ticket.id] = true
+      this.error = null
+      this.notice = `Agent running on #${ticket.number}…`
+      const laneId = ticket.laneId
+      try {
+        const result = await projectTrackerApi.runTicketAgent(projectPath, agentId, prompt)
+        const agentRun = { at: new Date().toISOString(), laneId, output: result.output }
+        await this.updateTicket(projectPath, ticket.id, { agentRun })
+        if (result.succeeded) this.notice = `Agent finished #${ticket.number}.`
+        else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.agentRunning[ticket.id] = false
       }
     },
 

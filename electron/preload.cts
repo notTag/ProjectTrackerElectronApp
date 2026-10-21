@@ -18,9 +18,11 @@ contextBridge.exposeInMainWorld('projectTracker', {
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
-  openProjectIn: (projectPath: string, targetId: string) =>
-    invokePlain('project:open-in', { projectPath, targetId }),
-  readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
+  openProjectIn: (projectPath: string, targetId: string, command?: string) =>
+    invokePlain('project:open-in', { projectPath, targetId, command }),
+  runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>
+    invokePlain('ticket:run-agent', { projectPath, agentId, prompt }),
+  readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
   setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
