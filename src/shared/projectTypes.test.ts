@@ -13,6 +13,10 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  agentForTicket,
+  availableAgents,
+  DEFAULT_AGENT,
+  ticketAgentPrompt,
   ticketShellCommand,
   type SwimLane,
   type Ticket,
@@ -302,12 +306,47 @@ describe('ticketShellCommand', () => {
 
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
-    expect(command).toBe("claude 'Ship small diffs.\n\nTicket #7: Add the thing\n\nMake it work.'")
+    expect(command).toBe(
+      "claude 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+    )
   })
 
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing'")
+    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
+  it('carries every filled-in ticket field as context', () => {
+    const richTicket = ticket({
+      labels: ['ui', 'bug'],
+      branchName: 'feat/thing',
+      externalUrl: 'https://github.com/o/r/issues/3',
+      checklist: [
+        { text: 'spec', done: true },
+        { text: 'build', done: false }
+      ]
+    })
+    const prompt = ticketAgentPrompt(richTicket, lane(), { assigneeName: 'Local' })
+    expect(prompt).toContain('Assignee: Local')
+    expect(prompt).toContain('Labels: ui, bug')
+    expect(prompt).toContain('Branch: feat/thing')
+    expect(prompt).toContain('Source: https://github.com/o/r/issues/3')
+    expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
+  })
+
+  it('ends with the lane output target and permission to reuse an existing location', () => {
+    const prompt = ticketAgentPrompt(ticket(), lane({ outputTarget: 'a new folder called PRD' }))
+    const outputSection = prompt.split('\n\n').at(-1)
+    expect(outputSection).toContain('Output: a new folder called PRD')
+    expect(outputSection).toContain('use it as-is without asking')
+  })
+
+  it("runs the ticket's chosen agent, falling back to the default", () => {
+    const codex = { id: 'codex', name: 'Codex', command: 'codex', headlessArgs: ['exec'] }
+    const agents = availableAgents({ agents: [codex] })
+    expect(agentForTicket(ticket({ agentId: 'codex' }), agents)).toBe(codex)
+    expect(agentForTicket(ticket(), agents)).toBe(DEFAULT_AGENT)
+    expect(ticketShellCommand(ticket(), lane(), codex)).toMatch(/^codex '/)
   })
 
   it('names the lane markdown file when the lane has one', () => {
@@ -317,6 +356,6 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\n\ndon'\\''t break'")
+    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
 })

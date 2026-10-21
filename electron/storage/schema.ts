@@ -2,7 +2,7 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   name TEXT NOT NULL,
   agent_prompt TEXT NOT NULL,
   agent_file_path TEXT NOT NULL,
+  output_target TEXT NOT NULL DEFAULT '',
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
@@ -105,6 +106,10 @@ CREATE INDEX IF NOT EXISTS tickets_by_external_id ON tickets (external_id);
 CREATE INDEX IF NOT EXISTS lanes_by_board ON swim_lanes (project_path, position);
 CREATE INDEX IF NOT EXISTS members_by_user ON project_members (user_id);
 `
+
+// CREATE TABLE IF NOT EXISTS leaves tables from older databases untouched, so
+// columns added after a table first shipped are listed here and added on open.
+export const ADDED_COLUMNS = [{ table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" }]
 
 export const PATH_KIND_SCAN = 'scan'
 export const PATH_KIND_HIDDEN = 'hidden'

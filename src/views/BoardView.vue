@@ -11,6 +11,8 @@ import {
   TICKET_CARD_FIELDS,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
+  agentForTicket,
+  availableAgents,
   checklistProgress,
   clampLaneWidth,
   formatLabels,
@@ -19,6 +21,7 @@ import {
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
   toggleCardField,
@@ -48,9 +51,7 @@ const users = computed<User[]>(() => store.state.users ?? [])
 const assigneeName = (assigneeId?: string) =>
   users.value.find((user) => user.id === assigneeId)?.name ?? 'Unassigned'
 
-// Empty until something writes agents into state, which nothing does yet — the
-// picker says so rather than pretending to offer a choice.
-const agents = computed<Agent[]>(() => store.state.agents ?? [])
+const agents = computed<Agent[]>(() => availableAgents(store.state))
 
 const filterQuery = ref('')
 const showOnlyMine = ref(false)
@@ -288,10 +289,23 @@ const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id ==
 const laneOfTicket = (ticket: Ticket) =>
   laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
 
-const ticketCommand = (ticket: Ticket) => ticketShellCommand(ticket, laneOfTicket(ticket))
+const promptContext = (ticket: Ticket) => ({
+  assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined
+})
+
+const ticketCommand = (ticket: Ticket) => {
+  const agent = agentForTicket(ticket, agents.value)
+  return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket))
+}
 
 const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
+
+const runTicketAgent = (ticket: Ticket) => {
+  const agent = agentForTicket(ticket, agents.value)
+  const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
+  void store.runTicketAgent(projectPath.value, ticket, agent.id, prompt)
+}
 </script>
 
 <template>
@@ -630,29 +644,35 @@ const openTicketInShell = (ticket: Ticket) =>
         <label>
           Agent
           <select
-            :value="openTicket.agentId ?? ''"
-            @change="
-              editTicket(openTicket, {
-                agentId: ($event.target as HTMLSelectElement).value || undefined
-              })
-            "
+            :value="agentForTicket(openTicket, agents).id"
+            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value })"
           >
-            <option value="">{{ agents.length ? 'No agent' : 'No agents configured' }}</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
         <p class="agent-hint">
-          Or hand the ticket to a shell. Warp, Terminal and Ghostty run this command on open;
-          editors get it on the clipboard to paste:
+          The agent gets this ticket, its lane's prompt, markdown file and output location.
+          Run works in the background and saves its output below — it can write files but not run
+          shell commands. Run in a terminal to watch and approve each step; editors get the command on
+          the clipboard to paste:
         </p>
         <pre class="agent-command">{{ ticketCommand(openTicket) }}</pre>
-        <button
-          class="secondary"
-          :title="`Open ${projectTitle} in ${openInStore.selectedTarget.label} with this command copied`"
-          @click="openTicketInShell(openTicket)"
-        >
-          ⌁ Open in {{ openInStore.selectedTarget.label }}
-        </button>
+        <div class="agent-actions">
+          <button
+            :disabled="store.agentRunning[openTicket.id]"
+            :title="`Run ${agentForTicket(openTicket, agents).name} in the background`"
+            @click="runTicketAgent(openTicket)"
+          >
+            {{ store.agentRunning[openTicket.id] ? 'Running…' : '▶ Run' }}
+          </button>
+          <button
+            class="secondary"
+            :title="`Run in ${openInStore.selectedTarget.label} — terminals run it, editors get it on the clipboard`"
+            @click="openTicketInShell(openTicket)"
+          >
+            ⌁ Run in {{ openInStore.selectedTarget.label }}
+          </button>
+        </div>
       </section>
 
       <section v-if="openTicket.agentRun" class="ticket-agent-run">
@@ -704,6 +724,17 @@ const openTicketInShell = (ticket: Ticket) =>
           @change="editLane(openLane, { agentFilePath: ($event.target as HTMLInputElement).value })"
         />
         <span class="field-hint">Used alongside the prompt above — both are sent when both are filled in.</span>
+      </label>
+
+      <label>
+        Output
+        <textarea
+          class="agent-prompt"
+          :value="openLane.outputTarget ?? ''"
+          placeholder="A file, a directory, or where it goes — e.g. a new folder called PRD inside the project directory"
+          @change="editLane(openLane, { outputTarget: ($event.target as HTMLTextAreaElement).value })"
+        />
+        <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
       <div class="modal-actions">

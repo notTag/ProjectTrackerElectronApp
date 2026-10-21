@@ -62,8 +62,8 @@ export interface ProjectTrackerState {
   boards?: Record<string, ProjectBoard>
   // Also keyed by project path, but per-user rather than shared — see BoardPreferences.
   boardPreferences?: Record<string, BoardPreferences>
-  // Agents available to every board. Optional and empty by default — nothing
-  // configures them yet, so the ticket picker stays empty until something does.
+  // Extra agents offered on every board beside DEFAULT_AGENT. Optional and empty
+  // by default — see availableAgents.
   agents?: Agent[]
 }
 
@@ -144,6 +144,10 @@ export interface SwimLane {
   // Path to a markdown file whose contents supplement agentPrompt. Both are
   // used together when the lane's agent runs; either may be empty.
   agentFilePath: string
+  // Free text naming where the agent's work goes: a file, a directory, or a
+  // sentence like "a new PRD folder in the project". Optional so lanes saved
+  // before it existed still load.
+  outputTarget?: string
 }
 
 export interface ChecklistItem {
@@ -234,22 +238,79 @@ export const ticketSearchText = (ticket: Ticket) => {
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
 }
 
-// A coding agent a ticket can be handed to. Configured agents are persisted in
-// state; the list ships empty, so the picker offers only the shell hand-off
-// until one is added.
+// A coding agent a ticket can be handed to. `command` is the CLI that takes the
+// prompt as its last argument and runs in the project directory; `headlessArgs`
+// go before the prompt when it runs in the background with nobody watching.
 export interface Agent {
   id: string
   name: string
+  command: string
+  headlessArgs: string[]
 }
 
+// ponytail: one built-in agent. Agents saved in state are offered alongside it,
+// so adding Codex or another CLI is one entry, not a code change.
+//
+// acceptEdits lets a background run write its output files without a human to
+// approve them, while shell commands stay denied — the run can draft, not execute.
+export const DEFAULT_AGENT: Agent = {
+  id: 'claude-code',
+  name: 'Claude Code',
+  command: 'claude',
+  headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
+}
+
+export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => [
+  DEFAULT_AGENT,
+  ...(state.agents ?? []).filter((agent) => agent.id !== DEFAULT_AGENT.id)
+]
+
+// A ticket that never picked an agent still runs — with the default — so the
+// hand-off works before anyone touches the picker.
+export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent =>
+  agents.find((agent) => agent.id === ticket.agentId) ?? DEFAULT_AGENT
+
+export interface TicketPromptContext {
+  assigneeName?: string
+}
+
+// Only fields that carry a value become lines, so a bare ticket stays a short
+// prompt instead of a column of "none"s.
+const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
+  const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
+  const lines = [
+    `Ticket #${ticket.number}: ${ticket.title}`,
+    `Status: ${lane.name}`,
+    context.assigneeName ? `Assignee: ${context.assigneeName}` : '',
+    ticket.labels?.length ? `Labels: ${formatLabels(ticket.labels)}` : '',
+    ticket.branchName ? `Branch: ${ticket.branchName}` : '',
+    ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
+    checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
+  ]
+  return lines.filter(Boolean).join('\n')
+}
+
+// Stated as a standing permission because the agent would otherwise stop to ask
+// whether writing into an existing folder is OK — the lane already answered that.
+const outputInstruction = (outputTarget: string) =>
+  [
+    `Output: ${outputTarget}`,
+    'Put your work there. Paths are relative to the project directory unless absolute. ' +
+      'If that location already exists, use it as-is without asking; otherwise create it.'
+  ].join('\n')
+
 // The lane prompt comes first because it is the standing instruction for every
-// ticket in that column; the ticket is the specific work it applies to.
-export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane): string => {
+// ticket in that column; the ticket is the specific work it applies to, and the
+// output location closes it out as the last thing the agent reads.
+export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext = {}): string => {
   const lanePrompt = lane.agentPrompt.trim()
-  const laneFileReference = lane.agentFilePath.trim() ? `Follow the guidance in ${lane.agentFilePath.trim()}.` : ''
-  const ticketHeading = `Ticket #${ticket.number}: ${ticket.title}`
+  const laneFilePath = lane.agentFilePath.trim()
+  const laneFileReference = laneFilePath ? `Follow the guidance in ${laneFilePath}.` : ''
+  const ticketMetadata = ticketMetadataLines(ticket, lane, context)
   const ticketDescription = ticket.description.trim()
-  const sections = [lanePrompt, laneFileReference, ticketHeading, ticketDescription]
+  const outputTarget = lane.outputTarget?.trim() ?? ''
+  const output = outputTarget ? outputInstruction(outputTarget) : ''
+  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, output]
   return sections.filter(Boolean).join('\n\n')
 }
 
@@ -262,9 +323,14 @@ export const shellQuote = (value: string): string => {
   return `'${escapedQuotes}'`
 }
 
-export const ticketShellCommand = (ticket: Ticket, lane: SwimLane): string => {
-  const prompt = ticketAgentPrompt(ticket, lane)
-  return `claude ${shellQuote(prompt)}`
+export const ticketShellCommand = (
+  ticket: Ticket,
+  lane: SwimLane,
+  agent: Agent = DEFAULT_AGENT,
+  context: TicketPromptContext = {}
+): string => {
+  const prompt = ticketAgentPrompt(ticket, lane, context)
+  return `${agent.command} ${shellQuote(prompt)}`
 }
 
 export interface GithubIssue {

@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'n
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { runAgentHeadless } from './agentRun.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
@@ -17,7 +18,7 @@ import {
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
-import type { ProjectTrackerState } from '../src/shared/projectTypes.js'
+import { availableAgents, type ProjectTrackerState } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -385,6 +386,24 @@ const registerIpc = () => {
       clipboard.writeText(fallbackCommand)
       return { ok: true, appLabel: target.label, fallbackCommand }
     }
+  })
+
+  ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, agentId, prompt } = (payload ?? {}) as {
+      projectPath?: unknown
+      agentId?: unknown
+      prompt?: unknown
+    }
+    if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+    if (typeof agentId !== 'string') throw new Error('Invalid agent.')
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
+    // Resolved by id against known agents rather than taking a command from the
+    // payload, so the renderer can pick which agent runs but never what binary.
+    const agent = availableAgents(stateRepository.getState()).find((entry) => entry.id === agentId)
+    if (!agent) throw new Error(`Unknown agent: ${agentId}`)
+    const normalized = assertScannedProjectPath(projectPath)
+    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
   })
 
   ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {
