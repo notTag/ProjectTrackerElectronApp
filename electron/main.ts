@@ -487,7 +487,7 @@ app.whenReady().then(async () => {
   app.dock?.setIcon(getIconPath())
   app.setAboutPanelOptions({ applicationName: APP_NAME, iconPath: getIconPath() })
   configureApplicationMenu()
-  stateRepository = await StateRepository.create(app.getPath('userData'))
+  stateRepository = new StateRepository(app.getPath('userData'))
   registerIpc()
   await createWindow()
 

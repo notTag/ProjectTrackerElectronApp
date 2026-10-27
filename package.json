@@ -22,14 +22,12 @@
     "electron-is-dev": "^3.0.1",
     "electron-updater": "^6.8.9",
     "pinia": "^2.3.1",
-    "sql.js": "^1.13.0",
     "vue": "^3.5.16",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@types/dompurify": "^3.2.0",
     "@types/node": "^22.15.29",
-    "@types/sql.js": "^1.4.9",
     "@vue/tsconfig": "^0.7.0",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
@@ -74,12 +72,6 @@
       "dist-electron/**/*",
       "package.json"
     ],
-    "icon": "assets/app-icon.png",
-    "extraResources": [
-      {
-        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
-        "to": "sql-wasm.wasm"
-      }
-    ]
+    "icon": "assets/app-icon.png"
   }
 }

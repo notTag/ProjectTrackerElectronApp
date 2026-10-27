@@ -1,12 +1,13 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
-import initSqlJs from 'sql.js'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
-import { StateRepository } from './stateRepository.js'
+import { SCHEMA_SQL } from './schema.js'
+import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
 
 const freshUserDataPath = () => mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
 
@@ -58,6 +59,15 @@ const stateWithBoard = (): ProjectTrackerState => {
   }
 }
 
+const seededRepository = (userDataPath: string) => {
+  const repository = new StateRepository(userDataPath)
+  const saved = repository.saveState(stateWithBoard())
+  return { repository, projectPath: saved.snapshot.projects[0].path }
+}
+
+const reopenedBoard = (userDataPath: string, projectPath: string) =>
+  new StateRepository(userDataPath).getState().boards![projectPath]
+
 describe('StateRepository', () => {
   let userDataPath: string
 
@@ -65,10 +75,10 @@ describe('StateRepository', () => {
     userDataPath = freshUserDataPath()
   })
 
-  it('round-trips a board through the normalized tables', async () => {
-    const repository = await StateRepository.create(userDataPath)
+  it('round-trips a board through the normalized tables', () => {
+    const repository = new StateRepository(userDataPath)
     const saved = repository.saveState(stateWithBoard())
-    const loaded = await StateRepository.create(userDataPath).then((reopened) => reopened.getState())
+    const loaded = new StateRepository(userDataPath).getState()
 
     const projectPath = saved.snapshot.projects[0].path
     const board = loaded.boards?.[projectPath]
@@ -87,37 +97,178 @@ describe('StateRepository', () => {
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
   })
+
+  it('removes lanes, tickets and paths the saved state no longer has', () => {
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    board.lanes = board.lanes.filter((lane) => lane.id !== 'prd')
+    board.tickets = board.tickets.filter((ticket) => ticket.id !== 'ticket-b')
+    repository.saveState({ ...state, hiddenPaths: [] })
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.boards![projectPath].lanes.map((lane) => lane.id)).toEqual(['idea'])
+    expect(reopened.boards![projectPath].tickets.map((ticket) => ticket.id)).toEqual(['ticket-a'])
+    expect(reopened.hiddenPaths).toEqual([])
+  })
 })
 
-
-describe('schema upgrades', () => {
-  it('adds lane columns to a database created before they existed', async () => {
+describe('row-level writes', () => {
+  it('creates, updates, moves and deletes a single ticket', () => {
     const userDataPath = freshUserDataPath()
-    const sql = await initSqlJs()
-    const oldDatabase = new sql.Database()
-    oldDatabase.run(`CREATE TABLE swim_lanes (
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    const created = repository.createTicket(projectPath, {
+      id: 'ticket-c',
+      laneId: 'idea',
+      title: 'C',
+      description: '',
+      createdAt: '2026-01-03T00:00:00.000Z'
+    })
+    expect(created.number).toBe(3)
+
+    repository.updateTicket('ticket-c', { title: 'C, retitled', labels: ['ui'] })
+    repository.moveTicket('ticket-c', 'prd')
+    const afterEdit = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-c')
+    expect(afterEdit).toMatchObject({ number: 3, title: 'C, retitled', labels: ['ui'], laneId: 'prd' })
+
+    repository.deleteTicket('ticket-c')
+    const remainingIds = reopenedBoard(userDataPath, projectPath).tickets.map((ticket) => ticket.id)
+    expect(remainingIds).toEqual(['ticket-a', 'ticket-b'])
+  })
+
+  it('upserts and deletes a swim lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    repository.upsertSwimLane(projectPath, { id: 'idea', name: 'Ideas', agentPrompt: '', agentFilePath: '' }, 0)
+    repository.deleteSwimLane(projectPath, 'prd')
+
+    const lanes = reopenedBoard(userDataPath, projectPath).lanes
+    expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['idea', 'Ideas']])
+  })
+})
+
+describe('concurrent writers', () => {
+  it('keeps a sqlite3 CLI edit to another ticket through the next whole-state save', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const rendererState = repository.getState()
+
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    cli.prepare("UPDATE tickets SET title = 'Edited in the CLI' WHERE id = 'ticket-b'").run()
+    cli.prepare(
+      `INSERT INTO tickets (id, project_path, lane_id, number, title, description, created_at)
+       VALUES ('ticket-cli', ?, 'idea', 3, 'Inserted in the CLI', '', '2026-01-04T00:00:00.000Z')`
+    ).run(projectPath)
+    cli.close()
+
+    const board = rendererState.boards![projectPath]
+    board.tickets[0] = { ...board.tickets[0], title: 'Edited in the app' }
+    const returned = repository.saveState(rendererState)
+
+    const titles = reopenedBoard(userDataPath, projectPath).tickets.map((ticket) => ticket.title)
+    expect(titles).toEqual(['Edited in the app', 'Edited in the CLI', 'Inserted in the CLI'])
+    // The renderer adopts what saveState returns, so it sees the CLI edits too.
+    expect(returned.boards![projectPath].tickets.map((ticket) => ticket.title)).toEqual(titles)
+  })
+
+  it('lets two repositories on one file write different rows without losing either', () => {
+    const userDataPath = freshUserDataPath()
+    const { projectPath } = seededRepository(userDataPath)
+    const first = new StateRepository(userDataPath)
+    const second = new StateRepository(userDataPath)
+    const firstState = first.getState()
+    const secondState = second.getState()
+
+    firstState.boards![projectPath].tickets[0].title = 'First instance'
+    secondState.boards![projectPath].tickets[1].title = 'Second instance'
+    first.saveState(firstState)
+    second.saveState(secondState)
+
+    const titles = reopenedBoard(userDataPath, projectPath).tickets.map((ticket) => ticket.title)
+    expect(titles).toEqual(['First instance', 'Second instance'])
+  })
+
+  it('gives tickets created at once by two instances distinct numbers', () => {
+    const userDataPath = freshUserDataPath()
+    const { projectPath } = seededRepository(userDataPath)
+    const first = new StateRepository(userDataPath)
+    const second = new StateRepository(userDataPath)
+
+    // Both renderers number their new ticket 3 from their own copy of the board.
+    const newTicket = (id: string) => ({ id, number: 3, laneId: 'idea', title: id, description: '', createdAt: '' })
+    const firstState = first.getState()
+    const secondState = second.getState()
+    firstState.boards![projectPath].tickets.push(newTicket('from-first'))
+    secondState.boards![projectPath].tickets.push(newTicket('from-second'))
+    first.saveState(firstState)
+    second.saveState(secondState)
+    const rowLevel = first.createTicket(projectPath, { id: 'row-level', laneId: 'idea', title: '', description: '', createdAt: '' })
+
+    const numbers = reopenedBoard(userDataPath, projectPath).tickets.map((ticket) => [ticket.id, ticket.number])
+    expect(numbers).toEqual([
+      ['ticket-a', 1],
+      ['ticket-b', 2],
+      ['from-first', 3],
+      ['from-second', 4],
+      ['row-level', 5]
+    ])
+    expect(rowLevel.number).toBe(5)
+  })
+})
+
+describe('legacy databases', () => {
+  // sql.js wrote plain rollback-journal SQLite files, which is what a fresh
+  // DatabaseSync produces before anything switches it to WAL.
+  it('opens a sql.js-era file in place with its data intact, adds new columns and backs it up', () => {
+    const userDataPath = freshUserDataPath()
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    legacy.exec(`CREATE TABLE swim_lanes (
       id TEXT NOT NULL, project_path TEXT NOT NULL, name TEXT NOT NULL, agent_prompt TEXT NOT NULL,
       agent_file_path TEXT NOT NULL, position INTEGER NOT NULL, is_unassigned INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (project_path, id))`)
-    writeFileSync(path.join(userDataPath, 'project-tracker.sqlite'), Buffer.from(oldDatabase.export()))
+    legacy.exec(SCHEMA_SQL)
+    legacy.exec(`
+      INSERT INTO users VALUES ('local', 'Local', '2026-01-01T00:00:00.000Z');
+      INSERT INTO projects (path, name, status, priority, notes, source, has_git, has_package_json, has_readme, last_scanned_at)
+        VALUES ('/legacy', 'Legacy', 'active', 'medium', '', 'scan', 1, 0, 0, '2026-01-01T00:00:00.000Z');
+      INSERT INTO project_members VALUES ('/legacy', 'local', '2026-01-01T00:00:00.000Z');
+      INSERT INTO swim_lanes VALUES ('idea', '/legacy', 'Idea', '', '', 0, 0);
+      INSERT INTO tickets (id, project_path, lane_id, number, title, description, created_at)
+        VALUES ('old-ticket', '/legacy', 'idea', 1, 'From sql.js', '', '2026-01-01T00:00:00.000Z');
+      INSERT INTO user_settings VALUES ('local', 'version', '1');`)
+    expect(legacy.prepare('PRAGMA journal_mode').get()?.journal_mode).toBe('delete')
+    legacy.close()
 
-    const repository = await StateRepository.create(userDataPath)
-    const saved = repository.saveState(stateWithBoard())
-    const projectPath = saved.snapshot.projects[0].path
-    const reopened = (await StateRepository.create(userDataPath)).getState()
-    expect(reopened.boards?.[projectPath].lanes[1].outputTarget).toBe('docs/prd/')
+    const state = new StateRepository(userDataPath).getState()
+    expect(state.snapshot.projects.map((project) => project.name)).toEqual(['Legacy'])
+    expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js'])
+    expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
+    expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
+
+    const reopened = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    expect(reopened.prepare('PRAGMA journal_mode').get()?.journal_mode).toBe('wal')
+    reopened.close()
+  })
+
+  it('does not back up a database that is already in WAL mode', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(false)
   })
 })
 
 describe('shared projects', () => {
-  it('shows one user the edits another made to the same ticket', async () => {
+  it('shows one user the edits another made to the same ticket', () => {
     const userDataPath = freshUserDataPath()
-    const asAlice = await StateRepository.create(userDataPath, 'alice')
+    const asAlice = new StateRepository(userDataPath, 'alice')
     const seeded = asAlice.saveState({ ...stateWithBoard(), userId: 'alice' })
     const projectPath = seeded.snapshot.projects[0].path
 
     // Bob joins the same project, then re-titles a ticket Alice created.
-    const asBob = await StateRepository.create(userDataPath, 'bob')
+    const asBob = new StateRepository(userDataPath, 'bob')
     const bobState = asBob.getState()
     expect(bobState.snapshot.projects).toHaveLength(0)
 
@@ -129,30 +280,30 @@ describe('shared projects', () => {
     board.tickets[0] = { ...board.tickets[0], title: 'Edited by Bob', assigneeId: 'bob' }
     asBob.saveState(joined)
 
-    const aliceSees = (await StateRepository.create(userDataPath, 'alice')).getState()
+    const aliceSees = new StateRepository(userDataPath, 'alice').getState()
     expect(aliceSees.boards![projectPath].tickets[0].title).toBe('Edited by Bob')
     expect(aliceSees.boards![projectPath].tickets[0].assigneeId).toBe('bob')
   })
 
-  it('leaves projects a user cannot see untouched when they save', async () => {
+  it('leaves projects a user cannot see untouched when they save', () => {
     const userDataPath = freshUserDataPath()
-    const asAlice = await StateRepository.create(userDataPath, 'alice')
+    const asAlice = new StateRepository(userDataPath, 'alice')
     const seeded = asAlice.saveState({ ...stateWithBoard(), userId: 'alice' })
     const projectPath = seeded.snapshot.projects[0].path
 
-    const asBob = await StateRepository.create(userDataPath, 'bob')
+    const asBob = new StateRepository(userDataPath, 'bob')
     asBob.saveState(asBob.getState())
 
-    const aliceSees = (await StateRepository.create(userDataPath, 'alice')).getState()
+    const aliceSees = new StateRepository(userDataPath, 'alice').getState()
     expect(aliceSees.snapshot.projects).toHaveLength(1)
     expect(aliceSees.boards![projectPath].tickets).toHaveLength(2)
   })
 })
 
 describe('board preferences', () => {
-  it('survives a reopen and stays private to the user who set it', async () => {
+  it('survives a reopen and stays private to the user who set it', () => {
     const userDataPath = freshUserDataPath()
-    const asAlice = await StateRepository.create(userDataPath, 'alice')
+    const asAlice = new StateRepository(userDataPath, 'alice')
     const seeded = asAlice.saveState({ ...stateWithBoard(), userId: 'alice' })
     const projectPath = seeded.snapshot.projects[0].path
 
@@ -167,14 +318,14 @@ describe('board preferences', () => {
       }
     })
 
-    const aliceReopened = (await StateRepository.create(userDataPath, 'alice')).getState()
+    const aliceReopened = new StateRepository(userDataPath, 'alice').getState()
     expect(aliceReopened.boardPreferences?.[projectPath]).toEqual({
       laneWidths: { idea: 420 },
       hiddenLaneIds: ['github-issues'],
       cardFields: ['number']
     })
 
-    const asBob = await StateRepository.create(userDataPath, 'bob')
+    const asBob = new StateRepository(userDataPath, 'bob')
     asBob.addProjectMember(projectPath, 'bob')
     expect(asBob.getState().boardPreferences).toEqual({})
   })
