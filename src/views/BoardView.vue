@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import TicketGraph from '@/components/TicketGraph.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
@@ -53,6 +54,7 @@ const assigneeName = (assigneeId?: string) =>
 
 const agents = computed<Agent[]>(() => availableAgents(store.state))
 
+const boardView = ref<'lanes' | 'graph'>('lanes')
 const filterQuery = ref('')
 const showOnlyMine = ref(false)
 const filterLaneId = ref('')
@@ -322,7 +324,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </button>
       <button
         class="secondary"
-        title="Create ticket"
+        title="What you want to build"
         @click="startTicketDraft()"
       >
         + Ticket
@@ -389,9 +391,19 @@ const runTicketAgent = (ticket: Ticket) => {
       </button>
       <span class="filter-count">{{ visibleTicketCount }} of {{ board.tickets.length }}</span>
       <button v-if="filtersActive" class="secondary" @click="clearFilters">Clear</button>
+      <div class="board-view-switch" role="group" aria-label="Ticket view" :class="{ 'is-graph': boardView === 'graph' }">
+        <span class="view-switch-slider" aria-hidden="true" />
+        <button title="Graph view" aria-label="Graph view" :aria-pressed="boardView === 'graph'" @click="boardView = 'graph'; openTicketId = null">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 7L17 12L6 18"/><circle cx="5" cy="6" r="3"/><circle cx="19" cy="12" r="3"/><circle cx="5" cy="19" r="3"/></svg>
+        </button>
+        <button title="Swimlane view" aria-label="Swimlane view" :aria-pressed="boardView === 'lanes'" @click="boardView = 'lanes'; openTicketId = null">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+      </div>
     </section>
 
-    <section v-if="board.lanes.length === 0" class="board-empty">
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
     </section>
@@ -406,13 +418,14 @@ const runTicketAgent = (ticket: Ticket) => {
         @dragover.prevent
         @drop.prevent="dropOnLane(lane.id)"
       >
-        <header class="lane-heading">
+        <header class="lane-heading" @dblclick="startTicketDraft(lane.id)">
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button
             class="icon-button"
-            :title="`Configure ${lane.name}`"
+            title="How you want to build it"
             @click="openLaneId = lane.id"
+            @dblclick.stop
           >
             ⚙
           </button>
@@ -546,9 +559,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="openTicket" class="modal-backdrop" @click.self="closeModals">
-    <!-- Focusing any field pulls in writes from other processes first, so the
-         user starts editing from the latest value rather than a stale one. -->
+  <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @click.self="closeModals">
+    <!-- Refresh before editing so fields include writes from other processes. -->
     <section class="modal ticket-modal" @focusin="store.refresh()">
       <p class="eyebrow">
         #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}

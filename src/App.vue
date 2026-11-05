@@ -3,6 +3,7 @@ import { useThemeEffect } from '@nick_tag_tech/themes/vue'
 import { storeToRefs } from 'pinia'
 import { onBeforeUnmount, watch } from 'vue'
 
+import PageFind from '@/components/PageFind.vue'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { useProjectsStore } from '@/stores/projects'
 import { useThemeStore } from '@/stores/theme'
@@ -39,4 +40,5 @@ watch(
 
 <template>
   <RouterView />
+  <PageFind />
 </template>
