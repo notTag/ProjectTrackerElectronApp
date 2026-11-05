@@ -33,7 +33,12 @@ import {
 
 type Row = Record<string, unknown>
 
-const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
+// External writers (e.g. the sqlite3 CLI's readfile()) can store a BLOB in a
+// TEXT column; sql.js hands that back as a Uint8Array, which String() would
+// turn into comma-separated byte values.
+const utf8Decoder = new TextDecoder()
+const toText = (value: unknown) => (value instanceof Uint8Array ? utf8Decoder.decode(value) : String(value))
+const asText = (value: unknown) => (value === null || value === undefined ? undefined : toText(value))
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
   const text = asText(value)
@@ -93,7 +98,7 @@ export class StateRepository {
 
   private readUsers(): User[] {
     const rows = this.select('SELECT id, name FROM users ORDER BY name')
-    return rows.map((row) => ({ id: String(row.id), name: String(row.name) }))
+    return rows.map((row) => ({ id: toText(row.id), name: toText(row.name) }))
   }
 
   private ensureUser() {
@@ -174,12 +179,12 @@ export class StateRepository {
       this.userId,
       kind
     ])
-    return rows.map((row) => String(row.path))
+    return rows.map((row) => toText(row.path))
   }
 
   private readProjectPaths(kind: string): string[] {
     const rows = this.select('SELECT path FROM project_paths WHERE kind = ? ORDER BY path', [kind])
-    return rows.map((row) => String(row.path))
+    return rows.map((row) => toText(row.path))
   }
 
   private readProjects(): ProjectRecord[] {
@@ -191,12 +196,12 @@ export class StateRepository {
       [this.userId]
     )
     return rows.map((row) => ({
-      path: String(row.path),
-      name: String(row.name),
-      status: String(row.status) as ProjectRecord['status'],
-      priority: String(row.priority) as ProjectRecord['priority'],
-      notes: String(row.notes),
-      source: String(row.source) as ProjectRecord['source'],
+      path: toText(row.path),
+      name: toText(row.name),
+      status: toText(row.status) as ProjectRecord['status'],
+      priority: toText(row.priority) as ProjectRecord['priority'],
+      notes: toText(row.notes),
+      source: toText(row.source) as ProjectRecord['source'],
       packageManager: asText(row.package_manager),
       githubUrl: asText(row.github_url),
       github: parseJson<ProjectRecord['github']>(row.github_json, undefined),
@@ -204,7 +209,7 @@ export class StateRepository {
       hasPackageJson: asBool(row.has_package_json),
       hasReadme: asBool(row.has_readme),
       lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: String(row.last_scanned_at)
+      lastScannedAt: toText(row.last_scanned_at)
     }))
   }
 
@@ -224,27 +229,27 @@ export class StateRepository {
       (boards[projectPath] ??= { lanes: [], tickets: [] })
 
     for (const row of laneRows) {
-      const board = boardFor(String(row.project_path))
+      const board = boardFor(toText(row.project_path))
       const lane: SwimLane = {
-        id: String(row.id),
-        name: String(row.name),
-        agentPrompt: String(row.agent_prompt),
-        agentFilePath: String(row.agent_file_path),
-        outputTarget: String(row.output_target)
+        id: toText(row.id),
+        name: toText(row.name),
+        agentPrompt: toText(row.agent_prompt),
+        agentFilePath: toText(row.agent_file_path),
+        outputTarget: toText(row.output_target)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
     }
 
     for (const row of ticketRows) {
-      const board = boardFor(String(row.project_path))
+      const board = boardFor(toText(row.project_path))
       board.tickets.push({
-        id: String(row.id),
+        id: toText(row.id),
         number: Number(row.number),
-        laneId: String(row.lane_id),
-        title: String(row.title),
-        description: String(row.description),
-        createdAt: String(row.created_at),
+        laneId: toText(row.lane_id),
+        title: toText(row.title),
+        description: toText(row.description),
+        createdAt: toText(row.created_at),
         updatedAt: asText(row.updated_at),
         branchName: asText(row.branch_name),
         assigneeId: asText(row.assignee_id),
