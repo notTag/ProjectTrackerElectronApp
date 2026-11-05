@@ -218,6 +218,10 @@ const createWindow = async () => {
     }
   })
 
+  mainWindow.webContents.on('found-in-page', (_event, result) => {
+    mainWindow?.webContents.send('page-find:result', { activeMatchOrdinal: result.activeMatchOrdinal, matches: result.matches })
+  })
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -295,6 +299,16 @@ const configureApplicationMenu = () => {
 }
 
 const registerIpc = () => {
+  ipcMain.handle('page-find:search', (event, text: unknown, forward: unknown, next: unknown) => {
+    assertTrustedSender(event)
+    if (typeof text !== 'string' || !text) return
+    event.sender.findInPage(text, { forward: forward !== false, findNext: next === true })
+  })
+  ipcMain.handle('page-find:stop', (event) => {
+    assertTrustedSender(event)
+    event.sender.stopFindInPage('clearSelection')
+  })
+
   ipcMain.handle('theme:set-native', (event, type: unknown) => {
     assertTrustedSender(event)
     if (type !== 'light' && type !== 'dark') throw new Error('Invalid theme type.')

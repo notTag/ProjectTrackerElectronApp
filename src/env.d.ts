@@ -8,6 +8,9 @@ import type {
 } from './shared/projectTypes'
 
 interface ProjectTrackerElectronApi {
+  findInPage(text: string, forward?: boolean, next?: boolean): Promise<void>
+  stopFindInPage(): Promise<void>
+  onFindResult(callback: (result: { activeMatchOrdinal: number; matches: number }) => void): () => void
   getProjectState(): Promise<ProjectTrackerState>
   saveProjectState(state: ProjectTrackerState): Promise<ProjectTrackerState>
   // Null when nothing outside this app has written since the last read.

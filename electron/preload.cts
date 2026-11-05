@@ -13,6 +13,13 @@ const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> =
 }
 
 contextBridge.exposeInMainWorld('projectTracker', {
+  findInPage: (text: string, forward = true, next = false) => ipcRenderer.invoke('page-find:search', text, forward, next),
+  stopFindInPage: () => ipcRenderer.invoke('page-find:stop'),
+  onFindResult: (callback: (result: { activeMatchOrdinal: number; matches: number }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, result: { activeMatchOrdinal: number; matches: number }) => callback(result)
+    ipcRenderer.on('page-find:result', listener)
+    return () => ipcRenderer.removeListener('page-find:result', listener)
+  },
   getProjectState: () => invokePlain('project-state:get'),
   saveProjectState: (state: ProjectTrackerState) => invokePlain('project-state:save', state),
   refreshProjectState: () => invokePlain('project-state:refresh'),
