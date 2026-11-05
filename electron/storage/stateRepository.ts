@@ -61,6 +61,17 @@ const canonicalJson = (value: unknown) =>
     return Object.fromEntries(sortedEntries)
   })
 const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
+
+// Includes fields present on only one side, so a cleared field (now undefined)
+// counts as a change and gets written as NULL.
+const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
+  const nextRecord = next as Record<string, unknown>
+  const previousRecord = previous as Record<string, unknown>
+  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
+  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
+  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
+  return Object.fromEntries(changedEntries) as Partial<T>
+}
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
@@ -128,6 +139,9 @@ export class StateRepository {
   // that differ from it, so rows another process changed in the meantime — a
   // second app window, the sqlite3 CLI — are left alone instead of clobbered.
   private baseline: ProjectTrackerState | undefined
+  // PRAGMA data_version as of the last read. It only moves when another
+  // connection commits, so a mismatch means someone else wrote to the file.
+  private dataVersionAtLastRead: number | undefined
 
   constructor(userDataPath: string, userId: string = DEFAULT_USER_ID) {
     mkdirSync(userDataPath, { recursive: true })
@@ -237,7 +251,19 @@ export class StateRepository {
     })
   }
 
+  private dataVersion(): number {
+    return Number(this.select('PRAGMA data_version')[0].data_version)
+  }
+
+  // Cheap enough to poll: a header check, no table reads.
+  hasExternalChanges(): boolean {
+    return this.dataVersion() !== this.dataVersionAtLastRead
+  }
+
   getState(): ProjectTrackerState {
+    // Taken before reading, so a commit landing mid-read shows up as a change
+    // on the next check instead of being missed.
+    this.dataVersionAtLastRead = this.dataVersion()
     const projects = this.readProjects()
     // Seed only into a genuinely empty database. Checking this user's projects
     // instead would re-seed for every new user and collide with shared rows.
@@ -483,17 +509,23 @@ export class StateRepository {
     const baselineTickets = keyBy(baselineBoard.tickets, (ticket) => ticket.id)
     const keptTicketIds = new Set(board.tickets.map((ticket) => ticket.id))
     for (const ticket of board.tickets) {
-      if (!sameRow(ticket, baselineTickets.get(ticket.id))) this.writeTicketRow(projectPath, ticket)
+      const baselineTicket = baselineTickets.get(ticket.id)
+      if (!sameRow(ticket, baselineTicket)) this.writeTicketRow(projectPath, ticket, baselineTicket)
     }
     for (const ticketId of baselineTickets.keys()) {
       if (!keptTicketIds.has(ticketId)) this.deleteTicket(ticketId)
     }
   }
 
-  private writeTicketRow(projectPath: string, ticket: Ticket) {
-    const ticketExists = this.select('SELECT 1 FROM tickets WHERE id = ?', [ticket.id]).length > 0
-    if (ticketExists) {
-      this.updateTicketRow(projectPath, ticket)
+  // Field-level: only the fields this save changed relative to the baseline are
+  // laid over the row as it stands now. Another writer's change to a different
+  // field of the same ticket (a CLI lane move, say) survives the save.
+  private writeTicketRow(projectPath: string, ticket: Ticket, baselineTicket: Ticket | undefined) {
+    const [currentRow] = this.select('SELECT * FROM tickets WHERE id = ?', [ticket.id])
+    if (currentRow) {
+      const editedFields = baselineTicket ? changedFields(ticket, baselineTicket) : ticket
+      const merged = { ...ticketFromRow(currentRow), ...editedFields }
+      this.updateTicketRow(projectPath, merged)
       return
     }
     // The renderer numbers a new ticket from its own copy of the board, and

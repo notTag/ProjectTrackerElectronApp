@@ -171,6 +171,23 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
+    // Picks up writes from other processes. Queued behind pending saves so the
+    // fresh read never lands between a save's mutate and its write, which keeps
+    // the main process's diff baseline equal to the state the renderer holds.
+    async refresh() {
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const freshState = await projectTrackerApi.refreshProjectState()
+          if (freshState) this.state = freshState
+        })
+      try {
+        await saveQueue
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      }
+    },
+
     async save(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
       this.saving = true
       this.error = null

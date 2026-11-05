@@ -173,6 +173,56 @@ describe('concurrent writers', () => {
     expect(returned.boards![projectPath].tickets.map((ticket) => ticket.title)).toEqual(titles)
   })
 
+  it('keeps a CLI lane move when the app edits a different field of the same ticket', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const rendererState = repository.getState()
+
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    cli.prepare("UPDATE tickets SET lane_id = 'prd' WHERE id = 'ticket-a'").run()
+    cli.close()
+
+    // The renderer still holds ticket-a in 'idea' and edits only its title.
+    const board = rendererState.boards![projectPath]
+    board.tickets[0] = { ...board.tickets[0], title: 'Renamed in the app', branchName: undefined }
+    repository.saveState(rendererState)
+
+    const ticket = reopenedBoard(userDataPath, projectPath).tickets.find((entry) => entry.id === 'ticket-a')!
+    expect(ticket.laneId).toBe('prd')
+    expect(ticket.title).toBe('Renamed in the app')
+  })
+
+  it('writes a field the app cleared', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const rendererState = repository.getState()
+
+    const board = rendererState.boards![projectPath]
+    board.tickets[0] = { ...board.tickets[0], labels: undefined }
+    repository.saveState(rendererState)
+
+    const ticket = reopenedBoard(userDataPath, projectPath).tickets.find((entry) => entry.id === 'ticket-a')!
+    expect(ticket.labels).toBeUndefined()
+  })
+
+  it('reports changes committed by another connection, not its own writes', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository } = seededRepository(userDataPath)
+    const rendererState = repository.getState()
+    expect(repository.hasExternalChanges()).toBe(false)
+
+    repository.saveState({ ...rendererState, scanDirectories: ['/Users/example/Other'] })
+    expect(repository.hasExternalChanges()).toBe(false)
+
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    cli.prepare("UPDATE tickets SET title = 'From outside' WHERE id = 'ticket-b'").run()
+    cli.close()
+    expect(repository.hasExternalChanges()).toBe(true)
+
+    repository.getState()
+    expect(repository.hasExternalChanges()).toBe(false)
+  })
+
   it('lets two repositories on one file write different rows without losing either', () => {
     const userDataPath = freshUserDataPath()
     const { projectPath } = seededRepository(userDataPath)

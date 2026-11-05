@@ -10,6 +10,9 @@ import type {
 interface ProjectTrackerElectronApi {
   getProjectState(): Promise<ProjectTrackerState>
   saveProjectState(state: ProjectTrackerState): Promise<ProjectTrackerState>
+  // Null when nothing outside this app has written since the last read.
+  refreshProjectState(): Promise<ProjectTrackerState | null>
+  onExternalChange(callback: () => void): () => void
   scanProjectDirectories(
     scanDirectories: string[],
     hiddenPaths: string[],

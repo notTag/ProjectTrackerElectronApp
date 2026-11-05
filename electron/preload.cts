@@ -15,6 +15,15 @@ const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> =
 contextBridge.exposeInMainWorld('projectTracker', {
   getProjectState: () => invokePlain('project-state:get'),
   saveProjectState: (state: ProjectTrackerState) => invokePlain('project-state:save', state),
+  refreshProjectState: () => invokePlain('project-state:refresh'),
+  // The IPC event object is withheld so the renderer never gets ipcRenderer access.
+  onExternalChange: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('project-state:external-change', listener)
+    return () => {
+      ipcRenderer.removeListener('project-state:external-change', listener)
+    }
+  },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
