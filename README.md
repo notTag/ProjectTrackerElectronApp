@@ -159,9 +159,9 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 
 ### Known limits
 
-- Every save still sends the entire state over IPC. The main process compares it with the state it last handed out and writes only the rows that changed. The renderer doesn't call the row-level repository methods yet.
-- Changes another process makes show up in the app on its next save or reload. There's no live refresh.
-- When two writers edit the same row, the last write wins.
+- Every save still sends the entire state over IPC. The main process compares it with the state it last handed out and writes only what changed: changed fields for tickets, changed rows for everything else. The renderer doesn't call the row-level repository methods yet.
+- Changes another process makes reach the app within about 10 seconds, when the window regains focus, or when you focus a field in a ticket. The background check skips while a field has focus, so it never replaces text you're typing.
+- When two writers edit the same ticket field, or the same lane, project or setting, the last write wins.
 - `node:sqlite` is still experimental in Node 22 and logs an `ExperimentalWarning` at startup.
 
 ## Tech stack
