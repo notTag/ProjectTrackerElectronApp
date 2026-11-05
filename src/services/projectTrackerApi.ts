@@ -26,6 +26,17 @@ export const projectTrackerApi = {
     return plainState
   },
 
+  // The browser fallback has no other writers, so there is never anything new.
+  async refreshProjectState(): Promise<ProjectTrackerState | null> {
+    if (window.projectTracker) return window.projectTracker.refreshProjectState()
+    return null
+  },
+
+  onExternalChange(callback: () => void): () => void {
+    if (window.projectTracker) return window.projectTracker.onExternalChange(callback)
+    return () => undefined
+  },
+
   async scanProjectDirectories(
     scanDirectories: string[],
     hiddenPaths: string[],

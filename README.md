@@ -128,7 +128,7 @@ The app is written in TypeScript. Electron's main process handles database acces
 
 Both processes compile `src/shared/`, so the Vue components and SQLite layer use the same type definitions, including `Ticket`. This directory also holds the pure reducers for lane deletion, ticket numbering and GitHub import. The unit tests cover these reducers.
 
-The main process runs SQLite through sql.js, a WebAssembly build of SQLite. The packaged app includes `sql-wasm.wasm` as an extra resource.
+The main process opens the database file directly with `node:sqlite`, which is built into Electron's Node, so there's no native module to rebuild. The database runs in WAL mode with a 5 second busy timeout. A second app instance or the `sqlite3` CLI can read and write while the app is open. Each write is its own transaction, committed by SQLite.
 
 ## Data storage
 
@@ -159,16 +159,17 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 
 ### Known limits
 
-- Every save still sends the entire state over IPC and replaces the visible rows. The tables are normalized, but saving individual records isn't implemented yet.
-- sql.js exports the whole database to disk on every write, so file I/O is O(database size).
-- Running two app instances can overwrite data. Writes are only serialized within a single instance.
+- Every save still sends the entire state over IPC. The main process compares it with the state it last handed out and writes only what changed: changed fields for tickets, changed rows for everything else. The renderer doesn't call the row-level repository methods yet.
+- Changes another process makes reach the app within about 10 seconds, when the window regains focus, or when you focus a field in a ticket. The background check skips while a field has focus, so it never replaces text you're typing.
+- When two writers edit the same ticket field, or the same lane, project or setting, the last write wins.
+- `node:sqlite` is still experimental in Node 22 and logs an `ExperimentalWarning` at startup.
 
 ## Tech stack
 
 - [Electron](https://www.electronjs.org/) — desktop shell
 - [Vue 3](https://vuejs.org/) + [Pinia](https://pinia.vuejs.org/) + [vue-router](https://router.vuejs.org/) — UI, state and routing
 - [Vite](https://vitejs.dev/) — dev server and bundler
-- [sql.js](https://sql.js.org/) — SQLite compiled to WebAssembly, embedded in the main process
+- [node:sqlite](https://nodejs.org/api/sqlite.html) — SQLite built into Node, used from the main process
 - [electron-builder](https://www.electron.build/) — macOS packaging
 
 ## Troubleshooting
@@ -185,6 +186,6 @@ Run `bun run build` first. The `start:dev` script expects built output in `dist/
 
 Use `bun run dist` followed by `bun run start:prod`. `start:dev` runs Electron's stock development host, which macOS labels as Electron.
 
-**Packaged app isn't saving data**
+**Database from an older version**
 
-The build bundles `sql-wasm.wasm` as an extra resource. If you change the sql.js version, rebuild with `bun run dist`.
+Databases written by older versions (sql.js) open in place. The first launch on the new engine copies the file to `project-tracker.pre-wal-backup.sqlite` in the same folder before switching it to WAL mode.

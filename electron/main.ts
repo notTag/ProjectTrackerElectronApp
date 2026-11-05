@@ -28,6 +28,11 @@ const APP_NAME = 'Project Tracker'
 let mainWindow: BrowserWindow | null = null
 let stateRepository: StateRepository
 
+// ponytail: slow fixed poll for writes from other processes (a second app
+// instance, the sqlite3 CLI). The renderer also refreshes on window focus and
+// when a ticket field gains focus, so this only covers the idle case.
+const EXTERNAL_CHANGE_POLL_MS = 10_000
+
 app.setName(APP_NAME)
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
@@ -303,6 +308,14 @@ const registerIpc = () => {
     return toPlainJson(stateRepository.getState())
   })
 
+  // Null when nothing outside this app wrote since the last read, so the
+  // renderer can call this freely without re-reading the whole database.
+  ipcMain.handle('project-state:refresh', (event) => {
+    assertTrustedSender(event)
+    if (!stateRepository.hasExternalChanges()) return null
+    return toPlainJson(stateRepository.getState())
+  })
+
   ipcMain.handle('project-state:save', (event, state: unknown) => {
     assertTrustedSender(event)
     if (!isProjectTrackerState(state)) throw new Error('Invalid project state payload.')
@@ -487,9 +500,17 @@ app.whenReady().then(async () => {
   app.dock?.setIcon(getIconPath())
   app.setAboutPanelOptions({ applicationName: APP_NAME, iconPath: getIconPath() })
   configureApplicationMenu()
-  stateRepository = await StateRepository.create(app.getPath('userData'))
+  stateRepository = new StateRepository(app.getPath('userData'))
   registerIpc()
   await createWindow()
+
+  setInterval(() => {
+    const window = mainWindow
+    const windowIsOpen = window !== null && !window.isDestroyed()
+    if (windowIsOpen && stateRepository.hasExternalChanges()) {
+      window.webContents.send('project-state:external-change')
+    }
+  }, EXTERNAL_CHANGE_POLL_MS)
 
   // ponytail: electron-updater's defaults already download in the background
   // and swap the app in on quit, with a native notification once it lands.

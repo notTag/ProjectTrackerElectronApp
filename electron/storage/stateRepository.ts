@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
-
-import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 
 import {
   createSeedState,
@@ -31,7 +30,13 @@ import {
   SETTING_VERSION
 } from './schema.js'
 
+export const DATABASE_FILE_NAME = 'project-tracker.sqlite'
+// Copied once, the first time a database written by the old sql.js engine is
+// switched to WAL mode. Cheap insurance for the one-way upgrade.
+export const LEGACY_BACKUP_FILE_NAME = 'project-tracker.pre-wal-backup.sqlite'
+
 type Row = Record<string, unknown>
+type PositionedLane = { lane: SwimLane; position: number }
 
 const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
 const asBool = (value: unknown) => Number(value) === 1
@@ -44,51 +49,176 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
     return fallback
   }
 }
+const jsonOrNull = (value: unknown) => (value ? JSON.stringify(value) : null)
+
+// Key order differs between objects read from the database and objects the
+// renderer rebuilt with a spread, so rows are compared with sorted keys.
+const canonicalJson = (value: unknown) =>
+  JSON.stringify(value, (_key, nested: unknown) => {
+    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
+    if (!isPlainObject) return nested
+    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
+    return Object.fromEntries(sortedEntries)
+  })
+const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
+
+// Includes fields present on only one side, so a cleared field (now undefined)
+// counts as a change and gets written as NULL.
+const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
+  const nextRecord = next as Record<string, unknown>
+  const previousRecord = previous as Record<string, unknown>
+  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
+  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
+  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
+  return Object.fromEntries(changedEntries) as Partial<T>
+}
+const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
+
+const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
+  const normalizeLane = (lane: SwimLane): SwimLane => ({ ...lane, outputTarget: lane.outputTarget ?? '' })
+  // Position -1 keeps the unassigned column ahead of the ordered lanes.
+  const unassigned = board.unassignedLane
+    ? [{ lane: normalizeLane({ ...board.unassignedLane, id: UNASSIGNED_LANE_ID }), position: -1 }]
+    : []
+  const ordered = board.lanes.map((lane, position) => ({ lane: normalizeLane(lane), position }))
+  return [...unassigned, ...ordered]
+}
+
+const settingsOf = (state: ProjectTrackerState): Record<string, string | undefined> => ({
+  [SETTING_VERSION]: String(state.version),
+  [SETTING_UPDATED_AT]: state.updatedAt,
+  [SETTING_SCAN_FAILURES]: JSON.stringify(state.snapshot.failures ?? []),
+  [SETTING_BOARD_PREFERENCES]: JSON.stringify(state.boardPreferences ?? {}),
+  [SETTING_SCANNED_AT]: state.snapshot.scannedAt
+})
+
+const listChanges = (next: string[], previous: string[]) => ({
+  added: next.filter((entry) => !previous.includes(entry)),
+  removed: previous.filter((entry) => !next.includes(entry))
+})
+
+const ticketFromRow = (row: Row): Ticket => ({
+  id: String(row.id),
+  number: Number(row.number),
+  laneId: String(row.lane_id),
+  title: String(row.title),
+  description: String(row.description),
+  createdAt: String(row.created_at),
+  updatedAt: asText(row.updated_at),
+  branchName: asText(row.branch_name),
+  assigneeId: asText(row.assignee_id),
+  labels: parseJson<string[] | undefined>(row.labels_json, undefined),
+  checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
+  agentRun: parseJson<Ticket['agentRun']>(row.agent_run_json, undefined),
+  externalId: asText(row.external_id),
+  externalUrl: asText(row.external_url)
+})
+
+// Column order shared by the ticket INSERT and UPDATE statements below.
+const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
+  projectPath,
+  ticket.laneId,
+  ticket.assigneeId ?? null,
+  ticket.number,
+  ticket.title,
+  ticket.description,
+  ticket.createdAt,
+  ticket.updatedAt ?? null,
+  ticket.branchName ?? null,
+  jsonOrNull(ticket.labels),
+  jsonOrNull(ticket.checklist),
+  jsonOrNull(ticket.agentRun),
+  ticket.externalId ?? null,
+  ticket.externalUrl ?? null
+]
 
 export class StateRepository {
-  private readonly db: Database
-  private readonly databasePath: string
+  private readonly db: DatabaseSync
   private readonly userId: string
+  // The state this instance last handed out. saveState writes only the rows
+  // that differ from it, so rows another process changed in the meantime — a
+  // second app window, the sqlite3 CLI — are left alone instead of clobbered.
+  private baseline: ProjectTrackerState | undefined
+  // PRAGMA data_version as of the last read. It only moves when another
+  // connection commits, so a mismatch means someone else wrote to the file.
+  private dataVersionAtLastRead: number | undefined
 
-  private constructor(userDataPath: string, sql: SqlJsStatic, userId: string) {
+  constructor(userDataPath: string, userId: string = DEFAULT_USER_ID) {
     mkdirSync(userDataPath, { recursive: true })
-    this.databasePath = path.join(userDataPath, 'project-tracker.sqlite')
-    this.db = existsSync(this.databasePath) ? new sql.Database(readFileSync(this.databasePath)) : new sql.Database()
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const databaseExisted = existsSync(databasePath)
+    this.db = new DatabaseSync(databasePath)
     this.userId = userId
 
-    this.db.run('PRAGMA foreign_keys = ON')
-    this.db.exec(SCHEMA_SQL)
-    this.addMissingColumns()
-    this.recordSchemaVersion()
-    this.ensureUser()
-    this.persist()
+    // busy_timeout first: switching to WAL needs a lock another process may hold.
+    this.db.exec('PRAGMA busy_timeout = 5000')
+    if (databaseExisted) this.backUpLegacyDatabase(databasePath, path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))
+    // WAL lets readers and one writer work at once across processes; WAL mode
+    // is stored in the file, foreign_keys is per connection.
+    this.db.exec('PRAGMA journal_mode = WAL')
+    this.db.exec('PRAGMA foreign_keys = ON')
+
+    this.transaction(() => {
+      this.db.exec(SCHEMA_SQL)
+      this.addMissingColumns()
+      this.removeRowsOfDeletedProjects()
+      this.recordSchemaVersion()
+      this.ensureUser()
+    })
   }
 
-  static async create(userDataPath: string, userId: string = DEFAULT_USER_ID) {
-    const sql = await initSqlJs()
-    return new StateRepository(userDataPath, sql, userId)
+  // sql.js ran with foreign keys off, so deleting a project never cascaded and
+  // left its members, lanes and tickets behind. Remove what the cascade would
+  // have. Unknown assignees are a different violation, handled by ensureAssignee.
+  private removeRowsOfDeletedProjects() {
+    const violations = this.select('PRAGMA foreign_key_check')
+    const orphanedByProjectDelete = violations.filter((violation) => violation.parent === 'projects')
+    for (const orphan of orphanedByProjectDelete) {
+      this.run(`DELETE FROM ${String(orphan.table)} WHERE rowid = ?`, [Number(orphan.rowid)])
+    }
   }
 
-  private select(sql: string, params: unknown[] = []): Row[] {
-    const statement = this.db.prepare(sql)
-    statement.bind(params as never)
-    const rows: Row[] = []
-    while (statement.step()) rows.push(statement.getAsObject() as Row)
-    statement.free()
-    return rows
+  // sql.js never used WAL, so a non-WAL file is one it wrote. It is already a
+  // valid SQLite file and opens in place; the copy only guards the upgrade.
+  private backUpLegacyDatabase(databasePath: string, backupPath: string) {
+    const journalMode = this.select('PRAGMA journal_mode')[0]?.journal_mode
+    if (journalMode !== 'wal' && !existsSync(backupPath)) copyFileSync(databasePath, backupPath)
+  }
+
+  // IMMEDIATE takes the write lock up front, so a competing writer waits out
+  // busy_timeout. A deferred transaction would fail outright with SQLITE_BUSY
+  // when its read lock tried to upgrade while another process was writing.
+  private transaction<T>(work: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = work()
+      this.db.exec('COMMIT')
+      return result
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  private select(sql: string, params: SQLInputValue[] = []): Row[] {
+    return this.db.prepare(sql).all(...params)
+  }
+
+  private run(sql: string, params: SQLInputValue[] = []) {
+    this.db.prepare(sql).run(...params)
   }
 
   private addMissingColumns() {
     for (const { table, column, definition } of ADDED_COLUMNS) {
       const existingColumns = this.select(`PRAGMA table_info(${table})`)
       const columnExists = existingColumns.some((row) => row.name === column)
-      if (!columnExists) this.db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+      if (!columnExists) this.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
   }
 
   private recordSchemaVersion() {
-    this.db.run('DELETE FROM schema_meta')
-    this.db.run('INSERT INTO schema_meta (version) VALUES (?)', [SCHEMA_VERSION])
+    this.run('DELETE FROM schema_meta')
+    this.run('INSERT INTO schema_meta (version) VALUES (?)', [SCHEMA_VERSION])
   }
 
   private readUsers(): User[] {
@@ -97,7 +227,7 @@ export class StateRepository {
   }
 
   private ensureUser() {
-    this.db.run('INSERT OR IGNORE INTO users (id, name, created_at) VALUES (?, ?, ?)', [
+    this.run('INSERT OR IGNORE INTO users (id, name, created_at) VALUES (?, ?, ?)', [
       this.userId,
       DEFAULT_USER_NAME,
       new Date().toISOString()
@@ -107,20 +237,33 @@ export class StateRepository {
   // Membership is what makes a shared project visible. Scanning grants it
   // implicitly; this is the explicit path for adding someone else.
   addProjectMember(projectPath: string, userId: string) {
-    this.db.run('INSERT OR IGNORE INTO users (id, name, created_at) VALUES (?, ?, ?)', [
-      userId,
-      userId,
-      new Date().toISOString()
-    ])
-    this.db.run('INSERT OR IGNORE INTO project_members (project_path, user_id, joined_at) VALUES (?, ?, ?)', [
-      projectPath,
-      userId,
-      new Date().toISOString()
-    ])
-    this.persist()
+    this.transaction(() => {
+      this.run('INSERT OR IGNORE INTO users (id, name, created_at) VALUES (?, ?, ?)', [
+        userId,
+        userId,
+        new Date().toISOString()
+      ])
+      this.run('INSERT OR IGNORE INTO project_members (project_path, user_id, joined_at) VALUES (?, ?, ?)', [
+        projectPath,
+        userId,
+        new Date().toISOString()
+      ])
+    })
+  }
+
+  private dataVersion(): number {
+    return Number(this.select('PRAGMA data_version')[0].data_version)
+  }
+
+  // Cheap enough to poll: a header check, no table reads.
+  hasExternalChanges(): boolean {
+    return this.dataVersion() !== this.dataVersionAtLastRead
   }
 
   getState(): ProjectTrackerState {
+    // Taken before reading, so a commit landing mid-read shows up as a change
+    // on the next check instead of being missed.
+    this.dataVersionAtLastRead = this.dataVersion()
     const projects = this.readProjects()
     // Seed only into a genuinely empty database. Checking this user's projects
     // instead would re-seed for every new user and collide with shared rows.
@@ -129,7 +272,7 @@ export class StateRepository {
       return this.saveState({ ...createSeedState(), userId: this.userId })
     }
 
-    return {
+    const state: ProjectTrackerState = {
       userId: this.userId,
       users: this.readUsers(),
       version: Number(this.readSetting(SETTING_VERSION) ?? 1),
@@ -148,20 +291,85 @@ export class StateRepository {
         {}
       )
     }
+    // Cloned because callers may mutate what they get back before saving it.
+    this.baseline = structuredClone(state)
+    return state
   }
 
+  // ponytail: the renderer still hands over the whole state (#12 moves it onto
+  // the row-level methods below). Until then each save is diffed against the
+  // baseline and only changed rows are written. Returns a fresh read, so the
+  // renderer also picks up rows other writers changed since its last load.
   saveState(state: ProjectTrackerState): ProjectTrackerState {
     const normalized = { ...state, userId: this.userId, updatedAt: new Date().toISOString() }
-    this.db.run('BEGIN TRANSACTION')
-    try {
-      this.writeState(normalized)
-      this.db.run('COMMIT')
-      this.persist()
-    } catch (error) {
-      this.db.run('ROLLBACK')
-      throw error
-    }
-    return normalized
+    this.transaction(() => this.writeChanges(normalized, this.baseline))
+    return this.getState()
+  }
+
+  createTicket(projectPath: string, ticket: Omit<Ticket, 'number'>): Ticket {
+    // Numbered inside the write transaction, so two writers creating at once
+    // get distinct numbers. UNIQUE (project_path, number) is the backstop.
+    return this.transaction(() => {
+      const created = { ...ticket, number: this.nextTicketNumber(projectPath) }
+      this.insertTicketRow(projectPath, created)
+      return created
+    })
+  }
+
+  updateTicket(id: string, patch: Partial<Omit<Ticket, 'id' | 'number' | 'createdAt'>>): Ticket {
+    return this.transaction(() => {
+      const [row] = this.select('SELECT * FROM tickets WHERE id = ?', [id])
+      if (!row) throw new Error(`Ticket ${id} does not exist.`)
+      const updated = { ...ticketFromRow(row), ...patch, updatedAt: new Date().toISOString() }
+      this.updateTicketRow(String(row.project_path), updated)
+      return updated
+    })
+  }
+
+  moveTicket(id: string, laneId: string): Ticket {
+    return this.updateTicket(id, { laneId })
+  }
+
+  deleteTicket(id: string) {
+    this.run('DELETE FROM tickets WHERE id = ?', [id])
+  }
+
+  upsertSwimLane(projectPath: string, lane: SwimLane, position: number) {
+    this.run(
+      `INSERT INTO swim_lanes (
+         id, project_path, name, agent_prompt, agent_file_path, output_target, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_path, id) DO UPDATE SET
+         name = excluded.name, agent_prompt = excluded.agent_prompt,
+         agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
+         position = excluded.position, is_unassigned = excluded.is_unassigned`,
+      [
+        lane.id,
+        projectPath,
+        lane.name,
+        lane.agentPrompt,
+        lane.agentFilePath,
+        lane.outputTarget ?? '',
+        position,
+        lane.id === UNASSIGNED_LANE_ID ? 1 : 0
+      ]
+    )
+  }
+
+  deleteSwimLane(projectPath: string, laneId: string) {
+    this.run('DELETE FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+  }
+
+  setSetting(key: string, value: string) {
+    this.run(
+      `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+       ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
+      [this.userId, key, value]
+    )
+  }
+
+  upsertProject(project: ProjectRecord) {
+    this.transaction(() => this.writeProjectRow(project))
   }
 
   private readSetting(key: string): string | undefined {
@@ -236,185 +444,183 @@ export class StateRepository {
       else board.lanes.push(lane)
     }
 
-    for (const row of ticketRows) {
-      const board = boardFor(String(row.project_path))
-      board.tickets.push({
-        id: String(row.id),
-        number: Number(row.number),
-        laneId: String(row.lane_id),
-        title: String(row.title),
-        description: String(row.description),
-        createdAt: String(row.created_at),
-        updatedAt: asText(row.updated_at),
-        branchName: asText(row.branch_name),
-        assigneeId: asText(row.assignee_id),
-        labels: parseJson<string[] | undefined>(row.labels_json, undefined),
-        checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
-        agentRun: parseJson<Ticket['agentRun']>(row.agent_run_json, undefined),
-        externalId: asText(row.external_id),
-        externalUrl: asText(row.external_url)
-      })
-    }
+    for (const row of ticketRows) boardFor(String(row.project_path)).tickets.push(ticketFromRow(row))
 
     return boards
   }
 
-  // The renderer still hands over the whole state, so each save replaces the
-  // rows this user can see, inside one transaction. Only projects this user is a
-  // member of are touched — another member's projects are never in this state
-  // object and must survive the save untouched.
-  private writeState(state: ProjectTrackerState) {
+  // Only projects this user is a member of are ever in the baseline, so another
+  // member's projects can never be deleted or rewritten by this save.
+  private writeChanges(state: ProjectTrackerState, baseline: ProjectTrackerState | undefined) {
     this.ensureUser()
-    const visibleProjects = `SELECT project_path FROM project_members WHERE user_id = ?`
-    this.db.run(`DELETE FROM tickets WHERE project_path IN (${visibleProjects})`, [this.userId])
-    this.db.run(`DELETE FROM swim_lanes WHERE project_path IN (${visibleProjects})`, [this.userId])
 
-    this.db.run('DELETE FROM user_paths WHERE user_id = ?', [this.userId])
-    this.db.run('DELETE FROM project_paths')
-
+    const baselineProjects = keyBy(baseline?.snapshot.projects ?? [], (project) => project.path)
+    const keptProjectPaths = new Set(state.snapshot.projects.map((project) => project.path))
     for (const project of state.snapshot.projects) {
-      // Upserted, never delete-then-insert: the row may already exist because
-      // another member created it, and their membership must survive this save.
-      this.db.run(
-        `INSERT INTO projects (
-           path, name, status, priority, notes, source, package_manager, github_url,
-           github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(path) DO UPDATE SET
-           name = excluded.name, status = excluded.status, priority = excluded.priority,
-           notes = excluded.notes, source = excluded.source,
-           package_manager = excluded.package_manager, github_url = excluded.github_url,
-           github_json = excluded.github_json, has_git = excluded.has_git,
-           has_package_json = excluded.has_package_json, has_readme = excluded.has_readme,
-           last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at`,
-        [
-          project.path,
-          project.name,
-          project.status,
-          project.priority,
-          project.notes,
-          project.source,
-          project.packageManager ?? null,
-          project.githubUrl ?? null,
-          project.github ? JSON.stringify(project.github) : null,
-          project.hasGit ? 1 : 0,
-          project.hasPackageJson ? 1 : 0,
-          project.hasReadme ? 1 : 0,
-          project.lastModifiedAt ?? null,
-          project.lastScannedAt
-        ]
-      )
-      // Scanning a project is what grants the scanner access to it.
-      this.db.run(
-        'INSERT OR IGNORE INTO project_members (project_path, user_id, joined_at) VALUES (?, ?, ?)',
-        [project.path, this.userId, new Date().toISOString()]
-      )
+      if (!sameRow(project, baselineProjects.get(project.path))) this.writeProjectRow(project)
+
+      // A board left out of the state is untouched, not cleared. Boards hang
+      // off projects by foreign key, so boards of unknown projects are skipped.
+      const board = state.boards?.[project.path]
+      const baselineBoard = baseline?.boards?.[project.path] ?? { lanes: [], tickets: [] }
+      if (board) this.writeBoardChanges(project.path, board, baselineBoard)
+    }
+    // A project this user could see but did not send back has been removed by them.
+    for (const projectPath of baselineProjects.keys()) {
+      if (!keptProjectPaths.has(projectPath)) this.run('DELETE FROM projects WHERE path = ?', [projectPath])
     }
 
-    const knownProjectPaths = new Set(state.snapshot.projects.map((project) => project.path))
-    for (const [projectPath, board] of Object.entries(state.boards ?? {})) {
-      // Boards hang off projects by foreign key, so a board whose project is no
-      // longer in the snapshot is dropped rather than orphaned.
-      if (!knownProjectPaths.has(projectPath)) continue
-      this.writeBoard(projectPath, board)
-    }
-
-    // A project this user could see but did not send back has been removed by
-    // them; drop it. Projects they never could see are left alone entirely.
-    const survivingPaths = state.snapshot.projects.map((project) => project.path)
-    const placeholders = survivingPaths.map(() => '?').join(', ')
-    this.db.run(
-      `DELETE FROM projects WHERE path IN (${visibleProjects})
-       ${survivingPaths.length ? `AND path NOT IN (${placeholders})` : ''}`,
-      [this.userId, ...survivingPaths]
-    )
-
-    this.writeUserPaths(PATH_KIND_SCAN, state.scanDirectories)
-    this.writeProjectPaths(PATH_KIND_HIDDEN, state.hiddenPaths)
-    this.writeProjectPaths(PATH_KIND_THIRD_PARTY, state.thirdPartyPaths)
-
-    this.writeSetting(SETTING_VERSION, String(state.version))
-    this.writeSetting(SETTING_UPDATED_AT, state.updatedAt)
-    this.writeSetting(SETTING_SCAN_FAILURES, JSON.stringify(state.snapshot.failures ?? []))
-    this.writeSetting(SETTING_BOARD_PREFERENCES, JSON.stringify(state.boardPreferences ?? {}))
-    if (state.snapshot.scannedAt) this.writeSetting(SETTING_SCANNED_AT, state.snapshot.scannedAt)
-  }
-
-  private writeBoard(projectPath: string, board: ProjectBoard) {
-    const insertLane = (lane: SwimLane, position: number, isUnassigned: boolean) => {
-      this.db.run(
-        `INSERT INTO swim_lanes (
-           id, project_path, name, agent_prompt, agent_file_path, output_target, position, is_unassigned
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          lane.id,
-          projectPath,
-          lane.name,
-          lane.agentPrompt,
-          lane.agentFilePath,
-          lane.outputTarget ?? '',
-          position,
-          isUnassigned ? 1 : 0
-        ]
-      )
-    }
-
-    // Position -1 keeps the unassigned column ahead of the ordered lanes.
-    if (board.unassignedLane) insertLane({ ...board.unassignedLane, id: UNASSIGNED_LANE_ID }, -1, true)
-    board.lanes.forEach((lane, position) => insertLane(lane, position, false))
-
-    for (const ticket of board.tickets) {
-      this.db.run(
-        `INSERT INTO tickets (
-           id, project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
-           branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          ticket.id,
-          projectPath,
-          ticket.laneId,
-          ticket.assigneeId ?? null,
-          ticket.number,
-          ticket.title,
-          ticket.description,
-          ticket.createdAt,
-          ticket.updatedAt ?? null,
-          ticket.branchName ?? null,
-          ticket.labels ? JSON.stringify(ticket.labels) : null,
-          ticket.checklist ? JSON.stringify(ticket.checklist) : null,
-          ticket.agentRun ? JSON.stringify(ticket.agentRun) : null,
-          ticket.externalId ?? null,
-          ticket.externalUrl ?? null
-        ]
-      )
-    }
-  }
-
-  private writeUserPaths(kind: string, paths: string[]) {
-    for (const entry of paths) {
-      this.db.run('INSERT OR IGNORE INTO user_paths (user_id, kind, path) VALUES (?, ?, ?)', [
+    const scanDirectories = listChanges(state.scanDirectories, baseline?.scanDirectories ?? [])
+    for (const entry of scanDirectories.added) {
+      this.run('INSERT OR IGNORE INTO user_paths (user_id, kind, path) VALUES (?, ?, ?)', [
         this.userId,
-        kind,
+        PATH_KIND_SCAN,
         entry
       ])
     }
-  }
+    for (const entry of scanDirectories.removed) {
+      this.run('DELETE FROM user_paths WHERE user_id = ? AND kind = ? AND path = ?', [
+        this.userId,
+        PATH_KIND_SCAN,
+        entry
+      ])
+    }
+    this.writeProjectPathChanges(PATH_KIND_HIDDEN, state.hiddenPaths, baseline?.hiddenPaths ?? [])
+    this.writeProjectPathChanges(PATH_KIND_THIRD_PARTY, state.thirdPartyPaths, baseline?.thirdPartyPaths ?? [])
 
-  private writeProjectPaths(kind: string, paths: string[]) {
-    for (const entry of paths) {
-      this.db.run('INSERT OR IGNORE INTO project_paths (kind, path) VALUES (?, ?)', [kind, entry])
+    const baselineSettings = baseline ? settingsOf(baseline) : {}
+    for (const [key, value] of Object.entries(settingsOf(state))) {
+      if (value !== undefined && value !== baselineSettings[key]) this.setSetting(key, value)
     }
   }
 
-  private writeSetting(key: string, value: string) {
-    this.db.run(
-      `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
-       ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
-      [this.userId, key, value]
+  private writeBoardChanges(projectPath: string, board: ProjectBoard, baselineBoard: ProjectBoard) {
+    const lanes = positionedLanes(board)
+    const baselineLanes = keyBy(positionedLanes(baselineBoard), (entry) => entry.lane.id)
+    const keptLaneIds = new Set(lanes.map((entry) => entry.lane.id))
+    for (const entry of lanes) {
+      const laneChanged = !sameRow(entry, baselineLanes.get(entry.lane.id))
+      if (laneChanged) this.upsertSwimLane(projectPath, entry.lane, entry.position)
+    }
+    for (const laneId of baselineLanes.keys()) {
+      if (!keptLaneIds.has(laneId)) this.deleteSwimLane(projectPath, laneId)
+    }
+
+    const baselineTickets = keyBy(baselineBoard.tickets, (ticket) => ticket.id)
+    const keptTicketIds = new Set(board.tickets.map((ticket) => ticket.id))
+    for (const ticket of board.tickets) {
+      const baselineTicket = baselineTickets.get(ticket.id)
+      if (!sameRow(ticket, baselineTicket)) this.writeTicketRow(projectPath, ticket, baselineTicket)
+    }
+    for (const ticketId of baselineTickets.keys()) {
+      if (!keptTicketIds.has(ticketId)) this.deleteTicket(ticketId)
+    }
+  }
+
+  // Field-level: only the fields this save changed relative to the baseline are
+  // laid over the row as it stands now. Another writer's change to a different
+  // field of the same ticket (a CLI lane move, say) survives the save.
+  private writeTicketRow(projectPath: string, ticket: Ticket, baselineTicket: Ticket | undefined) {
+    const [currentRow] = this.select('SELECT * FROM tickets WHERE id = ?', [ticket.id])
+    if (currentRow) {
+      const editedFields = baselineTicket ? changedFields(ticket, baselineTicket) : ticket
+      const merged = { ...ticketFromRow(currentRow), ...editedFields }
+      this.updateTicketRow(projectPath, merged)
+      return
+    }
+    // The renderer numbers a new ticket from its own copy of the board, and
+    // another writer may have used that number since. Take the next free one.
+    const numberTaken =
+      this.select('SELECT 1 FROM tickets WHERE project_path = ? AND number = ?', [projectPath, ticket.number])
+        .length > 0
+    const number = numberTaken ? this.nextTicketNumber(projectPath) : ticket.number
+    this.insertTicketRow(projectPath, { ...ticket, number })
+  }
+
+  private nextTicketNumber(projectPath: string): number {
+    const [row] = this.select('SELECT COALESCE(MAX(number), 0) + 1 AS next FROM tickets WHERE project_path = ?', [
+      projectPath
+    ])
+    return Number(row.next)
+  }
+
+  // sql.js never actually enforced foreign keys, so existing boards can assign
+  // tickets to users with no users row. Give them one rather than fail the write.
+  private ensureAssignee(ticket: Ticket) {
+    if (!ticket.assigneeId) return
+    this.run('INSERT OR IGNORE INTO users (id, name, created_at) VALUES (?, ?, ?)', [
+      ticket.assigneeId,
+      ticket.assigneeId,
+      new Date().toISOString()
+    ])
+  }
+
+  private insertTicketRow(projectPath: string, ticket: Ticket) {
+    this.ensureAssignee(ticket)
+    this.run(
+      `INSERT INTO tickets (
+         project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
+         branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
 
-  private persist() {
-    writeFileSync(this.databasePath, Buffer.from(this.db.export()))
+  private updateTicketRow(projectPath: string, ticket: Ticket) {
+    this.ensureAssignee(ticket)
+    this.run(
+      `UPDATE tickets SET
+         project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
+         created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
+         agent_run_json = ?, external_id = ?, external_url = ?
+       WHERE id = ?`,
+      [...ticketValues(projectPath, ticket), ticket.id]
+    )
+  }
+
+  // Upserted, never delete-then-insert: the row may already exist because
+  // another member created it, and their membership must survive this write.
+  private writeProjectRow(project: ProjectRecord) {
+    this.run(
+      `INSERT INTO projects (
+         path, name, status, priority, notes, source, package_manager, github_url,
+         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         name = excluded.name, status = excluded.status, priority = excluded.priority,
+         notes = excluded.notes, source = excluded.source,
+         package_manager = excluded.package_manager, github_url = excluded.github_url,
+         github_json = excluded.github_json, has_git = excluded.has_git,
+         has_package_json = excluded.has_package_json, has_readme = excluded.has_readme,
+         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at`,
+      [
+        project.path,
+        project.name,
+        project.status,
+        project.priority,
+        project.notes,
+        project.source,
+        project.packageManager ?? null,
+        project.githubUrl ?? null,
+        jsonOrNull(project.github),
+        project.hasGit ? 1 : 0,
+        project.hasPackageJson ? 1 : 0,
+        project.hasReadme ? 1 : 0,
+        project.lastModifiedAt ?? null,
+        project.lastScannedAt
+      ]
+    )
+    // Scanning a project is what grants the scanner access to it.
+    this.run('INSERT OR IGNORE INTO project_members (project_path, user_id, joined_at) VALUES (?, ?, ?)', [
+      project.path,
+      this.userId,
+      new Date().toISOString()
+    ])
+  }
+
+  private writeProjectPathChanges(kind: string, next: string[], previous: string[]) {
+    const { added, removed } = listChanges(next, previous)
+    for (const entry of added) this.run('INSERT OR IGNORE INTO project_paths (kind, path) VALUES (?, ?)', [kind, entry])
+    for (const entry of removed) this.run('DELETE FROM project_paths WHERE kind = ? AND path = ?', [kind, entry])
   }
 }

@@ -547,7 +547,9 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="openTicket" class="modal-backdrop" @click.self="closeModals">
-    <section class="modal ticket-modal">
+    <!-- Focusing any field pulls in writes from other processes first, so the
+         user starts editing from the latest value rather than a stale one. -->
+    <section class="modal ticket-modal" @focusin="store.refresh()">
       <p class="eyebrow">
         #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
         <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
