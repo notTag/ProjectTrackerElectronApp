@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -146,6 +146,40 @@ describe('shared projects', () => {
     const aliceSees = (await StateRepository.create(userDataPath, 'alice')).getState()
     expect(aliceSees.snapshot.projects).toHaveLength(1)
     expect(aliceSees.boards![projectPath].tickets).toHaveLength(2)
+  })
+})
+
+describe('BLOB-stored text columns', () => {
+  it('decodes a BLOB description and checklist written by an external tool', async () => {
+    const userDataPath = freshUserDataPath()
+    const seeded = (await StateRepository.create(userDataPath)).saveState(stateWithBoard())
+    const projectPath = seeded.snapshot.projects[0].path
+
+    // Mimic `sqlite3 ... SET description = readfile(...)`: bind raw bytes, stored as BLOB.
+    const databaseFile = path.join(userDataPath, 'project-tracker.sqlite')
+    const sql = await initSqlJs()
+    const external = new sql.Database(readFileSync(databaseFile))
+    const encoder = new TextEncoder()
+    const descriptionBytes = encoder.encode('## Context\nÜnïcode ✓')
+    const checklistBytes = encoder.encode(JSON.stringify([{ text: 'from blob', done: false }]))
+    external.run('UPDATE tickets SET description = ?, checklist_json = ? WHERE id = ?', [
+      descriptionBytes,
+      checklistBytes,
+      'ticket-a'
+    ])
+    writeFileSync(databaseFile, Buffer.from(external.export()))
+
+    const repository = await StateRepository.create(userDataPath)
+    const ticket = repository.getState().boards![projectPath].tickets[0]
+    expect(ticket.description).toBe('## Context\nÜnïcode ✓')
+    expect(ticket.checklist).toEqual([{ text: 'from blob', done: false }])
+
+    repository.saveState(repository.getState())
+    const reopened = new sql.Database(readFileSync(databaseFile))
+    const [{ values }] = reopened.exec(
+      "SELECT typeof(description), typeof(checklist_json) FROM tickets WHERE id = 'ticket-a'"
+    )
+    expect(values[0]).toEqual(['text', 'text'])
   })
 })
 
