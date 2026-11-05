@@ -147,9 +147,21 @@ export class StateRepository {
     this.transaction(() => {
       this.db.exec(SCHEMA_SQL)
       this.addMissingColumns()
+      this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
     })
+  }
+
+  // sql.js ran with foreign keys off, so deleting a project never cascaded and
+  // left its members, lanes and tickets behind. Remove what the cascade would
+  // have. Unknown assignees are a different violation, handled by ensureAssignee.
+  private removeRowsOfDeletedProjects() {
+    const violations = this.select('PRAGMA foreign_key_check')
+    const orphanedByProjectDelete = violations.filter((violation) => violation.parent === 'projects')
+    for (const orphan of orphanedByProjectDelete) {
+      this.run(`DELETE FROM ${String(orphan.table)} WHERE rowid = ?`, [Number(orphan.rowid)])
+    }
   }
 
   // sql.js never used WAL, so a non-WAL file is one it wrote. It is already a

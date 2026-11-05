@@ -223,7 +223,10 @@ describe('legacy databases', () => {
   // DatabaseSync produces before anything switches it to WAL.
   it('opens a sql.js-era file in place with its data intact, adds new columns and backs it up', () => {
     const userDataPath = freshUserDataPath()
-    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    // sql.js ran with foreign keys off; node:sqlite turns them on by default.
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME), {
+      enableForeignKeyConstraints: false
+    })
     legacy.exec(`CREATE TABLE swim_lanes (
       id TEXT NOT NULL, project_path TEXT NOT NULL, name TEXT NOT NULL, agent_prompt TEXT NOT NULL,
       agent_file_path TEXT NOT NULL, position INTEGER NOT NULL, is_unassigned INTEGER NOT NULL DEFAULT 0,
@@ -237,18 +240,25 @@ describe('legacy databases', () => {
       INSERT INTO swim_lanes VALUES ('idea', '/legacy', 'Idea', '', '', 0, 0);
       INSERT INTO tickets (id, project_path, lane_id, number, title, description, created_at)
         VALUES ('old-ticket', '/legacy', 'idea', 1, 'From sql.js', '', '2026-01-01T00:00:00.000Z');
+      INSERT INTO tickets (id, project_path, lane_id, assignee_id, number, title, description, created_at)
+        VALUES ('ghost-assignee', '/legacy', 'idea', 'gone-user', 2, 'Kept', '', '2026-01-01T00:00:00.000Z');
+      INSERT INTO project_members VALUES ('/deleted', 'local', '2026-01-01T00:00:00.000Z');
+      INSERT INTO tickets (id, project_path, lane_id, number, title, description, created_at)
+        VALUES ('orphan-ticket', '/deleted', 'idea', 1, 'Orphan', '', '2026-01-01T00:00:00.000Z');
       INSERT INTO user_settings VALUES ('local', 'version', '1');`)
     expect(legacy.prepare('PRAGMA journal_mode').get()?.journal_mode).toBe('delete')
     legacy.close()
 
     const state = new StateRepository(userDataPath).getState()
     expect(state.snapshot.projects.map((project) => project.name)).toEqual(['Legacy'])
-    expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js'])
+    expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js', 'Kept'])
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
     const reopened = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
     expect(reopened.prepare('PRAGMA journal_mode').get()?.journal_mode).toBe('wal')
+    const remainingViolations = reopened.prepare('PRAGMA foreign_key_check').all()
+    expect(remainingViolations.map((violation) => violation.parent)).toEqual(['users'])
     reopened.close()
   })
 
