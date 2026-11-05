@@ -184,7 +184,7 @@ describe('concurrent writers', () => {
 
     // The renderer still holds ticket-a in 'idea' and edits only its title.
     const board = rendererState.boards![projectPath]
-    board.tickets[0] = { ...board.tickets[0], title: 'Renamed in the app', branchName: undefined }
+    board.tickets[0] = { ...board.tickets[0], title: 'Renamed in the app' }
     repository.saveState(rendererState)
 
     const ticket = reopenedBoard(userDataPath, projectPath).tickets.find((entry) => entry.id === 'ticket-a')!
