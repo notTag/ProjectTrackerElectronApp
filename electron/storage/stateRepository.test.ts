@@ -117,10 +117,14 @@ describe('StateRepository', () => {
 
     const repository = new StateRepository(userDataPath)
     const state = repository.getState()
-    state.boards![projectPath].tickets[0].worktreePath = '/code/app-a'
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    migratedTicket.worktreePath = '/code/app-a'
+    migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
     repository.saveState(state)
 
-    expect(reopenedBoard(userDataPath, projectPath).tickets[0].worktreePath).toBe('/code/app-a')
+    const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
+    expect(reopenedTicket.worktreePath).toBe('/code/app-a')
+    expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {
