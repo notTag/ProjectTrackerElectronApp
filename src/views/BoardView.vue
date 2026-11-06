@@ -20,6 +20,7 @@ import {
   findAgent,
   formatLabels,
   parseLabels,
+  pullRequestLabel,
   removeChecklistItem,
   setChecklistItemDone,
   setLaneWidth,
@@ -29,6 +30,7 @@ import {
   ticketShellCommand,
   toggleCardField,
   toggleHiddenLane,
+  worktreeFolderName,
   type Agent,
   type TicketCardField,
   type User,
@@ -491,7 +493,9 @@ const runTicketAgent = (ticket: Ticket) => {
             <p
               v-if="
                 (showsField('checklist') && ticket.checklist?.length) ||
-                (showsField('branch') && ticket.branchName)
+                (showsField('branch') && ticket.branchName) ||
+                (showsField('worktree') && ticket.worktreePath) ||
+                (showsField('pullRequest') && ticket.pullRequestUrl)
               "
               class="ticket-meta"
             >
@@ -501,6 +505,22 @@ const runTicketAgent = (ticket: Ticket) => {
               <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
                 ⑂ {{ ticket.branchName }}
               </span>
+              <span
+                v-if="showsField('worktree') && ticket.worktreePath"
+                class="ticket-branch"
+                :title="ticket.worktreePath"
+              >
+                ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
+              </span>
+              <!-- .stop keeps the click from also opening the ticket modal. -->
+              <a
+                v-if="showsField('pullRequest') && ticket.pullRequestUrl"
+                :href="ticket.pullRequestUrl"
+                target="_blank"
+                @click.stop
+              >
+                {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
+              </a>
             </p>
           </article>
         </div>

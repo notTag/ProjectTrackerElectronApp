@@ -545,10 +545,26 @@ export const TICKET_CARD_FIELDS = [
   { id: 'assignee', label: 'Assignee' },
   { id: 'labels', label: 'Labels' },
   { id: 'checklist', label: 'Checklist progress' },
-  { id: 'branch', label: 'Branch' }
+  { id: 'branch', label: 'Branch' },
+  { id: 'worktree', label: 'Worktree' },
+  { id: 'pullRequest', label: 'GitHub PR' }
 ] as const
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
+
+// A card is too narrow for a full path; the last segment is what tells
+// sibling worktrees apart.
+export const worktreeFolderName = (worktreePath: string) => {
+  const segments = worktreePath.split('/').filter(Boolean)
+  return segments.at(-1) ?? worktreePath
+}
+
+// GitHub PR URLs end in /pull/<number>; anything else still gets a link, just
+// without the number.
+export const pullRequestLabel = (pullRequestUrl: string) => {
+  const pullNumber = pullRequestUrl.match(/\/pull\/(\d+)/)?.[1]
+  return pullNumber ? `PR #${pullNumber}` : 'PR'
+}
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200
