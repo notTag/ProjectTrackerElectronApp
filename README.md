@@ -72,19 +72,42 @@ bun run start:prod
 
 ## Releasing
 
+The packaged app updates itself from
+[GitHub Releases](https://github.com/notTag/ProjectTrackerElectronApp/releases)
+using `electron-updater`. On launch it checks for a newer release, downloads it
+in the background, and installs it when you quit. The check is skipped in
+development, and a failed check (offline, no release yet, bad signature) is
+logged and ignored, so it never blocks the app from starting.
+
 To publish an update for people who already have the app installed:
 
-```bash
-GH_TOKEN=<token with repo scope> bun run release
-```
+1. Bump `version` in `package.json`. The updater only installs a higher version.
+2. Build, sign, notarize and upload:
 
-This uploads the `.dmg`, `.zip`, and `latest-mac.yml` update manifest to a draft
-GitHub release. The app checks for updates on launch, downloads newer versions
-in the background, and installs them when you quit. `bun run dist` builds the
-same files without publishing them, so those builds won't reach the updater.
+   ```bash
+   GH_TOKEN=<token with repo scope> \
+   APPLE_ID=<apple id email> \
+   APPLE_APP_SPECIFIC_PASSWORD=<app-specific password> \
+   APPLE_TEAM_ID=<team id> \
+   bun run release
+   ```
 
-Sign each release with the same Developer ID certificate as the installed app.
-The updater won't accept a build with a different code signature.
+3. Open the draft release on GitHub and publish it. The updater ignores drafts.
+
+`bun run release` uploads the `.dmg`, `.zip`, and `latest-mac.yml` update
+manifest. The `.zip` is what the updater downloads, so keep both targets.
+`bun run dist` builds the same files without publishing them, so those builds
+won't reach the updater.
+
+macOS refuses an update it can't verify, so every release must be:
+
+- **Signed** with the same Developer ID Application certificate as the installed
+  app. electron-builder picks it up from your keychain automatically.
+- **Notarized.** electron-builder notarizes when the `APPLE_*` variables above
+  are set. Without them it logs `skipped macOS notarization` and carries on, so
+  check the build output before publishing. An App Store Connect API key
+  (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) works instead of an
+  Apple ID.
 
 ## Other scripts
 
