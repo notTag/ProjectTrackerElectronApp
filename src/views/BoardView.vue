@@ -56,6 +56,7 @@ const agents = computed<Agent[]>(() => availableAgents(store.state))
 
 const boardView = ref<'lanes' | 'graph'>('lanes')
 const filterQuery = ref('')
+const filterQueryInput = ref<HTMLInputElement | null>(null)
 const showOnlyMine = ref(false)
 const filterLaneId = ref('')
 
@@ -187,7 +188,22 @@ const closeModals = () => {
   checklistDraft.value = ''
 }
 
-const handleEscapeKey = (event: KeyboardEvent) => {
+const focusTicketFilter = () => {
+  filterQueryInput.value?.focus()
+  filterQueryInput.value?.select()
+}
+
+const isFilterShortcut = (event: KeyboardEvent) => {
+  const hasCommandModifier = event.metaKey || event.ctrlKey
+  return hasCommandModifier && event.shiftKey && event.key.toLowerCase() === 'f'
+}
+
+const handleBoardKeydown = (event: KeyboardEvent) => {
+  if (isFilterShortcut(event)) {
+    event.preventDefault()
+    if (!anyModalOpen.value) focusTicketFilter()
+    return
+  }
   if (event.key !== 'Escape') return
   if (anyModalOpen.value) {
     closeModals()
@@ -199,11 +215,11 @@ const handleEscapeKey = (event: KeyboardEvent) => {
 
 onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
-  window.addEventListener('keydown', handleEscapeKey)
+  window.addEventListener('keydown', handleBoardKeydown)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleEscapeKey)
+  window.removeEventListener('keydown', handleBoardKeydown)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -362,8 +378,10 @@ const runTicketAgent = (ticket: Ticket) => {
 
     <section class="board-filters">
       <input
+        ref="filterQueryInput"
         v-model="filterQuery"
         class="filter-query"
+        aria-keyshortcuts="Meta+Shift+F"
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />

@@ -33,7 +33,7 @@ function close() {
   previousFocus?.focus()
 }
 async function keydown(event: KeyboardEvent) {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'f') {
     event.preventDefault()
     event.stopPropagation()
     if (!visible.value) previousFocus = document.activeElement as HTMLElement | null
