@@ -38,6 +38,21 @@ export const LEGACY_BACKUP_FILE_NAME = 'project-tracker.pre-wal-backup.sqlite'
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
 
+// SQLite stores whatever type it is given, so an outside writer can leave a
+// BLOB in a TEXT column (sqlite3's readfile() does). node:sqlite returns it as
+// a Uint8Array, and String() on that gives "35,35,32,…" instead of the text.
+// The schema has no real BLOB columns, so every one is decoded on the way out.
+// ponytail: bytes that aren't valid UTF-8 decode to U+FFFD, and the next edit to
+// that row saves the lossy text. Use a fatal decoder if non-UTF-8 writers appear.
+const utf8Decoder = new TextDecoder()
+const decodeBlobs = (row: Row): Row => {
+  const entries = Object.entries(row).map(([column, value]) => [
+    column,
+    value instanceof Uint8Array ? utf8Decoder.decode(value) : value
+  ])
+  return Object.fromEntries(entries)
+}
+
 const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
@@ -201,7 +216,8 @@ export class StateRepository {
   }
 
   private select(sql: string, params: SQLInputValue[] = []): Row[] {
-    return this.db.prepare(sql).all(...params)
+    const rows = this.db.prepare(sql).all(...params)
+    return rows.map(decodeBlobs)
   }
 
   private run(sql: string, params: SQLInputValue[] = []) {

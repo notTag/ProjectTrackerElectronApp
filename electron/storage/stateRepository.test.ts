@@ -192,6 +192,43 @@ describe('concurrent writers', () => {
     expect(ticket.title).toBe('Renamed in the app')
   })
 
+  // sqlite3's readfile() returns a BLOB, which SQLite keeps as-is in a TEXT column.
+  it('reads BLOB-stored text and JSON columns as text, and keeps them intact through a save', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    const asBlob = (text: string) => new TextEncoder().encode(text)
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    cli
+      .prepare("UPDATE tickets SET description = ?, checklist_json = ?, labels_json = ? WHERE id = 'ticket-b'")
+      .run(asBlob('## Context\nÜnïcode'), asBlob('[{"text":"read it","done":false}]'), asBlob('["agent"]'))
+    cli.close()
+
+    const expected = {
+      description: '## Context\nÜnïcode',
+      checklist: [{ text: 'read it', done: false }],
+      labels: ['agent']
+    }
+    const state = repository.getState()
+    const tickets = state.boards![projectPath].tickets
+    const ticketIndex = tickets.findIndex((ticket) => ticket.id === 'ticket-b')
+    expect(tickets[ticketIndex]).toMatchObject(expected)
+
+    tickets[ticketIndex] = { ...tickets[ticketIndex], title: 'Edited in the app' }
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-b')
+    expect(reopened).toMatchObject({ ...expected, title: 'Edited in the app' })
+
+    // Editing the ticket rewrites its row, so the BLOBs are stored as TEXT from then on.
+    const inspector = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const storedTypes = inspector
+      .prepare("SELECT typeof(description) AS description, typeof(checklist_json) AS checklist FROM tickets WHERE id = 'ticket-b'")
+      .get()
+    inspector.close()
+    expect(storedTypes).toEqual({ description: 'text', checklist: 'text' })
+  })
+
   it('writes a field the app cleared', () => {
     const userDataPath = freshUserDataPath()
     const { repository, projectPath } = seededRepository(userDataPath)
