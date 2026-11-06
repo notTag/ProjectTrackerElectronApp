@@ -51,7 +51,8 @@ const stateWithBoard = (): ProjectTrackerState => {
             title: 'B',
             description: '',
             createdAt: '2026-01-02T00:00:00.000Z',
-            assigneeId: 'local'
+            assigneeId: 'local',
+            agentRun: { at: '2026-01-03T00:00:00.000Z', laneId: 'idea', output: 'done', succeeded: true }
           }
         ]
       }
@@ -96,6 +97,7 @@ describe('StateRepository', () => {
     expect(loaded.users).toEqual([{ id: 'local', name: 'Local' }])
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
+    expect(board?.tickets[1].agentRun?.succeeded).toBe(true)
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {

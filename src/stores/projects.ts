@@ -376,7 +376,12 @@ export const useProjectsStore = defineStore('projects', {
       const laneId = ticket.laneId
       try {
         const result = await projectTrackerApi.runTicketAgent(projectPath, agentId, prompt)
-        const agentRun = { at: new Date().toISOString(), laneId, output: result.output }
+        const agentRun = {
+          at: new Date().toISOString(),
+          laneId,
+          output: result.output,
+          succeeded: result.succeeded
+        }
         await this.updateTicket(projectPath, ticket.id, { agentRun })
         if (result.succeeded) this.notice = `Agent finished #${ticket.number}.`
         else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
