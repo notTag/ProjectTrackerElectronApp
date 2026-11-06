@@ -13,6 +13,7 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketsToRun,
   agentForTicket,
   availableAgents,
   DEFAULT_AGENT,
@@ -387,5 +388,21 @@ describe('ticketShellCommand', () => {
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+  })
+})
+
+describe('ticketsToRun', () => {
+  const tickets = [{ id: 'a' }, { id: 'b' }, { id: 'c' }] as Ticket[]
+
+  it('runs only the checked tickets', () => {
+    expect(ticketsToRun(tickets, new Set(['a', 'c'])).map((ticket) => ticket.id)).toEqual(['a', 'c'])
+  })
+
+  it('runs every ticket when none are checked', () => {
+    expect(ticketsToRun(tickets, new Set())).toEqual(tickets)
+  })
+
+  it('ignores checked ids that are not in the set, like a ticket from another lane', () => {
+    expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
   })
 })
