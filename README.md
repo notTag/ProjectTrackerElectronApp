@@ -104,9 +104,11 @@ macOS refuses an update it can't verify, so every release must be:
 - **Signed** with the same Developer ID Application certificate as the installed
   app. electron-builder picks it up from your keychain automatically.
 - **Notarized.** electron-builder notarizes when the `APPLE_*` variables above
-  are set. Without them it logs `skipped macOS notarization` and carries on, so
-  check the build output before publishing. An App Store Connect API key
-  (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) works instead of an
+  are set. On its own it would only log `skipped macOS notarization` and carry
+  on, so `bun run release` checks first and stops before building if `GH_TOKEN`
+  or a complete set of notarization credentials is missing. An App Store Connect
+  API key (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) or a
+  `notarytool` keychain profile (`APPLE_KEYCHAIN_PROFILE`) works instead of an
   Apple ID.
 
 ## Other scripts
