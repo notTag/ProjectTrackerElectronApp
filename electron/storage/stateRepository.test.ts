@@ -210,15 +210,23 @@ describe('concurrent writers', () => {
       labels: ['agent']
     }
     const state = repository.getState()
-    const loaded = state.boards![projectPath].tickets.find((ticket) => ticket.id === 'ticket-b')
-    expect(loaded).toMatchObject(expected)
+    const tickets = state.boards![projectPath].tickets
+    const ticketIndex = tickets.findIndex((ticket) => ticket.id === 'ticket-b')
+    expect(tickets[ticketIndex]).toMatchObject(expected)
 
-    const board = state.boards![projectPath]
-    board.tickets[1] = { ...board.tickets[1], title: 'Edited in the app' }
+    tickets[ticketIndex] = { ...tickets[ticketIndex], title: 'Edited in the app' }
     repository.saveState(state)
 
     const reopened = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-b')
     expect(reopened).toMatchObject({ ...expected, title: 'Edited in the app' })
+
+    // Editing the ticket rewrites its row, so the BLOBs are stored as TEXT from then on.
+    const inspector = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const storedTypes = inspector
+      .prepare("SELECT typeof(description) AS description, typeof(checklist_json) AS checklist FROM tickets WHERE id = 'ticket-b'")
+      .get()
+    inspector.close()
+    expect(storedTypes).toEqual({ description: 'text', checklist: 'text' })
   })
 
   it('writes a field the app cleared', () => {

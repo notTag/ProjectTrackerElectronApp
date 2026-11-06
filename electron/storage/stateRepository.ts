@@ -39,11 +39,21 @@ type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
 
 // SQLite stores whatever type it is given, so an outside writer can leave a
-// BLOB in a TEXT column (sqlite3's readfile() does). node:sqlite returns those
-// as Uint8Array, and String() on one gives "35,35,32,…" instead of the text.
-const utf8 = new TextDecoder()
-const toText = (value: unknown) => (value instanceof Uint8Array ? utf8.decode(value) : String(value))
-const asText = (value: unknown) => (value === null || value === undefined ? undefined : toText(value))
+// BLOB in a TEXT column (sqlite3's readfile() does). node:sqlite returns it as
+// a Uint8Array, and String() on that gives "35,35,32,…" instead of the text.
+// The schema has no real BLOB columns, so every one is decoded on the way out.
+// ponytail: bytes that aren't valid UTF-8 decode to U+FFFD, and the next edit to
+// that row saves the lossy text. Use a fatal decoder if non-UTF-8 writers appear.
+const utf8Decoder = new TextDecoder()
+const decodeBlobs = (row: Row): Row => {
+  const entries = Object.entries(row).map(([column, value]) => [
+    column,
+    value instanceof Uint8Array ? utf8Decoder.decode(value) : value
+  ])
+  return Object.fromEntries(entries)
+}
+
+const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
   const text = asText(value)
@@ -103,12 +113,12 @@ const listChanges = (next: string[], previous: string[]) => ({
 })
 
 const ticketFromRow = (row: Row): Ticket => ({
-  id: toText(row.id),
+  id: String(row.id),
   number: Number(row.number),
-  laneId: toText(row.lane_id),
-  title: toText(row.title),
-  description: toText(row.description),
-  createdAt: toText(row.created_at),
+  laneId: String(row.lane_id),
+  title: String(row.title),
+  description: String(row.description),
+  createdAt: String(row.created_at),
   updatedAt: asText(row.updated_at),
   branchName: asText(row.branch_name),
   assigneeId: asText(row.assignee_id),
@@ -206,7 +216,8 @@ export class StateRepository {
   }
 
   private select(sql: string, params: SQLInputValue[] = []): Row[] {
-    return this.db.prepare(sql).all(...params)
+    const rows = this.db.prepare(sql).all(...params)
+    return rows.map(decodeBlobs)
   }
 
   private run(sql: string, params: SQLInputValue[] = []) {
@@ -228,7 +239,7 @@ export class StateRepository {
 
   private readUsers(): User[] {
     const rows = this.select('SELECT id, name FROM users ORDER BY name')
-    return rows.map((row) => ({ id: toText(row.id), name: toText(row.name) }))
+    return rows.map((row) => ({ id: String(row.id), name: String(row.name) }))
   }
 
   private ensureUser() {
@@ -326,7 +337,7 @@ export class StateRepository {
       const [row] = this.select('SELECT * FROM tickets WHERE id = ?', [id])
       if (!row) throw new Error(`Ticket ${id} does not exist.`)
       const updated = { ...ticketFromRow(row), ...patch, updatedAt: new Date().toISOString() }
-      this.updateTicketRow(toText(row.project_path), updated)
+      this.updateTicketRow(String(row.project_path), updated)
       return updated
     })
   }
@@ -387,12 +398,12 @@ export class StateRepository {
       this.userId,
       kind
     ])
-    return rows.map((row) => toText(row.path))
+    return rows.map((row) => String(row.path))
   }
 
   private readProjectPaths(kind: string): string[] {
     const rows = this.select('SELECT path FROM project_paths WHERE kind = ? ORDER BY path', [kind])
-    return rows.map((row) => toText(row.path))
+    return rows.map((row) => String(row.path))
   }
 
   private readProjects(): ProjectRecord[] {
@@ -404,12 +415,12 @@ export class StateRepository {
       [this.userId]
     )
     return rows.map((row) => ({
-      path: toText(row.path),
-      name: toText(row.name),
-      status: toText(row.status) as ProjectRecord['status'],
-      priority: toText(row.priority) as ProjectRecord['priority'],
-      notes: toText(row.notes),
-      source: toText(row.source) as ProjectRecord['source'],
+      path: String(row.path),
+      name: String(row.name),
+      status: String(row.status) as ProjectRecord['status'],
+      priority: String(row.priority) as ProjectRecord['priority'],
+      notes: String(row.notes),
+      source: String(row.source) as ProjectRecord['source'],
       packageManager: asText(row.package_manager),
       githubUrl: asText(row.github_url),
       github: parseJson<ProjectRecord['github']>(row.github_json, undefined),
@@ -417,7 +428,7 @@ export class StateRepository {
       hasPackageJson: asBool(row.has_package_json),
       hasReadme: asBool(row.has_readme),
       lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: toText(row.last_scanned_at)
+      lastScannedAt: String(row.last_scanned_at)
     }))
   }
 
@@ -437,19 +448,19 @@ export class StateRepository {
       (boards[projectPath] ??= { lanes: [], tickets: [] })
 
     for (const row of laneRows) {
-      const board = boardFor(toText(row.project_path))
+      const board = boardFor(String(row.project_path))
       const lane: SwimLane = {
-        id: toText(row.id),
-        name: toText(row.name),
-        agentPrompt: toText(row.agent_prompt),
-        agentFilePath: toText(row.agent_file_path),
-        outputTarget: toText(row.output_target)
+        id: String(row.id),
+        name: String(row.name),
+        agentPrompt: String(row.agent_prompt),
+        agentFilePath: String(row.agent_file_path),
+        outputTarget: String(row.output_target)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
     }
 
-    for (const row of ticketRows) boardFor(toText(row.project_path)).tickets.push(ticketFromRow(row))
+    for (const row of ticketRows) boardFor(String(row.project_path)).tickets.push(ticketFromRow(row))
 
     return boards
   }
