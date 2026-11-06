@@ -661,6 +661,35 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
+      <label>
+        Worktree
+        <input
+          class="agent-file-path"
+          :value="openTicket.worktreePath ?? ''"
+          placeholder="~/Code/my-app-board-ticket-fields"
+          @change="
+            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+      </label>
+
+      <label>
+        GitHub PR
+        <input
+          type="url"
+          class="agent-file-path"
+          :value="openTicket.pullRequestUrl ?? ''"
+          placeholder="https://github.com/owner/repo/pull/123"
+          @change="
+            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+        <!-- target=_blank routes through main's window-open handler, which hands http(s) URLs to the OS browser. -->
+        <a v-if="openTicket.pullRequestUrl" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
+          Open pull request ↗
+        </a>
+      </label>
+
       <section class="ticket-checklist">
         <p class="eyebrow">
           Checklist

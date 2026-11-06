@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   created_at TEXT NOT NULL,
   updated_at TEXT,
   branch_name TEXT,
+  worktree_path TEXT,
+  pull_request_url TEXT,
   labels_json TEXT,
   checklist_json TEXT,
   agent_run_json TEXT,
@@ -114,7 +116,9 @@ CREATE INDEX IF NOT EXISTS members_by_user ON project_members (user_id);
 export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'auto_run_agent_id', definition: 'TEXT' },
-  { table: 'swim_lanes', column: 'auto_run_terminal_id', definition: 'TEXT' }
+  { table: 'swim_lanes', column: 'auto_run_terminal_id', definition: 'TEXT' },
+  { table: 'tickets', column: 'worktree_path', definition: 'TEXT' },
+  { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' }
 ]
 
 export const PATH_KIND_SCAN = 'scan'

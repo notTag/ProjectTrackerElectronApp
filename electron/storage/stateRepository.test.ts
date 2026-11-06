@@ -42,7 +42,10 @@ const stateWithBoard = (): ProjectTrackerState => {
             labels: ['bug'],
             checklist: [{ text: 'step', done: true }],
             externalId: 'github:7',
-            externalUrl: 'https://github.com/o/r/issues/7'
+            externalUrl: 'https://github.com/o/r/issues/7',
+            branchName: 'feat/a',
+            worktreePath: '/code/app-a',
+            pullRequestUrl: 'https://github.com/o/r/pull/8'
           },
           {
             id: 'ticket-b',
@@ -93,12 +96,31 @@ describe('StateRepository', () => {
     expect(board?.tickets[0].labels).toEqual(['bug'])
     expect(board?.tickets[0].checklist).toEqual([{ text: 'step', done: true }])
     expect(board?.tickets[0].externalId).toBe('github:7')
+    expect(board?.tickets[0].branchName).toBe('feat/a')
+    expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
+    expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(board?.tickets[1].worktreePath).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
     expect(loaded.users).toEqual([{ id: 'local', name: 'Local' }])
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
+  })
+
+  it('adds ticket columns missing from a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN worktree_path')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    state.boards![projectPath].tickets[0].worktreePath = '/code/app-a'
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].worktreePath).toBe('/code/app-a')
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {
