@@ -33,6 +33,7 @@ interface ProjectTrackerElectronApi {
     copiedCommand?: string
     ranCommand?: string
   }>
+  autoRunLane(path: string, targetId: string, commands: string[]): Promise<void>
   runTicketAgent(path: string, agentId: string, prompt: string): Promise<{ succeeded: boolean; output: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>

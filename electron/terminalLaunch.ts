@@ -1,11 +1,11 @@
 /**
- * Builds the launch arguments that carry a ticket's command into each supported
- * terminal.
+ * Builds the launch arguments that carry ticket commands into each supported
+ * terminal — one tab per command, all in one new window.
  *
  * None of them accept a command through `open -a <app> <dir>`, which takes a
  * directory and no argv, so each needs its own route: Warp reads a launch
- * configuration file, Terminal is driven by AppleScript, and Ghostty takes
- * config keys on the command line.
+ * configuration file, Terminal, iTerm2 and Ghostty are driven by AppleScript,
+ * and a single Ghostty command can also go in as config keys on the command line.
  *
  * Kept out of main.ts — which cannot be imported under test because it touches
  * the Electron app object at module load — so the escaping below has a home
@@ -21,57 +21,117 @@ export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 // pulling in a YAML serializer for two fields.
 const yamlDoubleQuoted = (value: string) => JSON.stringify(value)
 
-export const warpLaunchConfigYaml = (projectPath: string, command: string): string =>
+const warpTabYaml = (projectPath: string, command: string) => [
+  '      - layout:',
+  `          cwd: ${yamlDoubleQuoted(projectPath)}`,
+  '          commands:',
+  `            - exec: ${yamlDoubleQuoted(command)}`
+]
+
+export const warpLaunchConfigYaml = (projectPath: string, commands: string[]): string =>
   [
     '---',
     `name: ${WARP_LAUNCH_CONFIG_NAME}`,
     'windows:',
     '  - tabs:',
-    '      - layout:',
-    `          cwd: ${yamlDoubleQuoted(projectPath)}`,
-    '          commands:',
-    `            - exec: ${yamlDoubleQuoted(command)}`,
+    ...commands.flatMap((command) => warpTabYaml(projectPath, command)),
     ''
   ].join('\n')
 
-// Terminal has no launch-configuration equivalent; AppleScript's `do script` is
-// the supported way to open a window running something. The command travels as
-// an argv entry read back via `item 1 of argv` rather than being interpolated
-// into the script text, so a prompt full of quotes and newlines never has to
-// survive AppleScript string escaping on top of the shell escaping it already
-// carries.
-export const terminalOsascriptArgs = (projectPath: string, command: string): string[] => [
-  '-e',
-  'on run argv',
-  '-e',
-  'tell application "Terminal"',
-  '-e',
-  'activate',
-  '-e',
-  'do script (item 1 of argv)',
-  '-e',
-  'end tell',
-  '-e',
-  'end run',
+// AppleScript is passed as one -e per line. Commands travel as argv entries read
+// back via `item i of argv` rather than being interpolated into the script text,
+// so a prompt full of quotes and newlines never has to survive AppleScript string
+// escaping on top of the shell escaping it already carries.
+const osascriptArgs = (scriptLines: string[], argv: string[]): string[] => [
+  ...scriptLines.flatMap((line) => ['-e', line]),
   '--',
-  `cd ${shellQuote(projectPath)} && ${command}`
+  ...argv
 ]
 
+const inProjectDirectory = (projectPath: string, command: string) => `cd ${shellQuote(projectPath)} && ${command}`
+
+// Terminal's dictionary can open a window running something (`do script`) but
+// has no verb for a new tab, so later tabs come from pressing ⌘T through System
+// Events — which needs Accessibility permission for Project Tracker. The delay
+// gives the tab time to exist before `do script` targets the front window's
+// selected tab. A single command never touches System Events.
+// ponytail: fixed 0.5s delay; poll the tab count if a slow machine outruns it.
+export const terminalOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+  osascriptArgs(
+    [
+      'on run argv',
+      'tell application "Terminal"',
+      'activate',
+      'do script (item 1 of argv)',
+      'repeat with i from 2 to count of argv',
+      'tell application "System Events" to keystroke "t" using command down',
+      'delay 0.5',
+      'do script (item i of argv) in front window',
+      'end repeat',
+      'end tell',
+      'end run'
+    ],
+    commands.map((command) => inProjectDirectory(projectPath, command))
+  )
+
+// `write text` types into the tab's live shell, so the session outlives the
+// agent the same way Terminal's `do script` does.
+export const itermOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+  osascriptArgs(
+    [
+      'on run argv',
+      'tell application "iTerm"',
+      'activate',
+      'set targetWindow to (create window with default profile)',
+      'repeat with i from 1 to count of argv',
+      'if i > 1 then tell targetWindow to create tab with default profile',
+      'tell current session of targetWindow to write text (item i of argv)',
+      'end repeat',
+      'end tell',
+      'end run'
+    ],
+    commands.map((command) => inProjectDirectory(projectPath, command))
+  )
+
+// Ghostty 1.3+ scripting: `initial input` is typed into the tab's own shell
+// rather than replacing it (as `command` would), so the shell outlives the
+// agent with no exec trick. argv item 1 is the directory, the rest commands.
+export const ghosttyOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+  osascriptArgs(
+    [
+      'on run argv',
+      'tell application "Ghostty"',
+      'activate',
+      'set surfaceConfig to new surface configuration',
+      'set initial working directory of surfaceConfig to (item 1 of argv)',
+      'set initial input of surfaceConfig to (item 2 of argv) & linefeed',
+      'set targetWindow to new window with configuration surfaceConfig',
+      'repeat with i from 3 to count of argv',
+      'set initial input of surfaceConfig to (item i of argv) & linefeed',
+      'new tab in targetWindow with configuration surfaceConfig',
+      'end repeat',
+      'end tell',
+      'end run'
+    ],
+    [projectPath, ...commands]
+  )
+
 // Ghostty refuses to launch its terminal from the CLI on macOS and documents
-// `open -na Ghostty.app --args` as the way in. `initial-command` applies to the
-// first surface only, leaving later tabs as normal shells; `-e` would have set
-// the same key but also forces quit-after-last-window-closed, which would take
-// the user's other Ghostty windows down when the agent exits.
+// `open -na Ghostty.app --args` as the way in. Kept for single commands because
+// it works on Ghostty versions that predate the scripting dictionary.
+// `initial-command` applies to the first surface only, leaving later tabs as
+// normal shells; `-e` would have set the same key but also forces
+// quit-after-last-window-closed, which would take the user's other Ghostty
+// windows down when the agent exits.
 //
 // The `shell:` prefix pins the value to /bin/sh -c rather than leaving it to
 // Ghostty's direct-vs-shell heuristic, so the quoting in the command is read by
 // a shell exactly as it was written.
 //
-// The trailing exec is what makes this behave like the other two. Warp and
-// Terminal run the command inside a session that outlives it; initial-command
-// instead replaces the shell, so without this the window would die the moment
-// the agent exited — `wait-after-command` only holds a dead terminal open until
-// a keypress. Exec'ing the login shell afterwards leaves a live one in the
+// The trailing exec is what makes this behave like the others. initial-command
+// replaces the shell, so without this the window would die the moment the agent
+// exited — `wait-after-command` only holds a dead terminal open until a
+// keypress. Exec'ing the login shell afterwards leaves a live one in the
 // project directory, which is what a hand-off is for.
 export const ghosttyOpenArgs = (projectPath: string, command: string): string[] => [
   '-na',

@@ -365,6 +365,15 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
+    async autoRunLane(path: string, targetId: string, terminalLabel: string, commands: string[]) {
+      try {
+        await projectTrackerApi.autoRunLane(path, targetId, commands)
+        this.notice = `Auto Run opened ${commands.length} ${commands.length === 1 ? 'tab' : 'tabs'} in ${terminalLabel}.`
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      }
+    },
+
     // The lane is captured at start, not read back at the end: the ticket may be
     // dragged to another column mid-run, and the record should say which lane's
     // prompt actually produced the output.

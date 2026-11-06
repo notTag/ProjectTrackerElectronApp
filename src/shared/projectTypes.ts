@@ -148,6 +148,10 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
+  // What the lane's Auto Run button launches: which agent works each ticket and
+  // which terminal hosts the tabs. Absent means the defaults.
+  autoRunAgentId?: string
+  autoRunTerminalId?: string
 }
 
 export interface ChecklistItem {
@@ -240,17 +244,16 @@ export const ticketSearchText = (ticket: Ticket) => {
 
 // A coding agent a ticket can be handed to. `command` is the CLI that takes the
 // prompt as its last argument and runs in the project directory; `headlessArgs`
-// go before the prompt when it runs in the background with nobody watching.
+// go before the prompt when it runs in the background with nobody watching, and
+// `promptArgs` go before it when it runs in a terminal someone is watching.
 export interface Agent {
   id: string
   name: string
   command: string
   headlessArgs: string[]
+  promptArgs?: string[]
 }
 
-// ponytail: one built-in agent. Agents saved in state are offered alongside it,
-// so adding Codex or another CLI is one entry, not a code change.
-//
 // acceptEdits lets a background run write its output files without a human to
 // approve them, while shell commands stay denied — the run can draft, not execute.
 export const DEFAULT_AGENT: Agent = {
@@ -260,15 +263,42 @@ export const DEFAULT_AGENT: Agent = {
   headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
 }
 
-export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => [
-  DEFAULT_AGENT,
-  ...(state.agents ?? []).filter((agent) => agent.id !== DEFAULT_AGENT.id)
-]
+// Codex's workspace-write sandbox is the closest match to acceptEdits: files in
+// the project can change, nothing outside it can.
+const CODEX_AGENT: Agent = {
+  id: 'codex',
+  name: 'Codex',
+  command: 'codex',
+  headlessArgs: ['exec', '--sandbox', 'workspace-write']
+}
+
+// Hermes reads its first positional as a subcommand, so a bare prompt would be
+// rejected as an unknown command — the prompt has to ride on a flag.
+const HERMES_AGENT: Agent = {
+  id: 'hermes',
+  name: 'Hermes',
+  command: 'hermes',
+  headlessArgs: ['-z'],
+  promptArgs: ['chat', '-q']
+}
+
+const BUILT_IN_AGENTS = [DEFAULT_AGENT, CODEX_AGENT, HERMES_AGENT]
+const builtInAgentIds = new Set(BUILT_IN_AGENTS.map((agent) => agent.id))
+
+// Agents saved in state are offered alongside the built-ins, so adding another
+// CLI is one entry, not a code change.
+export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => {
+  const savedAgents = state.agents ?? []
+  const extraAgents = savedAgents.filter((agent) => !builtInAgentIds.has(agent.id))
+  return [...BUILT_IN_AGENTS, ...extraAgents]
+}
+
+export const findAgent = (agents: Agent[], agentId?: string): Agent =>
+  agents.find((agent) => agent.id === agentId) ?? DEFAULT_AGENT
 
 // A ticket that never picked an agent still runs — with the default — so the
 // hand-off works before anyone touches the picker.
-export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent =>
-  agents.find((agent) => agent.id === ticket.agentId) ?? DEFAULT_AGENT
+export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent => findAgent(agents, ticket.agentId)
 
 export interface TicketPromptContext {
   assigneeName?: string
@@ -330,7 +360,8 @@ export const ticketShellCommand = (
   context: TicketPromptContext = {}
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return `${agent.command} ${shellQuote(prompt)}`
+  const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  return commandWords.join(' ')
 }
 
 export interface GithubIssue {

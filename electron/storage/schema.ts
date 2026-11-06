@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   agent_prompt TEXT NOT NULL,
   agent_file_path TEXT NOT NULL,
   output_target TEXT NOT NULL DEFAULT '',
+  auto_run_agent_id TEXT,
+  auto_run_terminal_id TEXT,
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
@@ -109,7 +111,11 @@ CREATE INDEX IF NOT EXISTS members_by_user ON project_members (user_id);
 
 // CREATE TABLE IF NOT EXISTS leaves tables from older databases untouched, so
 // columns added after a table first shipped are listed here and added on open.
-export const ADDED_COLUMNS = [{ table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" }]
+export const ADDED_COLUMNS = [
+  { table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'auto_run_agent_id', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'auto_run_terminal_id', definition: 'TEXT' }
+]
 
 export const PATH_KIND_SCAN = 'scan'
 export const PATH_KIND_HIDDEN = 'hidden'

@@ -23,7 +23,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/' }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2' }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -85,6 +85,9 @@ describe('StateRepository', () => {
     expect(board?.lanes.map((lane) => lane.id)).toEqual(['idea', 'prd'])
     expect(board?.lanes[1].agentFilePath).toBe('/tmp/prd.md')
     expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
+    expect(board?.lanes[1].autoRunAgentId).toBe('codex')
+    expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
+    expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
     expect(board?.tickets.map((ticket) => ticket.number)).toEqual([1, 2])
     expect(board?.tickets[0].labels).toEqual(['bug'])
