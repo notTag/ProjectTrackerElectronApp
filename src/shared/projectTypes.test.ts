@@ -34,6 +34,8 @@ import {
   MAX_LANE_WIDTH,
   MIN_LANE_WIDTH,
   TICKET_CARD_FIELDS,
+  pullRequestLabel,
+  worktreeFolderName,
   type BoardPreferences,
   type ProjectTrackerState,
   type GithubIssue,
@@ -387,5 +389,18 @@ describe('ticketShellCommand', () => {
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+  })
+})
+
+describe('ticket card labels', () => {
+  it('shows the last folder of a worktree path', () => {
+    expect(worktreeFolderName('/code/electron-app-ticket-fields')).toBe('electron-app-ticket-fields')
+    expect(worktreeFolderName('/code/electron-app-ticket-fields/')).toBe('electron-app-ticket-fields')
+  })
+
+  it('names a GitHub PR by number, falling back to a bare label', () => {
+    expect(pullRequestLabel('https://github.com/o/r/pull/35')).toBe('PR #35')
+    expect(pullRequestLabel('https://github.com/o/r/pull/35/files')).toBe('PR #35')
+    expect(pullRequestLabel('https://gitlab.com/o/r/-/merge_requests/9')).toBe('PR')
   })
 })

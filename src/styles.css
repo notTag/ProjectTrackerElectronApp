@@ -1200,13 +1200,15 @@ code {
 
 .ticket-meta {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   margin: 6px 0 0;
   color: var(--color-text-muted);
   font-size: 0.75rem;
 }
 
 .ticket-branch {
+  max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
