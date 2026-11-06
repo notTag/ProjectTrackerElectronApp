@@ -159,6 +159,15 @@ const ticketsInLane = (laneId: string) =>
     (ticket) => ticket.laneId === laneId && matchesQuery(ticket) && matchesAssignee(ticket)
   )
 
+// ponytail: in-memory only — a pick for the next run, not ticket data. Persist
+// it (store or board preferences) if it should survive leaving the board.
+const selectedTicketIds = ref(new Set<string>())
+
+const toggleTicketSelected = (ticketId: string) => {
+  if (selectedTicketIds.value.has(ticketId)) selectedTicketIds.value.delete(ticketId)
+  else selectedTicketIds.value.add(ticketId)
+}
+
 const visibleTicketCount = computed(() =>
   visibleLanes.value.reduce((total, lane) => total + ticketsInLane(lane.id).length, 0)
 )
@@ -441,6 +450,15 @@ const runTicketAgent = (ticket: Ticket) => {
             @dragend="draggedTicketId = null"
             @click="openTicketId = ticket.id"
           >
+            <input
+              type="checkbox"
+              class="ticket-select"
+              :checked="selectedTicketIds.has(ticket.id)"
+              :aria-label="`Select #${ticket.number} to run`"
+              title="Select to run"
+              @click.stop
+              @change="toggleTicketSelected(ticket.id)"
+            />
             <h3>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
