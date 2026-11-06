@@ -180,6 +180,8 @@ export interface Ticket {
   updatedAt?: string
   labels?: string[]
   branchName?: string
+  worktreePath?: string
+  pullRequestUrl?: string
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
@@ -316,6 +318,8 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     context.assigneeName ? `Assignee: ${context.assigneeName}` : '',
     ticket.labels?.length ? `Labels: ${formatLabels(ticket.labels)}` : '',
     ticket.branchName ? `Branch: ${ticket.branchName}` : '',
+    ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
+    ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]

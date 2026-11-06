@@ -121,6 +121,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   createdAt: String(row.created_at),
   updatedAt: asText(row.updated_at),
   branchName: asText(row.branch_name),
+  worktreePath: asText(row.worktree_path),
+  pullRequestUrl: asText(row.pull_request_url),
   assigneeId: asText(row.assignee_id),
   labels: parseJson<string[] | undefined>(row.labels_json, undefined),
   checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
@@ -144,7 +146,9 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   jsonOrNull(ticket.checklist),
   jsonOrNull(ticket.agentRun),
   ticket.externalId ?? null,
-  ticket.externalUrl ?? null
+  ticket.externalUrl ?? null,
+  ticket.worktreePath ?? null,
+  ticket.pullRequestUrl ?? null
 ]
 
 export class StateRepository {
@@ -582,8 +586,9 @@ export class StateRepository {
     this.run(
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
-         branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
+         worktree_path, pull_request_url, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -594,7 +599,7 @@ export class StateRepository {
       `UPDATE tickets SET
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
-         agent_run_json = ?, external_id = ?, external_url = ?
+         agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )

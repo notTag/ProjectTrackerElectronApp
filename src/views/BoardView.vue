@@ -657,8 +657,38 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.branchName ?? ''"
           placeholder="feat/board-ticket-fields"
-          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() })"
+          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() || undefined })"
         />
+      </label>
+
+      <label>
+        Worktree
+        <input
+          class="agent-file-path"
+          :value="openTicket.worktreePath ?? ''"
+          placeholder="/Users/me/Code/my-app-board-ticket-fields"
+          @change="
+            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+      </label>
+
+      <label>
+        GitHub PR
+        <input
+          type="url"
+          class="agent-file-path"
+          :value="openTicket.pullRequestUrl ?? ''"
+          placeholder="https://github.com/owner/repo/pull/123"
+          @change="
+            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+        <!-- target=_blank routes through main's window-open handler, which hands http(s) URLs to the OS browser.
+             A scheme-less value would resolve against the app's own origin, so only absolute http(s) URLs get a link. -->
+        <a v-if="/^https?:\/\//.test(openTicket.pullRequestUrl ?? '')" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
+          Open pull request ↗
+        </a>
       </label>
 
       <section class="ticket-checklist">

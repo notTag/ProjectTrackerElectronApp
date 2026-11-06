@@ -341,6 +341,8 @@ describe('ticketShellCommand', () => {
     const richTicket = ticket({
       labels: ['ui', 'bug'],
       branchName: 'feat/thing',
+      worktreePath: '/code/app-thing',
+      pullRequestUrl: 'https://github.com/o/r/pull/4',
       externalUrl: 'https://github.com/o/r/issues/3',
       checklist: [
         { text: 'spec', done: true },
@@ -351,6 +353,8 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Assignee: Local')
     expect(prompt).toContain('Labels: ui, bug')
     expect(prompt).toContain('Branch: feat/thing')
+    expect(prompt).toContain('Worktree: /code/app-thing')
+    expect(prompt).toContain('Pull request: https://github.com/o/r/pull/4')
     expect(prompt).toContain('Source: https://github.com/o/r/issues/3')
     expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
   })
