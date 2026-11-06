@@ -442,6 +442,22 @@ const runTicketAgent = (ticket: Ticket) => {
             @click="openTicketId = ticket.id"
           >
             <h3>
+              <span
+                v-if="store.agentRunning[ticket.id]"
+                class="agent-status agent-status-running"
+                role="img"
+                aria-label="Agent running"
+                title="Agent running"
+              />
+              <!-- Lane-scoped: each lane has its own prompt, so a run finished in
+                   an earlier lane says nothing about the work in this one. -->
+              <span
+                v-else-if="ticket.agentRun?.succeeded && ticket.agentRun.laneId === ticket.laneId"
+                class="agent-status agent-status-done"
+                role="img"
+                aria-label="Agent finished"
+                title="Agent finished"
+              >✓</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
             </h3>

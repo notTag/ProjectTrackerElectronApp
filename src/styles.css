@@ -1072,6 +1072,43 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* Fixed green on every theme: the ticket asks for green, and no theme token
+   means "success". */
+.agent-status {
+  --agent-status-green: #22c55e;
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.agent-status-running {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--agent-status-green);
+  box-shadow: 0 0 6px var(--agent-status-green);
+  animation: agent-status-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-status-done {
+  color: var(--agent-status-green);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--agent-status-green);
+}
+
+@keyframes agent-status-pulse {
+  50% {
+    opacity: 0.4;
+    box-shadow: 0 0 12px var(--agent-status-green);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-running {
+    animation: none;
+  }
+}
+
 .ticket-preview {
   margin: 6px 0 0;
   color: var(--color-text-muted);
