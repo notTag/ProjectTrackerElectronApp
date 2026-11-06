@@ -343,8 +343,18 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
   const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, output]
-  return sections.filter(Boolean).join('\n\n')
+  const prompt = sections.filter(Boolean).join('\n\n')
+  return guardAgainstOptionParsing(prompt)
 }
+
+// The prompt reaches the agent as a CLI argument, and CLIs parse any argument
+// that starts with "-" as an option: a lane prompt written as a bullet list
+// ("- Create a PRD…") failed with `error: unknown option '- Create a PRD…'`.
+// A leading heading keeps it a positional argument for every agent, including
+// ones whose prompt rides on a flag value (Hermes `-z`/`-q`), where a `--`
+// separator would not help.
+const guardAgainstOptionParsing = (prompt: string): string =>
+  prompt.startsWith('-') ? `Instructions:\n${prompt}` : prompt
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An

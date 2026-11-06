@@ -322,6 +322,15 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('never starts the prompt with "-", which a CLI would parse as an option', () => {
+    const bulletLane = lane({ agentPrompt: '- Create a PRD.\n- Add it to the ticket.' })
+    const prompt = ticketAgentPrompt(ticket(), bulletLane)
+    expect(prompt).toBe(
+      'Instructions:\n- Create a PRD.\n- Add it to the ticket.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'
+    )
+    expect(ticketAgentPrompt(ticket(), lane({ agentPrompt: 'Ship it.' }))).toMatch(/^Ship it\./)
+  })
+
   it('carries every filled-in ticket field as context', () => {
     const richTicket = ticket({
       labels: ['ui', 'bug'],
