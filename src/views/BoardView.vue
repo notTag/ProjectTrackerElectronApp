@@ -27,6 +27,7 @@ import {
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
+  ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
   type Agent,
@@ -311,7 +312,7 @@ const ticketCommand = (ticket: Ticket) => {
 }
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
-// never launches tickets the user cannot see.
+// never launches tickets the user cannot see. Checked tickets narrow it further.
 // An unconfigured lane follows the Open In picker when that is a terminal, so
 // the first click uses a terminal the user is known to have.
 const autoRunTerminal = (lane: SwimLane) => {
@@ -319,16 +320,19 @@ const autoRunTerminal = (lane: SwimLane) => {
   return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
 }
 
+const autoRunTickets = (lane: SwimLane) => ticketsToRun(ticketsInLane(lane.id), selectedTicketIds.value)
+
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
   const agentName = findAgent(agents.value, lane.autoRunAgentId).name
-  return `Auto Run — one ${terminalLabel} tab per ticket, running ${agentName}`
+  const ticketCount = autoRunTickets(lane).length
+  return `Auto Run ${ticketCount} — one ${terminalLabel} tab per ticket, running ${agentName}`
 }
 
 const autoRunLane = (lane: SwimLane) => {
   const agent = findAgent(agents.value, lane.autoRunAgentId)
   const terminal = autoRunTerminal(lane)
-  const laneTickets = ticketsInLane(lane.id)
+  const laneTickets = autoRunTickets(lane)
   const commands = laneTickets.map((ticket) => ticketShellCommand(ticket, lane, agent, promptContext(ticket)))
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, commands)
 }
