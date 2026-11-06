@@ -331,6 +331,14 @@ const outputInstruction = (outputTarget: string) =>
       'If that location already exists, use it as-is without asking; otherwise create it.'
   ].join('\n')
 
+// The prompt reaches the agent as a CLI argument, and Claude Code's parser
+// reads an argument starting with "-" as an option: a lane prompt written as a
+// bullet list ("- Create a PRD…") failed with `error: unknown option`.
+// A leading heading avoids that without a per-agent `--` separator, which
+// custom agents with arbitrary flags couldn't be relied on to accept.
+const guardAgainstOptionParsing = (prompt: string): string =>
+  prompt.startsWith('-') ? `Instructions:\n${prompt}` : prompt
+
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
 // output location closes it out as the last thing the agent reads.
@@ -346,15 +354,6 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
-
-// The prompt reaches the agent as a CLI argument, and CLIs parse any argument
-// that starts with "-" as an option: a lane prompt written as a bullet list
-// ("- Create a PRD…") failed with `error: unknown option '- Create a PRD…'`.
-// A leading heading keeps it a positional argument for every agent, including
-// ones whose prompt rides on a flag value (Hermes `-z`/`-q`), where a `--`
-// separator would not help.
-const guardAgainstOptionParsing = (prompt: string): string =>
-  prompt.startsWith('-') ? `Instructions:\n${prompt}` : prompt
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
