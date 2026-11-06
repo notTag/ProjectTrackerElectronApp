@@ -32,6 +32,8 @@ interface ProjectsStoreState {
   // Keyed by ticket id. Lives in the store, not the board view, so a run keeps
   // showing as running after the user leaves the board and comes back.
   agentRunning: Record<string, boolean>
+  // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
+  autoRunning: Record<string, boolean>
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -47,7 +49,8 @@ export const useProjectsStore = defineStore('projects', {
     notice: null,
     readmes: {},
     githubLoading: {},
-    agentRunning: {}
+    agentRunning: {},
+    autoRunning: {}
   }),
 
   getters: {
@@ -365,12 +368,16 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
-    async autoRunLane(path: string, targetId: string, terminalLabel: string, commands: string[]) {
+    async autoRunLane(path: string, laneId: string, targetId: string, terminalLabel: string, commands: string[]) {
+      if (this.autoRunning[laneId]) return
+      this.autoRunning[laneId] = true
       try {
         await projectTrackerApi.autoRunLane(path, targetId, commands)
         this.notice = `Auto Run opened ${commands.length} ${commands.length === 1 ? 'tab' : 'tabs'} in ${terminalLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.autoRunning[laneId] = false
       }
     },
 

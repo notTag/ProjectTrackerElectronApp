@@ -52,10 +52,11 @@ const inProjectDirectory = (projectPath: string, command: string) => `cd ${shell
 
 // Terminal's dictionary can open a window running something (`do script`) but
 // has no verb for a new tab, so later tabs come from pressing ⌘T through System
-// Events — which needs Accessibility permission for Project Tracker. The delay
-// gives the tab time to exist before `do script` targets the front window's
-// selected tab. A single command never touches System Events.
-// ponytail: fixed 0.5s delay; poll the tab count if a slow machine outruns it.
+// Events — which needs Accessibility permission for Project Tracker. A keystroke
+// goes to whatever is frontmost, so Terminal is brought forward first and the
+// tab count is polled: if no tab appears the script errors rather than typing
+// the next command into the previous ticket's running agent. A single command
+// never touches System Events.
 export const terminalOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
   osascriptArgs(
     [
@@ -63,10 +64,18 @@ export const terminalOsascriptArgs = (projectPath: string, commands: string[]): 
       'tell application "Terminal"',
       'activate',
       'do script (item 1 of argv)',
+      'set targetWindow to front window',
       'repeat with i from 2 to count of argv',
+      'set tabCount to count of tabs of targetWindow',
+      'set index of targetWindow to 1',
+      'tell application "System Events" to tell process "Terminal" to set frontmost to true',
       'tell application "System Events" to keystroke "t" using command down',
-      'delay 0.5',
-      'do script (item i of argv) in front window',
+      'repeat 30 times',
+      'if (count of tabs of targetWindow) > tabCount then exit repeat',
+      'delay 0.1',
+      'end repeat',
+      'if (count of tabs of targetWindow) = tabCount then error "Terminal did not open a new tab."',
+      'do script (item i of argv) in last tab of targetWindow',
       'end repeat',
       'end tell',
       'end run'

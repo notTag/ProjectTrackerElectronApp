@@ -354,6 +354,10 @@ describe('ticketShellCommand', () => {
     expect(agentForTicket(ticket(), agents)).toBe(DEFAULT_AGENT)
     expect(ticketShellCommand(ticket(), lane(), aider)).toMatch(/^aider '/)
     expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'aider'])
+
+    const savedCodex = { id: 'codex', name: 'My Codex', command: '/opt/bin/codex', headlessArgs: [] }
+    const withSavedCodex = availableAgents({ agents: [savedCodex] })
+    expect(withSavedCodex.filter((agent) => agent.id === 'codex')).toEqual([savedCodex])
   })
 
   it('names the lane markdown file when the lane has one', () => {

@@ -303,15 +303,25 @@ const ticketCommand = (ticket: Ticket) => {
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
 // never launches tickets the user cannot see.
-const autoRunTerminal = (lane: SwimLane) =>
-  TERMINAL_TARGETS.find((target) => target.id === lane.autoRunTerminalId) ?? TERMINAL_TARGETS[0]
+// An unconfigured lane follows the Open In picker when that is a terminal, so
+// the first click uses a terminal the user is known to have.
+const autoRunTerminal = (lane: SwimLane) => {
+  const terminalId = lane.autoRunTerminalId ?? openInStore.selectedId
+  return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
+}
+
+const autoRunTooltip = (lane: SwimLane) => {
+  const terminalLabel = autoRunTerminal(lane).label
+  const agentName = findAgent(agents.value, lane.autoRunAgentId).name
+  return `Auto Run — one ${terminalLabel} tab per ticket, running ${agentName}`
+}
 
 const autoRunLane = (lane: SwimLane) => {
   const agent = findAgent(agents.value, lane.autoRunAgentId)
   const terminal = autoRunTerminal(lane)
   const laneTickets = ticketsInLane(lane.id)
   const commands = laneTickets.map((ticket) => ticketShellCommand(ticket, lane, agent, promptContext(ticket)))
-  void store.autoRunLane(projectPath.value, terminal.id, terminal.label, commands)
+  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, commands)
 }
 
 const openTicketInShell = (ticket: Ticket) =>
@@ -438,8 +448,8 @@ const runTicketAgent = (ticket: Ticket) => {
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button
             class="icon-button"
-            :disabled="ticketsInLane(lane.id).length === 0"
-            :title="`Auto Run — one ${autoRunTerminal(lane).label} tab per ticket, running ${findAgent(agents, lane.autoRunAgentId).name}`"
+            :disabled="ticketsInLane(lane.id).length === 0 || store.autoRunning[lane.id]"
+            :title="autoRunTooltip(lane)"
             @click="autoRunLane(lane)"
             @dblclick.stop
           >

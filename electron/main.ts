@@ -436,7 +436,9 @@ const registerIpc = () => {
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (!isStringArray(commands) || commands.length === 0) throw new Error('No tickets to run.')
-    const runCommands = typeof targetId === 'string' ? COMMAND_RUNNERS[targetId] : undefined
+    // hasOwn, not a bare index: 'constructor' would otherwise resolve to Object.
+    const isKnownTerminal = typeof targetId === 'string' && Object.hasOwn(COMMAND_RUNNERS, targetId)
+    const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
     if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
     await runCommands(normalized, commands)

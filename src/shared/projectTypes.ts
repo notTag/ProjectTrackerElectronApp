@@ -282,15 +282,17 @@ const HERMES_AGENT: Agent = {
   promptArgs: ['chat', '-q']
 }
 
-const BUILT_IN_AGENTS = [DEFAULT_AGENT, CODEX_AGENT, HERMES_AGENT]
-const builtInAgentIds = new Set(BUILT_IN_AGENTS.map((agent) => agent.id))
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
 
 // Agents saved in state are offered alongside the built-ins, so adding another
-// CLI is one entry, not a code change.
+// CLI is one entry, not a code change. A saved agent with a built-in's id wins
+// over it — someone who configured their own codex keeps their binary and args —
+// except the default, which stays fixed as the fallback every ticket runs with.
 export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => {
-  const savedAgents = state.agents ?? []
-  const extraAgents = savedAgents.filter((agent) => !builtInAgentIds.has(agent.id))
-  return [...BUILT_IN_AGENTS, ...extraAgents]
+  const savedAgents = (state.agents ?? []).filter((agent) => agent.id !== DEFAULT_AGENT.id)
+  const savedAgentIds = new Set(savedAgents.map((agent) => agent.id))
+  const unshadowedBuiltIns = OPTIONAL_BUILT_IN_AGENTS.filter((agent) => !savedAgentIds.has(agent.id))
+  return [DEFAULT_AGENT, ...unshadowedBuiltIns, ...savedAgents]
 }
 
 export const findAgent = (agents: Agent[], agentId?: string): Agent =>
