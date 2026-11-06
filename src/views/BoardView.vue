@@ -6,6 +6,7 @@ import TicketGraph from '@/components/TicketGraph.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
+import { TERMINAL_TARGETS } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
@@ -16,6 +17,7 @@ import {
   availableAgents,
   checklistProgress,
   clampLaneWidth,
+  findAgent,
   formatLabels,
   parseLabels,
   removeChecklistItem,
@@ -299,6 +301,29 @@ const ticketCommand = (ticket: Ticket) => {
   return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket))
 }
 
+// Runs what the lane shows: an active filter narrows the batch, so the button
+// never launches tickets the user cannot see.
+// An unconfigured lane follows the Open In picker when that is a terminal, so
+// the first click uses a terminal the user is known to have.
+const autoRunTerminal = (lane: SwimLane) => {
+  const terminalId = lane.autoRunTerminalId ?? openInStore.selectedId
+  return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
+}
+
+const autoRunTooltip = (lane: SwimLane) => {
+  const terminalLabel = autoRunTerminal(lane).label
+  const agentName = findAgent(agents.value, lane.autoRunAgentId).name
+  return `Auto Run — one ${terminalLabel} tab per ticket, running ${agentName}`
+}
+
+const autoRunLane = (lane: SwimLane) => {
+  const agent = findAgent(agents.value, lane.autoRunAgentId)
+  const terminal = autoRunTerminal(lane)
+  const laneTickets = ticketsInLane(lane.id)
+  const commands = laneTickets.map((ticket) => ticketShellCommand(ticket, lane, agent, promptContext(ticket)))
+  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, commands)
+}
+
 const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 
@@ -421,6 +446,15 @@ const runTicketAgent = (ticket: Ticket) => {
         <header class="lane-heading" @dblclick="startTicketDraft(lane.id)">
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <button
+            class="icon-button"
+            :disabled="ticketsInLane(lane.id).length === 0 || store.autoRunning[lane.id]"
+            :title="autoRunTooltip(lane)"
+            @click="autoRunLane(lane)"
+            @dblclick.stop
+          >
+            ▶
+          </button>
           <button
             class="icon-button"
             title="How you want to build it"
@@ -749,6 +783,34 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
+
+      <section class="ticket-agent">
+        <p class="eyebrow">Auto Run</p>
+        <label>
+          Agent
+          <select
+            :value="findAgent(agents, openLane.autoRunAgentId).id"
+            @change="editLane(openLane, { autoRunAgentId: ($event.target as HTMLSelectElement).value })"
+          >
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label>
+          Terminal
+          <select
+            :value="autoRunTerminal(openLane).id"
+            @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+          >
+            <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+              {{ terminal.label }}
+            </option>
+          </select>
+        </label>
+        <span class="field-hint">
+          ▶ on this lane opens one new window with a tab per visible ticket, each running its agent command.
+          Terminal needs Accessibility permission to open tabs.
+        </span>
+      </section>
 
       <div class="modal-actions">
         <button

@@ -14,6 +14,8 @@ import { StateRepository } from './storage/stateRepository.js'
 import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOpenArgs,
+  ghosttyOsascriptArgs,
+  itermOsascriptArgs,
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
@@ -62,37 +64,44 @@ const run = (bin: string, args: string[]) =>
     execFile(bin, args, (error) => (error ? reject(error) : resolve()))
   })
 
-// Write the ticket's command where Warp looks for launch configurations, then
+// Write the tickets' commands where Warp looks for launch configurations, then
 // ask Warp to open it. One reused file rather than one per ticket: the config
 // is a hand-off, not a document worth keeping, and per-ticket files would pile
 // up in the user's Warp directory forever.
 // ponytail: single reused config. Two launches within the moment it takes Warp
-// to read the file would race; key the name per ticket if that ever bites.
+// to read the file would race; key the name per launch if that ever bites.
 //
 // This executes the command rather than pasting it. What makes that safe is the
 // single-quote wrapping applied in ticketShellCommand: ticket text — which can
-// arrive from a GitHub issue — lands as one literal argument to `claude`, never
+// arrive from a GitHub issue — lands as one literal argument to the agent, never
 // as shell code.
-const openWarpWithCommand = async (projectPath: string, command: string) => {
+const openWarpWithCommands = async (projectPath: string, commands: string[]) => {
   const configDirectory = path.join(app.getPath('home'), '.warp', 'launch_configurations')
   const configPath = path.join(configDirectory, `${WARP_LAUNCH_CONFIG_NAME}.yaml`)
   mkdirSync(configDirectory, { recursive: true })
-  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, command), 'utf8')
+  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, commands), 'utf8')
   await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
 }
 
-const openTerminalWithCommand = (projectPath: string, command: string) =>
-  run('osascript', terminalOsascriptArgs(projectPath, command))
+const openTerminalWithCommands = (projectPath: string, commands: string[]) =>
+  run('osascript', terminalOsascriptArgs(projectPath, commands))
 
-const openGhosttyWithCommand = (projectPath: string, command: string) =>
-  run('open', ghosttyOpenArgs(projectPath, command))
+const openItermWithCommands = (projectPath: string, commands: string[]) =>
+  run('osascript', itermOsascriptArgs(projectPath, commands))
+
+const openGhosttyWithCommands = (projectPath: string, commands: string[]) =>
+  commands.length === 1
+    ? run('open', ghosttyOpenArgs(projectPath, commands[0]))
+    : run('osascript', ghosttyOsascriptArgs(projectPath, commands))
 
 // Only the terminals can run a ticket's command; the editors in the allowlist
-// have no shell to run it in and keep the clipboard hand-off.
-const COMMAND_RUNNERS: Record<string, (projectPath: string, command: string) => Promise<void>> = {
-  warp: openWarpWithCommand,
-  terminal: openTerminalWithCommand,
-  ghostty: openGhosttyWithCommand
+// have no shell to run it in and keep the clipboard hand-off. Each runner opens
+// one new window with a tab per command.
+const COMMAND_RUNNERS: Record<string, (projectPath: string, commands: string[]) => Promise<void>> = {
+  warp: openWarpWithCommands,
+  terminal: openTerminalWithCommands,
+  iterm2: openItermWithCommands,
+  ghostty: openGhosttyWithCommands
 }
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
@@ -399,7 +408,7 @@ const registerIpc = () => {
 
     try {
       if (ticketCommand && runCommand) {
-        await runCommand(normalized, ticketCommand)
+        await runCommand(normalized, [ticketCommand])
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
       if (process.platform === 'darwin') {
@@ -413,6 +422,26 @@ const registerIpc = () => {
       clipboard.writeText(fallbackCommand)
       return { ok: true, appLabel: target.label, fallbackCommand }
     }
+  })
+
+  // Commands come from the renderer, same trust as project:open-in: each one
+  // carries its prompt single-quoted by ticketShellCommand. The target is
+  // resolved against the runner table, so only a known terminal is launched.
+  ipcMain.handle('lane:auto-run', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, targetId, commands } = (payload ?? {}) as {
+      projectPath?: unknown
+      targetId?: unknown
+      commands?: unknown
+    }
+    if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+    if (!isStringArray(commands) || commands.length === 0) throw new Error('No tickets to run.')
+    // hasOwn, not a bare index: 'constructor' would otherwise resolve to Object.
+    const isKnownTerminal = typeof targetId === 'string' && Object.hasOwn(COMMAND_RUNNERS, targetId)
+    const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
+    if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
+    const normalized = assertScannedProjectPath(projectPath)
+    await runCommands(normalized, commands)
   })
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {

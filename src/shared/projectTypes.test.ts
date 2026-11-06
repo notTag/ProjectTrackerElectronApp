@@ -311,6 +311,12 @@ describe('ticketShellCommand', () => {
     )
   })
 
+  it('puts an agent\'s prompt flags between the CLI and the prompt', () => {
+    const hermes = availableAgents({}).find((agent) => agent.id === 'hermes')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), hermes)
+    expect(command).toBe("hermes chat -q 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
@@ -342,11 +348,16 @@ describe('ticketShellCommand', () => {
   })
 
   it("runs the ticket's chosen agent, falling back to the default", () => {
-    const codex = { id: 'codex', name: 'Codex', command: 'codex', headlessArgs: ['exec'] }
-    const agents = availableAgents({ agents: [codex] })
-    expect(agentForTicket(ticket({ agentId: 'codex' }), agents)).toBe(codex)
+    const aider = { id: 'aider', name: 'Aider', command: 'aider', headlessArgs: ['--yes'] }
+    const agents = availableAgents({ agents: [aider] })
+    expect(agentForTicket(ticket({ agentId: 'aider' }), agents)).toBe(aider)
     expect(agentForTicket(ticket(), agents)).toBe(DEFAULT_AGENT)
-    expect(ticketShellCommand(ticket(), lane(), codex)).toMatch(/^codex '/)
+    expect(ticketShellCommand(ticket(), lane(), aider)).toMatch(/^aider '/)
+    expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'aider'])
+
+    const savedCodex = { id: 'codex', name: 'My Codex', command: '/opt/bin/codex', headlessArgs: [] }
+    const withSavedCodex = availableAgents({ agents: [savedCodex] })
+    expect(withSavedCodex.filter((agent) => agent.id === 'codex')).toEqual([savedCodex])
   })
 
   it('names the lane markdown file when the lane has one', () => {

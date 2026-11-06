@@ -70,6 +70,10 @@ export const projectTrackerApi = {
     return requireElectron().openProjectIn(path, targetId, command)
   },
 
+  autoRunLane(path: string, targetId: string, commands: string[]) {
+    return requireElectron().autoRunLane(path, targetId, commands)
+  },
+
   runTicketAgent(path: string, agentId: string, prompt: string) {
     return requireElectron().runTicketAgent(path, agentId, prompt)
   },
