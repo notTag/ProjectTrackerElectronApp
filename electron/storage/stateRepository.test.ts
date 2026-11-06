@@ -1,15 +1,27 @@
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
 import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
 
-const freshUserDataPath = () => mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+const createdUserDataPaths: string[] = []
+
+const freshUserDataPath = () => {
+  const userDataPath = mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+  createdUserDataPaths.push(userDataPath)
+  return userDataPath
+}
+
+afterEach(() => {
+  for (const userDataPath of createdUserDataPaths.splice(0)) {
+    rmSync(userDataPath, { recursive: true, force: true })
+  }
+})
 
 const stateWithBoard = (): ProjectTrackerState => {
   const seed = createSeedState()
