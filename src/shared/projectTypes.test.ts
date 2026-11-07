@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   addGithubIssuesToBoard,
+  addScanDirectory,
   addTicketToBoard,
+  mergeScannedProjects,
+  removeScanDirectory,
+  type ProjectRecord,
   createDefaultBoard,
   createSeedState,
   getBoard,
@@ -387,5 +391,60 @@ describe('ticketShellCommand', () => {
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+  })
+})
+
+describe('scan directory removal', () => {
+  const projectAt = (path: string, notes = ''): ProjectRecord => ({
+    path,
+    name: path.split('/').pop()!,
+    status: 'active',
+    priority: 'high',
+    notes,
+    source: 'first-party',
+    hasGit: true,
+    hasPackageJson: false,
+    hasReadme: false,
+    lastScannedAt: '2026-01-01T00:00:00.000Z'
+  })
+
+  const stateWith = (scanDirectories: string[], projectPaths: string[]): ProjectTrackerState => ({
+    ...createSeedState(),
+    scanDirectories,
+    hiddenPaths: ['/code/a/secret'],
+    thirdPartyPaths: ['/code/a/lib'],
+    snapshot: { projects: projectPaths.map((path) => projectAt(path, `notes for ${path}`)), failures: [] }
+  })
+
+  it('archives the removed directory\'s projects instead of dropping them', () => {
+    const state = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a')
+    expect(state.scanDirectories).toEqual(['/code/b'])
+    expect(state.snapshot.projects.map((project) => [project.path, Boolean(project.archived)])).toEqual([
+      ['/code/a/app', true],
+      ['/code/b/app', false]
+    ])
+    expect(state.snapshot.projects[0].notes).toBe('notes for /code/a/app')
+    expect(state.hiddenPaths).toEqual(['/code/a/secret'])
+    expect(state.thirdPartyPaths).toEqual(['/code/a/lib'])
+  })
+
+  it('keeps projects still covered by a nested scan directory', () => {
+    const state = removeScanDirectory(stateWith(['/code', '/code/a'], ['/code/a/app']), '/code')
+    expect(state.snapshot.projects.map((project) => project.path)).toEqual(['/code/a/app'])
+    expect(state.snapshot.projects[0].archived).toBeUndefined()
+  })
+
+  it('restores archived projects, notes intact, when their directory is added back', () => {
+    const archived = removeScanDirectory(stateWith(['/code/a'], ['/code/a/app']), '/code/a')
+    const restored = addScanDirectory(archived, '/code/a')
+    expect(restored.scanDirectories).toEqual(['/code/a'])
+    expect(restored.snapshot.projects[0]).toMatchObject({ archived: false, notes: 'notes for /code/a/app', priority: 'high' })
+  })
+
+  it('carries archived projects through a scan that cannot see them', () => {
+    const archived = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a')
+    const merged = mergeScannedProjects(archived, [projectAt('/code/b/app')], [])
+    expect(merged.snapshot.projects.map((project) => project.path)).toEqual(['/code/b/app', '/code/a/app'])
+    expect(merged.snapshot.projects[1].archived).toBe(true)
   })
 })

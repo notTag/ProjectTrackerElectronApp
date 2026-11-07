@@ -29,6 +29,10 @@ export interface ProjectRecord {
   hasReadme: boolean
   lastModifiedAt?: string
   lastScannedAt: string
+  // Set when the user deletes the scan directory holding this project. The row
+  // and everything hanging off it (notes, board) are kept but never shown;
+  // adding the directory back clears the flag.
+  archived?: boolean
 }
 
 export interface ProjectSnapshot {
@@ -125,16 +129,48 @@ export const mergeScannedProjects = (
       github: existing?.github ?? project.github
     }
   })
+  // Archived projects sit outside every scan directory, so a scan never finds
+  // them. Dropping what the scan missed would delete them — carry them over.
+  const scannedPaths = new Set(scannedProjects.map((project) => project.path))
+  const archivedProjects = previous.snapshot.projects.filter(
+    (project) => project.archived && !scannedPaths.has(project.path)
+  )
 
   return {
     ...previous,
     updatedAt: new Date().toISOString(),
     snapshot: {
       scannedAt: new Date().toISOString(),
-      projects,
+      projects: [...projects, ...archivedProjects],
       failures
     }
   }
+}
+
+const isInsideAny = (target: string, parents: string[]) =>
+  parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
+
+// What the user sees as deleting a scan directory archives its projects
+// instead: nothing is ever destroyed, so re-adding the folder brings it all
+// back. Projects still covered by a remaining (nested) scan directory stay put.
+export const removeScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const remainingDirectories = state.scanDirectories.filter((entry) => entry !== directory)
+  const isOrphaned = (target: string) =>
+    isInsideAny(target, [directory]) && !isInsideAny(target, remainingDirectories)
+  const projects = state.snapshot.projects.map((project) =>
+    isOrphaned(project.path) ? { ...project, archived: true } : project
+  )
+  return { ...state, scanDirectories: remainingDirectories, snapshot: { ...state.snapshot, projects } }
+}
+
+// Re-adding a directory brings back whatever was archived under it, with its
+// notes, status, priority and board exactly as they were left.
+export const addScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const scanDirectories = [...new Set([...state.scanDirectories, directory])]
+  const projects = state.snapshot.projects.map((project) =>
+    project.archived && isInsideAny(project.path, [directory]) ? { ...project, archived: false } : project
+  )
+  return { ...state, scanDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
 export interface SwimLane {

@@ -3,12 +3,14 @@ import { defineStore } from 'pinia'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
   addGithubIssuesToBoard,
+  addScanDirectory,
   addTicketToBoard,
   createSeedState,
   getBoard,
   getBoardPreferences,
   mergeScannedProjects,
   removeLaneFromBoard,
+  removeScanDirectory,
   updateLaneInBoard,
   type BoardPreferences,
   type ProjectBoard,
@@ -54,7 +56,9 @@ export const useProjectsStore = defineStore('projects', {
   }),
 
   getters: {
-    projects: (store) => store.state.snapshot.projects,
+    // Archived projects stay in state so their rows survive saves, but no view
+    // ever lists them.
+    projects: (store) => store.state.snapshot.projects.filter((project) => !project.archived),
     isFirstLaunch: (store) =>
       store.state.scanDirectories.length === 0 &&
       !store.state.snapshot.scannedAt &&
@@ -219,32 +223,11 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async addScanDirectory(directory: string) {
-      await this.save((currentState) => ({
-        ...currentState,
-        scanDirectories: unique([...currentState.scanDirectories, directory])
-      }))
+      await this.save((currentState) => addScanDirectory(currentState, directory))
     },
 
     async removeScanDirectory(directory: string) {
-      await this.save((currentState) => {
-        const remaining = currentState.scanDirectories.filter((entry) => entry !== directory)
-        // Projects derive from the scan directories (mergeScannedProjects replaces
-        // the set on each scan), so drop anything no longer covered by a remaining
-        // directory. Checking against *all* remaining dirs handles nested scan
-        // roots — a project under both /a and /a/b survives removing just one.
-        const insideRemaining = (target: string) =>
-          remaining.some((dir) => target === dir || target.startsWith(`${dir}/`))
-        return {
-          ...currentState,
-          scanDirectories: remaining,
-          hiddenPaths: currentState.hiddenPaths.filter(insideRemaining),
-          thirdPartyPaths: currentState.thirdPartyPaths.filter(insideRemaining),
-          snapshot: {
-            ...currentState.snapshot,
-            projects: currentState.snapshot.projects.filter((project) => insideRemaining(project.path))
-          }
-        }
-      })
+      await this.save((currentState) => removeScanDirectory(currentState, directory))
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
