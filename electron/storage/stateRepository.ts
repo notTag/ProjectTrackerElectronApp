@@ -358,12 +358,13 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target,
-         auto_run_agent_id, auto_run_terminal_id, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
+         auto_run_worktrees = excluded.auto_run_worktrees,
          position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
@@ -374,6 +375,7 @@ export class StateRepository {
         lane.outputTarget ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
+        lane.autoRunWorktrees === false ? 0 : 1,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
       ]
@@ -465,7 +467,8 @@ export class StateRepository {
         agentFilePath: String(row.agent_file_path),
         outputTarget: String(row.output_target),
         autoRunAgentId: asText(row.auto_run_agent_id),
-        autoRunTerminalId: asText(row.auto_run_terminal_id)
+        autoRunTerminalId: asText(row.auto_run_terminal_id),
+        autoRunWorktrees: asBool(row.auto_run_worktrees)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)

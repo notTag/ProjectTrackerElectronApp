@@ -188,6 +188,9 @@ export interface SwimLane {
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
   autoRunTerminalId?: string
+  // Each Auto Run ticket gets its own git worktree and branch off freshly
+  // fetched main. Absent (lanes saved before it existed) means on.
+  autoRunWorktrees?: boolean
 }
 
 export interface ChecklistItem {
@@ -413,6 +416,28 @@ export const ticketShellCommand = (
   const prompt = ticketAgentPrompt(ticket, lane, context)
   const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
+}
+
+// Enough of the title to recognise the ticket; the number already identifies it.
+const BRANCH_SLUG_WORD_COUNT = 3
+
+// A ticket's own branch wins; otherwise one is derived from its number and
+// title, so a re-run of the same ticket lands on the same branch.
+export const ticketBranchName = (ticket: Ticket): string => {
+  const ownBranch = ticket.branchName?.trim()
+  if (ownBranch) return ownBranch
+  const titleWords = ticket.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const titleSlug = titleWords.slice(0, BRANCH_SLUG_WORD_COUNT).join('-')
+  const ticketPrefix = `t${ticket.number}`
+  return titleSlug ? `${ticketPrefix}-${titleSlug}` : ticketPrefix
+}
+
+// One ticket of an Auto Run as it crosses IPC. With worktrees on, main makes
+// the ticket's worktree on branchName and runs the command inside it.
+export interface AutoRunTicketLaunch {
+  number: number
+  branchName: string
+  command: string
 }
 
 export interface GithubIssue {

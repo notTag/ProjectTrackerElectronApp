@@ -19,8 +19,14 @@ import {
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
+import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
-import { availableAgents, type ProjectTrackerState } from '../src/shared/projectTypes.js'
+import {
+  availableAgents,
+  shellQuote,
+  type AutoRunTicketLaunch,
+  type ProjectTrackerState
+} from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -187,6 +193,17 @@ const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) => {
   if (devServerUrl && senderUrl.startsWith(allowedDevOrigin)) return
   if (!devServerUrl && senderUrl.startsWith('file://')) return
   throw new Error('Rejected IPC call from an unexpected renderer origin.')
+}
+
+const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
+  const candidate = value as Partial<AutoRunTicketLaunch> | null
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    Number.isInteger(candidate.number) &&
+    typeof candidate.branchName === 'string' &&
+    typeof candidate.command === 'string'
+  )
 }
 
 const isStringArray = (value: unknown): value is string[] =>
@@ -429,19 +446,40 @@ const registerIpc = () => {
   // resolved against the runner table, so only a known terminal is launched.
   ipcMain.handle('lane:auto-run', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId, commands } = (payload ?? {}) as {
+    const { projectPath, targetId, tickets, useWorktrees } = (payload ?? {}) as {
       projectPath?: unknown
       targetId?: unknown
-      commands?: unknown
+      tickets?: unknown
+      useWorktrees?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
-    if (!isStringArray(commands) || commands.length === 0) throw new Error('No tickets to run.')
+    if (!Array.isArray(tickets) || tickets.length === 0) throw new Error('No tickets to run.')
+    if (!tickets.every(isAutoRunTicketLaunch)) throw new Error('Invalid Auto Run ticket.')
     // hasOwn, not a bare index: 'constructor' would otherwise resolve to Object.
     const isKnownTerminal = typeof targetId === 'string' && Object.hasOwn(COMMAND_RUNNERS, targetId)
     const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
     if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    await runCommands(normalized, commands)
+
+    if (useWorktrees !== true) {
+      await runCommands(normalized, tickets.map((ticket) => ticket.command))
+      return { worktreePaths: [] }
+    }
+
+    // Fetched once for the whole lane. Worktrees are made one at a time: git
+    // locks the repository's worktree list, so parallel adds would trip on it.
+    const repositoryRoot = await repositoryRootOf(normalized)
+    const baseRef = await freshMainRef(repositoryRoot)
+    const worktreePaths: string[] = []
+    for (const ticket of tickets) {
+      const worktreePath = await ensureTicketWorktree(repositoryRoot, ticket.number, ticket.branchName, baseRef)
+      worktreePaths.push(worktreePath)
+    }
+    const commandsInWorktrees = tickets.map(
+      (ticket, index) => `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`
+    )
+    await runCommands(normalized, commandsInWorktrees)
+    return { worktreePaths }
   })
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {

@@ -12,6 +12,7 @@ import {
   removeLaneFromBoard,
   removeScanDirectory,
   updateLaneInBoard,
+  type AutoRunTicketLaunch,
   type BoardPreferences,
   type ProjectBoard,
   type ProjectPriority,
@@ -351,12 +352,30 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
-    async autoRunLane(path: string, laneId: string, targetId: string, terminalLabel: string, commands: string[]) {
+    // With worktrees on, each ticket records the branch and worktree it now
+    // lives on, so its card and later prompts point at where the work is.
+    async autoRunLane(
+      path: string,
+      laneId: string,
+      targetId: string,
+      terminalLabel: string,
+      launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
+      useWorktrees: boolean
+    ) {
       if (this.autoRunning[laneId]) return
       this.autoRunning[laneId] = true
       try {
-        await projectTrackerApi.autoRunLane(path, targetId, commands)
-        this.notice = `Auto Run opened ${commands.length} ${commands.length === 1 ? 'tab' : 'tabs'} in ${terminalLabel}.`
+        const ticketLaunches = launches.map((entry) => entry.launch)
+        const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)
+        const tabWord = launches.length === 1 ? 'tab' : 'tabs'
+        const worktreeNote = useWorktrees ? ', one worktree each' : ''
+        this.notice = `Auto Run opened ${launches.length} ${tabWord} in ${terminalLabel}${worktreeNote}.`
+        for (const [index, worktreePath] of worktreePaths.entries()) {
+          const { ticket, launch } = launches[index]
+          const isAlreadyRecorded = ticket.branchName === launch.branchName && ticket.worktreePath === worktreePath
+          if (isAlreadyRecorded) continue
+          await this.updateTicket(path, ticket.id, { branchName: launch.branchName, worktreePath })
+        }
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {

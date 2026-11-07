@@ -21,6 +21,7 @@ import {
   availableAgents,
   DEFAULT_AGENT,
   ticketAgentPrompt,
+  ticketBranchName,
   ticketShellCommand,
   type SwimLane,
   type Ticket,
@@ -391,6 +392,14 @@ describe('ticketShellCommand', () => {
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+  })
+  it("uses a ticket's own branch, else a short one from its number and first title words", () => {
+    expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
+    expect(ticketBranchName(ticket({ number: 31, title: 'Cmd+Shift+F will bring focus to the filter' }))).toBe(
+      't31-cmd-shift-f'
+    )
+    expect(ticketBranchName(ticket({ number: 9, title: '  "Go"!  ' }))).toBe('t9-go')
+    expect(ticketBranchName(ticket({ number: 9, title: '???' }))).toBe('t9')
   })
 })
 
