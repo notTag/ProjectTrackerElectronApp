@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 );
 
--- archived = 1 once its scan directory was removed with "archive": the row and
--- its board are kept but never shown.
+-- archived = 1 once the user deleted its scan directory: the row and its board
+-- are kept but never shown, so re-adding the directory restores them.
 -- ponytail: on the shared row, so archiving hides it for every member. Move it
 -- to project_members if a second user ever needs their own archive.
 CREATE TABLE IF NOT EXISTS projects (

@@ -29,9 +29,9 @@ export interface ProjectRecord {
   hasReadme: boolean
   lastModifiedAt?: string
   lastScannedAt: string
-  // Set when the scan directory holding this project was removed with
-  // "archive". The row and everything hanging off it (notes, board) are kept
-  // but never shown; adding the directory back clears the flag.
+  // Set when the user deletes the scan directory holding this project. The row
+  // and everything hanging off it (notes, board) are kept but never shown;
+  // adding the directory back clears the flag.
   archived?: boolean
 }
 
