@@ -129,11 +129,14 @@ export const mergeScannedProjects = (
       github: existing?.github ?? project.github
     }
   })
-  // Archived projects sit outside every scan directory, so a scan never finds
-  // them. Dropping what the scan missed would delete them — carry them over.
+  // A scan never finds archived projects (they sit outside every scan
+  // directory) or hidden ones (the scanner skips hidden paths). Dropping what
+  // the scan missed would delete them and their boards — carry them over.
   const scannedPaths = new Set(scannedProjects.map((project) => project.path))
-  const archivedProjects = previous.snapshot.projects.filter(
-    (project) => project.archived && !scannedPaths.has(project.path)
+  const isSkippedByScan = (project: ProjectRecord) =>
+    project.archived || isInsideAny(project.path, previous.hiddenPaths)
+  const unscannedProjects = previous.snapshot.projects.filter(
+    (project) => isSkippedByScan(project) && !scannedPaths.has(project.path)
   )
 
   return {
@@ -141,7 +144,7 @@ export const mergeScannedProjects = (
     updatedAt: new Date().toISOString(),
     snapshot: {
       scannedAt: new Date().toISOString(),
-      projects: [...projects, ...archivedProjects],
+      projects: [...projects, ...unscannedProjects],
       failures
     }
   }

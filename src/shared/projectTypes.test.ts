@@ -456,4 +456,11 @@ describe('scan directory removal', () => {
     expect(merged.snapshot.projects.map((project) => project.path)).toEqual(['/code/b/app', '/code/a/app'])
     expect(merged.snapshot.projects[1].archived).toBe(true)
   })
+
+  it('carries hidden projects through a scan, since the scanner skips their folders', () => {
+    const state = stateWith(['/code/a'], ['/code/a/app', '/code/a/secret'])
+    const merged = mergeScannedProjects(state, [projectAt('/code/a/app')], [])
+    expect(merged.snapshot.projects.map((project) => project.path)).toEqual(['/code/a/app', '/code/a/secret'])
+    expect(merged.snapshot.projects[1].notes).toBe('notes for /code/a/secret')
+  })
 })
