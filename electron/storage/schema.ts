@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   output_target TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
+  auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
@@ -122,6 +123,7 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'auto_run_agent_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'auto_run_terminal_id', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'auto_run_worktrees', definition: 'INTEGER NOT NULL DEFAULT 1' },
   { table: 'tickets', column: 'worktree_path', definition: 'TEXT' },
   { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' },
   { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' }
