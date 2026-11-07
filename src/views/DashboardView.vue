@@ -8,7 +8,7 @@ import ProjectToolbar from '@/components/ProjectToolbar.vue'
 import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import type { ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
+import type { ProjectPriority, ProjectRecord, ProjectStatus, ScanDirectoryRemoval } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
 type ProjectTab = 'details' | 'readme'
@@ -26,6 +26,7 @@ const selectedStatuses = ref<ProjectStatus[]>([])
 const selectedPriorities = ref<ProjectPriority[]>([])
 const activeMetric = ref<MetricFilter>(null)
 const showDirs = ref(false)
+const directoryPendingRemoval = ref<string | null>(null)
 const expandedProjectPath = ref<string | null>(null)
 const activeTabs = ref<Record<string, ProjectTab>>({})
 const sortField = ref<SortField>('priority')
@@ -193,6 +194,11 @@ const clearMetricFilter = () => {
 
 const handleEscapeKey = (event: KeyboardEvent) => {
   if (event.key !== 'Escape') return
+  if (directoryPendingRemoval.value) {
+    directoryPendingRemoval.value = null
+    event.preventDefault()
+    return
+  }
   if (expandedProjectPath.value) {
     expandedProjectPath.value = null
     event.preventDefault()
@@ -208,6 +214,12 @@ const startFirstScan = async () => {
   if (!onboardingPath.value) return
   const ok = await store.scan(onboardingPath.value, { requireProjects: true })
   if (ok) onboardingSkipped.value = true
+}
+
+const removePendingDirectory = async (removal: ScanDirectoryRemoval) => {
+  const directory = directoryPendingRemoval.value
+  directoryPendingRemoval.value = null
+  if (directory) await store.removeScanDirectory(directory, removal)
 }
 
 const addScanDirectory = async () => {
@@ -357,7 +369,7 @@ const renderMarkdown = (markdown: string | null) => {
             class="path-remove"
             :title="`Remove ${directory}`"
             :aria-label="`Remove ${directory}`"
-            @click="store.removeScanDirectory(directory)"
+            @click="directoryPendingRemoval = directory"
           >
             ×
           </button>
@@ -604,6 +616,23 @@ const renderMarkdown = (markdown: string | null) => {
           <button :disabled="!onboardingPath || store.scanning" @click="startFirstScan">
             {{ store.scanning ? 'Scanning...' : 'Scan Folder' }}
           </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="directoryPendingRemoval" class="modal-backdrop" @click.self="directoryPendingRemoval = null">
+      <section class="modal">
+        <p class="eyebrow">Remove scan directory</p>
+        <h2>Would you like to delete this item? Or archive it?</h2>
+        <code>{{ directoryPendingRemoval }}</code>
+        <p>
+          Archive hides its projects but keeps their notes, status, priority and ticket boards. Adding the folder
+          back restores them. Delete removes all of that for good.
+        </p>
+        <div class="modal-actions">
+          <button class="secondary" @click="directoryPendingRemoval = null">Cancel</button>
+          <button class="secondary danger" @click="removePendingDirectory('delete')">Delete</button>
+          <button @click="removePendingDirectory('archive')">Archive</button>
         </div>
       </section>
     </div>

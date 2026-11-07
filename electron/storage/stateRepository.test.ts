@@ -468,3 +468,28 @@ describe('board preferences', () => {
     expect(asBob.getState().boardPreferences).toEqual({})
   })
 })
+
+describe('StateRepository archived projects', () => {
+  it('keeps an archived project and its board through a save and reopen', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const loaded = repository.getState()
+    const archivedProjects = loaded.snapshot.projects.map((project) => ({ ...project, archived: true }))
+    repository.saveState({ ...loaded, snapshot: { ...loaded.snapshot, projects: archivedProjects } })
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, true]])
+    expect(reopened.boards?.[projectPath].tickets.map((ticket) => ticket.id)).toEqual(['ticket-a', 'ticket-b'])
+  })
+
+  it('adds the archived column to a database created before it existed', () => {
+    const userDataPath = freshUserDataPath()
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE projects DROP COLUMN archived')
+    olderDatabase.close()
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, false]])
+  })
+})

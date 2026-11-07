@@ -436,7 +436,8 @@ export class StateRepository {
       hasPackageJson: asBool(row.has_package_json),
       hasReadme: asBool(row.has_readme),
       lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: String(row.last_scanned_at)
+      lastScannedAt: String(row.last_scanned_at),
+      archived: asBool(row.archived)
     }))
   }
 
@@ -611,15 +612,17 @@ export class StateRepository {
     this.run(
       `INSERT INTO projects (
          path, name, status, priority, notes, source, package_manager, github_url,
-         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at,
+         archived
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          name = excluded.name, status = excluded.status, priority = excluded.priority,
          notes = excluded.notes, source = excluded.source,
          package_manager = excluded.package_manager, github_url = excluded.github_url,
          github_json = excluded.github_json, has_git = excluded.has_git,
          has_package_json = excluded.has_package_json, has_readme = excluded.has_readme,
-         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at`,
+         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at,
+         archived = excluded.archived`,
       [
         project.path,
         project.name,
@@ -634,7 +637,8 @@ export class StateRepository {
         project.hasPackageJson ? 1 : 0,
         project.hasReadme ? 1 : 0,
         project.lastModifiedAt ?? null,
-        project.lastScannedAt
+        project.lastScannedAt,
+        project.archived ? 1 : 0
       ]
     )
     // Scanning a project is what grants the scanner access to it.
