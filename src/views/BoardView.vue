@@ -332,17 +332,19 @@ const askToAutoRunLane = (lane: SwimLane) => {
 }
 
 // With worktrees on, the branch goes into the ticket before its prompt is
-// built, so the agent is told which branch it is working on.
+// built, so the agent is told which branch it is working on. Any older
+// worktree path is dropped from the prompt: the tab runs in the new one.
 const confirmAutoRunLane = () => {
   const lane = autoRunConfirmLane.value
   autoRunConfirmLaneId.value = null
   if (!lane) return
   const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
-  const terminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value) ?? autoRunTerminal(lane)
+  const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
+  const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
   const launches = ticketsInLane(lane.id).map((ticket) => {
     const branchName = ticketBranchName(ticket)
-    const ticketAsRun = useWorktrees ? { ...ticket, branchName } : ticket
+    const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
     const command = ticketShellCommand(ticketAsRun, lane, agent, promptContext(ticket))
     return { ticket, launch: { number: ticket.number, branchName, command } }
   })

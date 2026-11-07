@@ -370,12 +370,24 @@ export const useProjectsStore = defineStore('projects', {
         const tabWord = launches.length === 1 ? 'tab' : 'tabs'
         const worktreeNote = useWorktrees ? ', one worktree each' : ''
         this.notice = `Auto Run opened ${launches.length} ${tabWord} in ${terminalLabel}${worktreeNote}.`
-        for (const [index, worktreePath] of worktreePaths.entries()) {
-          const { ticket, launch } = launches[index]
-          const isAlreadyRecorded = ticket.branchName === launch.branchName && ticket.worktreePath === worktreePath
-          if (isAlreadyRecorded) continue
-          await this.updateTicket(path, ticket.id, { branchName: launch.branchName, worktreePath })
-        }
+        if (worktreePaths.length === 0) return
+        const updatedAt = new Date().toISOString()
+        const placementByTicketId = new Map(
+          launches.map(({ ticket, launch }, index) => [
+            ticket.id,
+            { branchName: launch.branchName, worktreePath: worktreePaths[index] }
+          ])
+        )
+        await this.updateBoard(path, (board) => ({
+          ...board,
+          tickets: board.tickets.map((ticket) => {
+            const placement = placementByTicketId.get(ticket.id)
+            const isUnchanged =
+              !placement ||
+              (ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath)
+            return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+          })
+        }))
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
