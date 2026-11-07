@@ -150,38 +150,17 @@ export const mergeScannedProjects = (
 const isInsideAny = (target: string, parents: string[]) =>
   parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
 
-export type ScanDirectoryRemoval = 'archive' | 'delete'
-
-// Only entries under the removed directory and under no remaining one are
-// affected: nested scan roots keep their projects, and projects archived
-// earlier from some other directory are left as they are.
-export const removeScanDirectory = (
-  state: ProjectTrackerState,
-  directory: string,
-  removal: ScanDirectoryRemoval
-): ProjectTrackerState => {
+// What the user sees as deleting a scan directory archives its projects
+// instead: nothing is ever destroyed, so re-adding the folder brings it all
+// back. Projects still covered by a remaining (nested) scan directory stay put.
+export const removeScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
   const remainingDirectories = state.scanDirectories.filter((entry) => entry !== directory)
   const isOrphaned = (target: string) =>
     isInsideAny(target, [directory]) && !isInsideAny(target, remainingDirectories)
-
-  if (removal === 'archive') {
-    const projects = state.snapshot.projects.map((project) =>
-      isOrphaned(project.path) ? { ...project, archived: true } : project
-    )
-    return { ...state, scanDirectories: remainingDirectories, snapshot: { ...state.snapshot, projects } }
-  }
-
-  const isKept = (target: string) => !isOrphaned(target)
-  return {
-    ...state,
-    scanDirectories: remainingDirectories,
-    hiddenPaths: state.hiddenPaths.filter(isKept),
-    thirdPartyPaths: state.thirdPartyPaths.filter(isKept),
-    snapshot: {
-      ...state.snapshot,
-      projects: state.snapshot.projects.filter((project) => isKept(project.path))
-    }
-  }
+  const projects = state.snapshot.projects.map((project) =>
+    isOrphaned(project.path) ? { ...project, archived: true } : project
+  )
+  return { ...state, scanDirectories: remainingDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
 // Re-adding a directory brings back whatever was archived under it, with its

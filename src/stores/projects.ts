@@ -12,7 +12,6 @@ import {
   removeLaneFromBoard,
   removeScanDirectory,
   updateLaneInBoard,
-  type ScanDirectoryRemoval,
   type BoardPreferences,
   type ProjectBoard,
   type ProjectPriority,
@@ -227,8 +226,8 @@ export const useProjectsStore = defineStore('projects', {
       await this.save((currentState) => addScanDirectory(currentState, directory))
     },
 
-    async removeScanDirectory(directory: string, removal: ScanDirectoryRemoval) {
-      await this.save((currentState) => removeScanDirectory(currentState, directory, removal))
+    async removeScanDirectory(directory: string) {
+      await this.save((currentState) => removeScanDirectory(currentState, directory))
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {

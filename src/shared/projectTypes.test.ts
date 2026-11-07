@@ -417,7 +417,7 @@ describe('scan directory removal', () => {
   })
 
   it('archives the removed directory\'s projects instead of dropping them', () => {
-    const state = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a', 'archive')
+    const state = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a')
     expect(state.scanDirectories).toEqual(['/code/b'])
     expect(state.snapshot.projects.map((project) => [project.path, Boolean(project.archived)])).toEqual([
       ['/code/a/app', true],
@@ -428,30 +428,21 @@ describe('scan directory removal', () => {
     expect(state.thirdPartyPaths).toEqual(['/code/a/lib'])
   })
 
-  it('deletes only the removed directory\'s projects and leaves earlier archives alone', () => {
-    const archivedElsewhere = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/b', 'archive')
-    const state = removeScanDirectory(archivedElsewhere, '/code/a', 'delete')
-    expect(state.snapshot.projects.map((project) => project.path)).toEqual(['/code/b/app'])
-    expect(state.snapshot.projects[0].archived).toBe(true)
-    expect(state.hiddenPaths).toEqual([])
-    expect(state.thirdPartyPaths).toEqual([])
-  })
-
   it('keeps projects still covered by a nested scan directory', () => {
-    const state = removeScanDirectory(stateWith(['/code', '/code/a'], ['/code/a/app']), '/code', 'delete')
+    const state = removeScanDirectory(stateWith(['/code', '/code/a'], ['/code/a/app']), '/code')
     expect(state.snapshot.projects.map((project) => project.path)).toEqual(['/code/a/app'])
     expect(state.snapshot.projects[0].archived).toBeUndefined()
   })
 
   it('restores archived projects, notes intact, when their directory is added back', () => {
-    const archived = removeScanDirectory(stateWith(['/code/a'], ['/code/a/app']), '/code/a', 'archive')
+    const archived = removeScanDirectory(stateWith(['/code/a'], ['/code/a/app']), '/code/a')
     const restored = addScanDirectory(archived, '/code/a')
     expect(restored.scanDirectories).toEqual(['/code/a'])
     expect(restored.snapshot.projects[0]).toMatchObject({ archived: false, notes: 'notes for /code/a/app', priority: 'high' })
   })
 
   it('carries archived projects through a scan that cannot see them', () => {
-    const archived = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a', 'archive')
+    const archived = removeScanDirectory(stateWith(['/code/a', '/code/b'], ['/code/a/app', '/code/b/app']), '/code/a')
     const merged = mergeScannedProjects(archived, [projectAt('/code/b/app')], [])
     expect(merged.snapshot.projects.map((project) => project.path)).toEqual(['/code/b/app', '/code/a/app'])
     expect(merged.snapshot.projects[1].archived).toBe(true)
