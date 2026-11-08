@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -71,6 +71,22 @@ describe('ticket worktrees', () => {
     const { root, baseRef } = await setUp()
     const created = await ensureTicketWorktree(root, 5, 'ticket-5', baseRef)
     await expect(ensureTicketWorktree(root, 5, 'ticket-5', baseRef)).resolves.toBe(created)
+  })
+
+  it('reuses a worktree that already holds the branch at another path', async () => {
+    const { root, baseRef } = await setUp()
+    const legacyPath = path.join(root, '.worktrees', 'ticket-10')
+    runGit(root, 'worktree', 'add', '-q', '-b', 'ticket-10-legacy', legacyPath, baseRef)
+    const worktree = await ensureTicketWorktree(root, 10, 'ticket-10-legacy', baseRef)
+    expect(realpathSync(worktree)).toBe(realpathSync(legacyPath))
+  })
+
+  it('recreates a worktree whose directory was deleted by hand', async () => {
+    const { root, baseRef } = await setUp()
+    const created = await ensureTicketWorktree(root, 11, 'ticket-11', baseRef)
+    rmSync(created, { recursive: true, force: true })
+    await expect(ensureTicketWorktree(root, 11, 'ticket-11', baseRef)).resolves.toBe(created)
+    expect(runGit(created, 'branch', '--show-current')).toBe('ticket-11')
   })
 
   it('checks out an existing branch rather than recreating it', async () => {

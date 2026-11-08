@@ -89,6 +89,21 @@ export const freshMainRef = async (repositoryRoot: string): Promise<string> => {
   return fallbackRef
 }
 
+// git refuses to check one branch out in two worktrees, so a branch already
+// checked out elsewhere (a worktree from before the tN directory naming, or one
+// made by hand) is reused where it lives. The main checkout never counts: agents
+// must not write into it.
+const linkedWorktreeHoldingBranch = async (repositoryRoot: string, branchName: string) => {
+  const porcelain = await git(repositoryRoot, ['worktree', 'list', '--porcelain'])
+  const worktreeEntries = porcelain.split('\n\n')
+  const branchLine = `branch refs/heads/${branchName}`
+  const holdingEntry = worktreeEntries.find((entry) => entry.split('\n').includes(branchLine))
+  if (!holdingEntry) return null
+  const holdingPath = holdingEntry.split('\n')[0].replace(/^worktree /, '')
+  const isMainCheckout = path.resolve(holdingPath) === path.resolve(repositoryRoot)
+  return isMainCheckout ? null : holdingPath
+}
+
 // Re-running Auto Run on the same ticket reuses its worktree, so an agent picks
 // up where the last one left off instead of failing on "already exists". An
 // existing branch is checked out as-is; only brand-new branches use baseRef.
@@ -106,6 +121,12 @@ export const ensureTicketWorktree = async (
   await excludeWorktreeDirectory(repositoryRoot)
   const worktreePath = ticketWorktreePath(repositoryRoot, ticketNumber)
   if (existsSync(path.join(worktreePath, '.git'))) return worktreePath
+
+  // Drops registrations whose directory was deleted by hand; otherwise git
+  // still counts their branch as checked out and refuses to add it again.
+  await git(repositoryRoot, ['worktree', 'prune'])
+  const existingWorktree = await linkedWorktreeHoldingBranch(repositoryRoot, branchName)
+  if (existingWorktree) return existingWorktree
 
   const branchExists = await gitSucceeds(repositoryRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`])
   const addArgs = branchExists
