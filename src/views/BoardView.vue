@@ -59,6 +59,7 @@ const agents = computed<Agent[]>(() => availableAgents(store.state))
 
 const boardView = ref<'lanes' | 'graph'>('lanes')
 const filterQuery = ref('')
+const filterQueryInput = ref<HTMLInputElement | null>(null)
 const showOnlyMine = ref(false)
 const filterLaneId = ref('')
 
@@ -75,8 +76,13 @@ const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
 const anyModalOpen = computed(
   () =>
-    Boolean(openTicketId.value || openLaneId.value || ticketDraft.value || laneDraftName.value !== null) ||
-    boardSettingsOpen.value
+    Boolean(
+      openTicketId.value ||
+        openLaneId.value ||
+        ticketDraft.value ||
+        laneDraftName.value !== null ||
+        autoRunConfirmLaneId.value
+    ) || boardSettingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -187,14 +193,36 @@ const closeModals = () => {
   ticketDraft.value = null
   laneDraftName.value = null
   boardSettingsOpen.value = false
+  autoRunConfirmLaneId.value = null
   checklistDraft.value = ''
 }
 
-const handleEscapeKey = (event: KeyboardEvent) => {
+const focusTicketFilter = () => {
+  filterQueryInput.value?.focus()
+  filterQueryInput.value?.select()
+}
+
+const isFilterShortcut = (event: KeyboardEvent) => {
+  const hasCommandModifier = event.metaKey || event.ctrlKey
+  return hasCommandModifier && event.shiftKey && event.key.toLowerCase() === 'f'
+}
+
+const handleBoardKeydown = (event: KeyboardEvent) => {
+  if (isFilterShortcut(event)) {
+    event.preventDefault()
+    if (!anyModalOpen.value) focusTicketFilter()
+    return
+  }
   if (event.key !== 'Escape') return
   if (anyModalOpen.value) {
     closeModals()
     event.preventDefault()
+    return
+  }
+  // The shortcut lands people in the filter, so Escape there should only leave
+  // the filter, not the board.
+  if (event.target === filterQueryInput.value) {
+    filterQueryInput.value?.blur()
     return
   }
   void router.push('/')
@@ -202,11 +230,11 @@ const handleEscapeKey = (event: KeyboardEvent) => {
 
 onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
-  window.addEventListener('keydown', handleEscapeKey)
+  window.addEventListener('keydown', handleBoardKeydown)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleEscapeKey)
+  window.removeEventListener('keydown', handleBoardKeydown)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -415,8 +443,10 @@ const runTicketAgent = (ticket: Ticket) => {
 
     <section class="board-filters">
       <input
+        ref="filterQueryInput"
         v-model="filterQuery"
         class="filter-query"
+        aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
