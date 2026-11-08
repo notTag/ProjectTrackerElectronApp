@@ -1444,8 +1444,12 @@ code {
   padding: 0;
 }
 
-.checkbox-label {
+/* .lane-modal label stacks its contents as a column; the scoped selector
+   outranks it so the checkbox stays beside its text. */
+.checkbox-label,
+.lane-modal .checkbox-label {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
