@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -28,6 +28,7 @@ import {
   ticketSearchText,
   ticketBranchName,
   ticketShellCommand,
+  ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
   type Agent,
@@ -59,6 +60,7 @@ const agents = computed<Agent[]>(() => availableAgents(store.state))
 
 const boardView = ref<'lanes' | 'graph'>('lanes')
 const filterQuery = ref('')
+const filterQueryInput = ref<HTMLInputElement | null>(null)
 const showOnlyMine = ref(false)
 const filterLaneId = ref('')
 
@@ -75,8 +77,13 @@ const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
 const anyModalOpen = computed(
   () =>
-    Boolean(openTicketId.value || openLaneId.value || ticketDraft.value || laneDraftName.value !== null) ||
-    boardSettingsOpen.value
+    Boolean(
+      openTicketId.value ||
+        openLaneId.value ||
+        ticketDraft.value ||
+        laneDraftName.value !== null ||
+        autoRunConfirmLaneId.value
+    ) || boardSettingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -162,6 +169,23 @@ const ticketsInLane = (laneId: string) =>
     (ticket) => ticket.laneId === laneId && matchesQuery(ticket) && matchesAssignee(ticket)
   )
 
+// ponytail: in-memory only — a pick for the next run, not ticket data. Persist
+// it (store or board preferences) if it should survive leaving the board.
+const selectedTicketIds = ref(new Set<string>())
+watch(projectPath, () => selectedTicketIds.value.clear())
+
+// Deleted tickets drop out, so a stale id never counts as an active selection.
+const liveSelectedTicketIds = computed(() => {
+  const boardTicketIds = board.value.tickets.map((ticket) => ticket.id)
+  const selectedOnBoard = boardTicketIds.filter((ticketId) => selectedTicketIds.value.has(ticketId))
+  return new Set(selectedOnBoard)
+})
+
+const toggleTicketSelected = (ticketId: string) => {
+  if (selectedTicketIds.value.has(ticketId)) selectedTicketIds.value.delete(ticketId)
+  else selectedTicketIds.value.add(ticketId)
+}
+
 const visibleTicketCount = computed(() =>
   visibleLanes.value.reduce((total, lane) => total + ticketsInLane(lane.id).length, 0)
 )
@@ -187,14 +211,36 @@ const closeModals = () => {
   ticketDraft.value = null
   laneDraftName.value = null
   boardSettingsOpen.value = false
+  autoRunConfirmLaneId.value = null
   checklistDraft.value = ''
 }
 
-const handleEscapeKey = (event: KeyboardEvent) => {
+const focusTicketFilter = () => {
+  filterQueryInput.value?.focus()
+  filterQueryInput.value?.select()
+}
+
+const isFilterShortcut = (event: KeyboardEvent) => {
+  const hasCommandModifier = event.metaKey || event.ctrlKey
+  return hasCommandModifier && event.shiftKey && event.key.toLowerCase() === 'f'
+}
+
+const handleBoardKeydown = (event: KeyboardEvent) => {
+  if (isFilterShortcut(event)) {
+    event.preventDefault()
+    if (!anyModalOpen.value) focusTicketFilter()
+    return
+  }
   if (event.key !== 'Escape') return
   if (anyModalOpen.value) {
     closeModals()
     event.preventDefault()
+    return
+  }
+  // The shortcut lands people in the filter, so Escape there should only leave
+  // the filter, not the board.
+  if (event.target === filterQueryInput.value) {
+    filterQueryInput.value?.blur()
     return
   }
   void router.push('/')
@@ -202,11 +248,11 @@ const handleEscapeKey = (event: KeyboardEvent) => {
 
 onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
-  window.addEventListener('keydown', handleEscapeKey)
+  window.addEventListener('keydown', handleBoardKeydown)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleEscapeKey)
+  window.removeEventListener('keydown', handleBoardKeydown)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -303,7 +349,7 @@ const ticketCommand = (ticket: Ticket) => {
 }
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
-// never launches tickets the user cannot see.
+// never launches tickets the user cannot see. Checked tickets narrow it further.
 // An unconfigured lane follows the Open In picker when that is a terminal, so
 // the first click uses a terminal the user is known to have.
 const autoRunTerminal = (lane: SwimLane) => {
@@ -311,10 +357,16 @@ const autoRunTerminal = (lane: SwimLane) => {
   return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
 }
 
+const autoRunTickets = (lane: SwimLane) => {
+  const visibleLaneTickets = ticketsInLane(lane.id)
+  return ticketsToRun(visibleLaneTickets, liveSelectedTicketIds.value)
+}
+
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
   const agentName = findAgent(agents.value, lane.autoRunAgentId).name
-  return `Auto Run — one ${terminalLabel} tab per ticket, running ${agentName}`
+  const ticketCount = autoRunTickets(lane).length
+  return `Auto Run ${ticketCount} — one ${terminalLabel} tab per ticket, running ${agentName}`
 }
 
 // The button only asks; the dialog starts on the lane's defaults and lets this
@@ -342,13 +394,15 @@ const confirmAutoRunLane = () => {
   const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
-  const launches = ticketsInLane(lane.id).map((ticket) => {
+  const launches = autoRunTickets(lane).map((ticket) => {
     const branchName = ticketBranchName(ticket)
     const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
     const command = ticketShellCommand(ticketAsRun, lane, agent, promptContext(ticket))
     return { ticket, launch: { number: ticket.number, branchName, command } }
   })
   if (launches.length === 0) return
+  // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
+  for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
 }
 
@@ -422,8 +476,10 @@ const runTicketAgent = (ticket: Ticket) => {
 
     <section class="board-filters">
       <input
+        ref="filterQueryInput"
         v-model="filterQuery"
         class="filter-query"
+        aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
@@ -483,9 +539,9 @@ const runTicketAgent = (ticket: Ticket) => {
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button
             class="icon-button auto-run-button"
-            :disabled="ticketsInLane(lane.id).length === 0 || store.autoRunning[lane.id]"
+            :disabled="autoRunTickets(lane).length === 0 || store.autoRunning[lane.id]"
             :title="autoRunTooltip(lane)"
-            :aria-label="`Auto Run ${lane.name}`"
+            :aria-label="`Auto Run ${autoRunTickets(lane).length} in ${lane.name}`"
             @click="askToAutoRunLane(lane)"
             @dblclick.stop
           >
@@ -513,6 +569,15 @@ const runTicketAgent = (ticket: Ticket) => {
             @dragend="draggedTicketId = null"
             @click="openTicketId = ticket.id"
           >
+            <input
+              type="checkbox"
+              class="ticket-select"
+              :checked="selectedTicketIds.has(ticket.id)"
+              :aria-label="`Select #${ticket.number} to run`"
+              title="Select to run"
+              @click.stop
+              @change="toggleTicketSelected(ticket.id)"
+            />
             <h3>
               <span
                 v-if="store.agentRunning[ticket.id]"
@@ -829,11 +894,11 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal" role="alertdialog" aria-labelledby="auto-run-confirm-question">
       <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
       <p id="auto-run-confirm-question" class="auto-run-question">
-        Run {{ ticketsInLane(autoRunConfirmLane.id).length }} separate
+        Run {{ autoRunTickets(autoRunConfirmLane).length }} separate
         <select v-model="autoRunConfirmAgentId" aria-label="Agent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
-        agents for {{ ticketsInLane(autoRunConfirmLane.id).length }} tickets?
+        agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
       <p class="auto-run-question">
         Each opens in its own
