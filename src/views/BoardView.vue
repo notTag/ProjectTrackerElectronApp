@@ -412,6 +412,13 @@ const confirmAutoRunLane = () => {
 const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 
+// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
+// lane says nothing about the work in this one.
+const agentFinishedInCurrentLane = (ticket: Ticket) => {
+  const lastRun = ticket.agentRun
+  return lastRun?.succeeded === true && lastRun.laneId === ticket.laneId
+}
+
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
   const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
@@ -575,6 +582,20 @@ const runTicketAgent = (ticket: Ticket) => {
               @change="toggleTicketSelected(ticket.id)"
             />
             <h3>
+              <span
+                v-if="store.agentRunning[ticket.id]"
+                class="agent-status agent-status-running"
+                role="img"
+                aria-label="Agent running"
+                title="Agent running"
+              />
+              <span
+                v-else-if="agentFinishedInCurrentLane(ticket)"
+                class="agent-status agent-status-done"
+                role="img"
+                aria-label="Agent finished"
+                title="Agent finished"
+              >✓</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
             </h3>

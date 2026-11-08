@@ -405,8 +405,20 @@ export const useProjectsStore = defineStore('projects', {
       this.notice = `Agent running on #${ticket.number}…`
       const laneId = ticket.laneId
       try {
-        const result = await projectTrackerApi.runTicketAgent(projectPath, agentId, prompt)
-        const agentRun = { at: new Date().toISOString(), laneId, output: result.output }
+        // A run that throws is still recorded as a failed run, so an older
+        // success in this lane stops showing its checkmark.
+        const result = await projectTrackerApi
+          .runTicketAgent(projectPath, agentId, prompt)
+          .catch((error: unknown) => ({
+            output: error instanceof Error ? error.message : String(error),
+            succeeded: false
+          }))
+        const agentRun = {
+          at: new Date().toISOString(),
+          laneId,
+          output: result.output,
+          succeeded: result.succeeded
+        }
         await this.updateTicket(projectPath, ticket.id, { agentRun })
         if (result.succeeded) this.notice = `Agent finished #${ticket.number}.`
         else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
