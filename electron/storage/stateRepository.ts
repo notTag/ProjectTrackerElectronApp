@@ -358,12 +358,13 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target,
-         auto_run_agent_id, auto_run_terminal_id, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
+         auto_run_worktrees = excluded.auto_run_worktrees,
          position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
@@ -374,6 +375,7 @@ export class StateRepository {
         lane.outputTarget ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
+        lane.autoRunWorktrees === false ? 0 : 1,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
       ]
@@ -436,7 +438,8 @@ export class StateRepository {
       hasPackageJson: asBool(row.has_package_json),
       hasReadme: asBool(row.has_readme),
       lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: String(row.last_scanned_at)
+      lastScannedAt: String(row.last_scanned_at),
+      archived: asBool(row.archived)
     }))
   }
 
@@ -464,7 +467,8 @@ export class StateRepository {
         agentFilePath: String(row.agent_file_path),
         outputTarget: String(row.output_target),
         autoRunAgentId: asText(row.auto_run_agent_id),
-        autoRunTerminalId: asText(row.auto_run_terminal_id)
+        autoRunTerminalId: asText(row.auto_run_terminal_id),
+        autoRunWorktrees: asBool(row.auto_run_worktrees)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
@@ -611,15 +615,17 @@ export class StateRepository {
     this.run(
       `INSERT INTO projects (
          path, name, status, priority, notes, source, package_manager, github_url,
-         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at,
+         archived
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          name = excluded.name, status = excluded.status, priority = excluded.priority,
          notes = excluded.notes, source = excluded.source,
          package_manager = excluded.package_manager, github_url = excluded.github_url,
          github_json = excluded.github_json, has_git = excluded.has_git,
          has_package_json = excluded.has_package_json, has_readme = excluded.has_readme,
-         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at`,
+         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at,
+         archived = excluded.archived`,
       [
         project.path,
         project.name,
@@ -634,7 +640,8 @@ export class StateRepository {
         project.hasPackageJson ? 1 : 0,
         project.hasReadme ? 1 : 0,
         project.lastModifiedAt ?? null,
-        project.lastScannedAt
+        project.lastScannedAt,
+        project.archived ? 1 : 0
       ]
     )
     // Scanning a project is what grants the scanner access to it.

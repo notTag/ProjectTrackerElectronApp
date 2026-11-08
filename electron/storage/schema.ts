@@ -2,7 +2,7 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 );
 
+-- archived = 1 once the user deleted its scan directory: the row and its board
+-- are kept but never shown, so re-adding the directory restores them.
+-- ponytail: on the shared row, so archiving hides it for every member. Move it
+-- to project_members if a second user ever needs their own archive.
 CREATE TABLE IF NOT EXISTS projects (
   path TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -29,7 +33,8 @@ CREATE TABLE IF NOT EXISTS projects (
   has_package_json INTEGER NOT NULL,
   has_readme INTEGER NOT NULL,
   last_modified_at TEXT,
-  last_scanned_at TEXT NOT NULL
+  last_scanned_at TEXT NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0
 );
 
 -- Who can see a project. A project with no members is visible to nobody, so
@@ -50,6 +55,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   output_target TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
+  auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
@@ -117,8 +123,10 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'output_target', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'auto_run_agent_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'auto_run_terminal_id', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'auto_run_worktrees', definition: 'INTEGER NOT NULL DEFAULT 1' },
   { table: 'tickets', column: 'worktree_path', definition: 'TEXT' },
-  { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' }
+  { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' },
+  { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ]
 
 export const PATH_KIND_SCAN = 'scan'
