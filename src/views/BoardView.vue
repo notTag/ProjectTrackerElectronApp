@@ -19,7 +19,9 @@ import {
   clampLaneWidth,
   findAgent,
   formatLabels,
+  isWebUrl,
   parseLabels,
+  pullRequestLabel,
   removeChecklistItem,
   setChecklistItemDone,
   setLaneWidth,
@@ -31,6 +33,7 @@ import {
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
+  worktreeFolderName,
   type Agent,
   type TicketCardField,
   type User,
@@ -608,7 +611,9 @@ const runTicketAgent = (ticket: Ticket) => {
             <p
               v-if="
                 (showsField('checklist') && ticket.checklist?.length) ||
-                (showsField('branch') && ticket.branchName)
+                (showsField('branch') && ticket.branchName) ||
+                (showsField('worktree') && ticket.worktreePath) ||
+                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
             >
@@ -618,6 +623,23 @@ const runTicketAgent = (ticket: Ticket) => {
               <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
                 ⑂ {{ ticket.branchName }}
               </span>
+              <span
+                v-if="showsField('worktree') && ticket.worktreePath"
+                class="ticket-branch"
+                :title="ticket.worktreePath"
+              >
+                ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
+              </span>
+              <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
+              <a
+                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
+                :href="ticket.pullRequestUrl"
+                target="_blank"
+                draggable="false"
+                @click.stop
+              >
+                {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
+              </a>
             </p>
           </article>
         </div>
@@ -801,9 +823,7 @@ const runTicketAgent = (ticket: Ticket) => {
             editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
           "
         />
-        <!-- target=_blank routes through main's window-open handler, which hands http(s) URLs to the OS browser.
-             A scheme-less value would resolve against the app's own origin, so only absolute http(s) URLs get a link. -->
-        <a v-if="/^https?:\/\//.test(openTicket.pullRequestUrl ?? '')" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
+        <a v-if="isWebUrl(openTicket.pullRequestUrl)" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
           Open pull request ↗
         </a>
       </label>

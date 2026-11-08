@@ -23,6 +23,7 @@ import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWo
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import {
   availableAgents,
+  isWebUrl,
   shellQuote,
   type AutoRunTicketLaunch,
   type ProjectTrackerState
@@ -110,7 +111,6 @@ const COMMAND_RUNNERS: Record<string, (projectPath: string, commands: string[]) 
   ghostty: openGhosttyWithCommands
 }
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
-const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
 
 // Packaged apps launched from Finder/Launch Services don't inherit the user's
 // shell PATH, so `gh` won't resolve by name. Probe the common install locations.
@@ -249,7 +249,7 @@ const createWindow = async () => {
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isHttpUrl(url)) void shell.openExternal(url)
+    if (isWebUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -259,7 +259,7 @@ const createWindow = async () => {
     if (allowedDevNavigation || allowedFileNavigation) return
 
     event.preventDefault()
-    if (isHttpUrl(url)) void shell.openExternal(url)
+    if (isWebUrl(url)) void shell.openExternal(url)
   })
 
   if (devServerUrl) {

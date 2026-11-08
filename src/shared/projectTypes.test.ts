@@ -40,6 +40,9 @@ import {
   MAX_LANE_WIDTH,
   MIN_LANE_WIDTH,
   TICKET_CARD_FIELDS,
+  isWebUrl,
+  pullRequestLabel,
+  worktreeFolderName,
   type BoardPreferences,
   type ProjectTrackerState,
   type GithubIssue,
@@ -272,6 +275,16 @@ describe('board preferences', () => {
     expect(preferences.cardFields).toHaveLength(TICKET_CARD_FIELDS.length)
   })
 
+  it('shows card fields added since the preferences were saved, keeping ones switched off', () => {
+    const savedBeforeTracking = getBoardPreferences(stateWith({ cardFields: ['number', 'branch'] }), '/repo')
+    expect(savedBeforeTracking.cardFields).toEqual(['number', 'branch', 'worktree', 'pullRequest'])
+
+    const switchedOffAfterTracking = toggleCardField(savedBeforeTracking, 'worktree')
+    const reread = getBoardPreferences(stateWith(switchedOffAfterTracking), '/repo')
+    expect(reread.cardFields).not.toContain('worktree')
+    expect(reread.cardFields).toContain('pullRequest')
+  })
+
   it('toggles a lane out of view and back', () => {
     const hidden = toggleHiddenLane(createDefaultBoardPreferences(), 'github-issues')
     expect(hidden.hiddenLaneIds).toEqual(['github-issues'])
@@ -463,6 +476,26 @@ describe('scan directory removal', () => {
     const merged = mergeScannedProjects(state, [projectAt('/code/a/app')], [])
     expect(merged.snapshot.projects.map((project) => project.path)).toEqual(['/code/a/app', '/code/a/secret'])
     expect(merged.snapshot.projects[1].notes).toBe('notes for /code/a/secret')
+  })
+})
+
+describe('ticket card labels', () => {
+  it('shows the last folder of a worktree path', () => {
+    expect(worktreeFolderName('/code/electron-app-ticket-fields')).toBe('electron-app-ticket-fields')
+    expect(worktreeFolderName('/code/electron-app-ticket-fields/')).toBe('electron-app-ticket-fields')
+  })
+
+  it('names a GitHub PR by number, falling back to a bare label', () => {
+    expect(pullRequestLabel('https://github.com/o/r/pull/35')).toBe('PR #35')
+    expect(pullRequestLabel('https://github.com/o/r/pull/35/files')).toBe('PR #35')
+    expect(pullRequestLabel('https://gitlab.com/o/r/-/merge_requests/9')).toBe('PR')
+  })
+
+  it('links only absolute http(s) URLs', () => {
+    expect(isWebUrl('https://github.com/o/r/pull/35')).toBe(true)
+    expect(isWebUrl('github.com/o/r/pull/35')).toBe(false)
+    expect(isWebUrl('javascript:alert(1)')).toBe(false)
+    expect(isWebUrl(undefined)).toBe(false)
   })
 })
 
