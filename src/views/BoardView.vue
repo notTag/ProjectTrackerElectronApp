@@ -29,6 +29,7 @@ import {
   ticketAgentPrompt,
   ticketSearchText,
   ticketBranchName,
+  ticketTabTitle,
   ticketShellCommand,
   ticketsToRun,
   toggleCardField,
@@ -394,7 +395,7 @@ const confirmAutoRunLane = () => {
     const branchName = ticketBranchName(ticket)
     const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
     const command = ticketShellCommand(ticketAsRun, lane, agent, promptContext(ticket))
-    return { ticket, launch: { number: ticket.number, branchName, command } }
+    return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
   })
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
