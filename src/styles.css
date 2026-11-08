@@ -1078,10 +1078,10 @@ code {
   --agent-status-green: #22c55e;
   display: inline-block;
   margin-right: 6px;
-  vertical-align: middle;
 }
 
 .agent-status-running {
+  vertical-align: middle;
   width: 8px;
   height: 8px;
   border-radius: 50%;
