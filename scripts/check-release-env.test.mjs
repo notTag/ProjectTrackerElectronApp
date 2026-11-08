@@ -17,14 +17,28 @@ describe('releaseEnvProblems', () => {
     expect(releaseEnvProblems({ GH_TOKEN: 'token', APPLE_KEYCHAIN_PROFILE: 'notary' })).toEqual([])
   })
 
-  it('rejects a partial credential set, which electron-builder would skip or throw on', () => {
+  it('accepts the GITHUB_TOKEN alias electron-builder also reads', () => {
+    expect(releaseEnvProblems({ GITHUB_TOKEN: 'token', APPLE_KEYCHAIN_PROFILE: 'notary' })).toEqual([])
+  })
+
+  it('rejects a partial credential set, which electron-builder throws on mid-build', () => {
     const { APPLE_TEAM_ID, ...withoutTeamId } = appleIdCredentials
     const problems = releaseEnvProblems({ GH_TOKEN: 'token', ...withoutTeamId })
-    expect(problems).toHaveLength(1)
-    expect(problems[0]).toContain('notarization')
+    expect(problems).toEqual([expect.stringContaining('APPLE_TEAM_ID')])
+  })
+
+  it('rejects a stray partial set even when a later set is complete', () => {
+    const env = { GH_TOKEN: 'token', APPLE_ID: 'dev@example.com', APPLE_KEYCHAIN_PROFILE: 'notary' }
+    expect(releaseEnvProblems(env)).toEqual([expect.stringContaining('APPLE_APP_SPECIFIC_PASSWORD')])
   })
 
   it('reports a missing token and missing credentials together', () => {
     expect(releaseEnvProblems({})).toHaveLength(2)
+  })
+
+  it('leaves process.env untouched', () => {
+    const before = process.env
+    releaseEnvProblems({})
+    expect(process.env).toBe(before)
   })
 })
