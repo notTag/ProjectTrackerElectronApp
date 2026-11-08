@@ -3,13 +3,16 @@ import { defineStore } from 'pinia'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
   addGithubIssuesToBoard,
+  addScanDirectory,
   addTicketToBoard,
   createSeedState,
   getBoard,
   getBoardPreferences,
   mergeScannedProjects,
   removeLaneFromBoard,
+  removeScanDirectory,
   updateLaneInBoard,
+  type AutoRunTicketLaunch,
   type BoardPreferences,
   type ProjectBoard,
   type ProjectPriority,
@@ -32,6 +35,8 @@ interface ProjectsStoreState {
   // Keyed by ticket id. Lives in the store, not the board view, so a run keeps
   // showing as running after the user leaves the board and comes back.
   agentRunning: Record<string, boolean>
+  // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
+  autoRunning: Record<string, boolean>
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -47,11 +52,14 @@ export const useProjectsStore = defineStore('projects', {
     notice: null,
     readmes: {},
     githubLoading: {},
-    agentRunning: {}
+    agentRunning: {},
+    autoRunning: {}
   }),
 
   getters: {
-    projects: (store) => store.state.snapshot.projects,
+    // Archived projects stay in state so their rows survive saves, but no view
+    // ever lists them.
+    projects: (store) => store.state.snapshot.projects.filter((project) => !project.archived),
     isFirstLaunch: (store) =>
       store.state.scanDirectories.length === 0 &&
       !store.state.snapshot.scannedAt &&
@@ -216,32 +224,11 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async addScanDirectory(directory: string) {
-      await this.save((currentState) => ({
-        ...currentState,
-        scanDirectories: unique([...currentState.scanDirectories, directory])
-      }))
+      await this.save((currentState) => addScanDirectory(currentState, directory))
     },
 
     async removeScanDirectory(directory: string) {
-      await this.save((currentState) => {
-        const remaining = currentState.scanDirectories.filter((entry) => entry !== directory)
-        // Projects derive from the scan directories (mergeScannedProjects replaces
-        // the set on each scan), so drop anything no longer covered by a remaining
-        // directory. Checking against *all* remaining dirs handles nested scan
-        // roots — a project under both /a and /a/b survives removing just one.
-        const insideRemaining = (target: string) =>
-          remaining.some((dir) => target === dir || target.startsWith(`${dir}/`))
-        return {
-          ...currentState,
-          scanDirectories: remaining,
-          hiddenPaths: currentState.hiddenPaths.filter(insideRemaining),
-          thirdPartyPaths: currentState.thirdPartyPaths.filter(insideRemaining),
-          snapshot: {
-            ...currentState.snapshot,
-            projects: currentState.snapshot.projects.filter((project) => insideRemaining(project.path))
-          }
-        }
-      })
+      await this.save((currentState) => removeScanDirectory(currentState, directory))
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
@@ -362,6 +349,49 @@ export const useProjectsStore = defineStore('projects', {
           : `Opening in ${result.appLabel}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+      }
+    },
+
+    // With worktrees on, each ticket records the branch and worktree it now
+    // lives on, so its card and later prompts point at where the work is.
+    async autoRunLane(
+      path: string,
+      laneId: string,
+      targetId: string,
+      terminalLabel: string,
+      launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
+      useWorktrees: boolean
+    ) {
+      if (this.autoRunning[laneId]) return
+      this.autoRunning[laneId] = true
+      try {
+        const ticketLaunches = launches.map((entry) => entry.launch)
+        const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)
+        const tabWord = launches.length === 1 ? 'tab' : 'tabs'
+        const worktreeNote = useWorktrees ? ', one worktree each' : ''
+        this.notice = `Auto Run opened ${launches.length} ${tabWord} in ${terminalLabel}${worktreeNote}.`
+        if (worktreePaths.length === 0) return
+        const updatedAt = new Date().toISOString()
+        const placementByTicketId = new Map(
+          launches.map(({ ticket, launch }, index) => [
+            ticket.id,
+            { branchName: launch.branchName, worktreePath: worktreePaths[index] }
+          ])
+        )
+        await this.updateBoard(path, (board) => ({
+          ...board,
+          tickets: board.tickets.map((ticket) => {
+            const placement = placementByTicketId.get(ticket.id)
+            const isUnchanged =
+              !placement ||
+              (ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath)
+            return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+          })
+        }))
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.autoRunning[laneId] = false
       }
     },
 

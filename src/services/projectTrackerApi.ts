@@ -1,4 +1,4 @@
-import type { ProjectTrackerState, ScanResult } from '@/shared/projectTypes'
+import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult } from '@/shared/projectTypes'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -68,6 +68,10 @@ export const projectTrackerApi = {
 
   openProjectIn(path: string, targetId: string, command?: string) {
     return requireElectron().openProjectIn(path, targetId, command)
+  },
+
+  autoRunLane(path: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) {
+    return requireElectron().autoRunLane(path, targetId, tickets, useWorktrees)
   },
 
   runTicketAgent(path: string, agentId: string, prompt: string) {

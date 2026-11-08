@@ -1,15 +1,27 @@
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
 import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
 
-const freshUserDataPath = () => mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+const createdUserDataPaths: string[] = []
+
+const freshUserDataPath = () => {
+  const userDataPath = mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+  createdUserDataPaths.push(userDataPath)
+  return userDataPath
+}
+
+afterEach(() => {
+  for (const userDataPath of createdUserDataPaths.splice(0)) {
+    rmSync(userDataPath, { recursive: true, force: true })
+  }
+})
 
 const stateWithBoard = (): ProjectTrackerState => {
   const seed = createSeedState()
@@ -23,7 +35,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/' }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -42,7 +54,10 @@ const stateWithBoard = (): ProjectTrackerState => {
             labels: ['bug'],
             checklist: [{ text: 'step', done: true }],
             externalId: 'github:7',
-            externalUrl: 'https://github.com/o/r/issues/7'
+            externalUrl: 'https://github.com/o/r/issues/7',
+            branchName: 'feat/a',
+            worktreePath: '/code/app-a',
+            pullRequestUrl: 'https://github.com/o/r/pull/8'
           },
           {
             id: 'ticket-b',
@@ -85,17 +100,45 @@ describe('StateRepository', () => {
     expect(board?.lanes.map((lane) => lane.id)).toEqual(['idea', 'prd'])
     expect(board?.lanes[1].agentFilePath).toBe('/tmp/prd.md')
     expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
+    expect(board?.lanes[1].autoRunAgentId).toBe('codex')
+    expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
+    expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
+    expect(board?.lanes[1].autoRunWorktrees).toBe(false)
+    expect(board?.lanes[0].autoRunWorktrees).toBe(true)
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
     expect(board?.tickets.map((ticket) => ticket.number)).toEqual([1, 2])
     expect(board?.tickets[0].labels).toEqual(['bug'])
     expect(board?.tickets[0].checklist).toEqual([{ text: 'step', done: true }])
     expect(board?.tickets[0].externalId).toBe('github:7')
+    expect(board?.tickets[0].branchName).toBe('feat/a')
+    expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
+    expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(board?.tickets[1].worktreePath).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
     expect(loaded.users).toEqual([{ id: 'local', name: 'Local' }])
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
+  })
+
+  it('adds ticket columns missing from a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN worktree_path')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    migratedTicket.worktreePath = '/code/app-a'
+    migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
+    repository.saveState(state)
+
+    const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
+    expect(reopenedTicket.worktreePath).toBe('/code/app-a')
+    expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {
@@ -190,6 +233,43 @@ describe('concurrent writers', () => {
     const ticket = reopenedBoard(userDataPath, projectPath).tickets.find((entry) => entry.id === 'ticket-a')!
     expect(ticket.laneId).toBe('prd')
     expect(ticket.title).toBe('Renamed in the app')
+  })
+
+  // sqlite3's readfile() returns a BLOB, which SQLite keeps as-is in a TEXT column.
+  it('reads BLOB-stored text and JSON columns as text, and keeps them intact through a save', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    const asBlob = (text: string) => new TextEncoder().encode(text)
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    cli
+      .prepare("UPDATE tickets SET description = ?, checklist_json = ?, labels_json = ? WHERE id = 'ticket-b'")
+      .run(asBlob('## Context\nÜnïcode'), asBlob('[{"text":"read it","done":false}]'), asBlob('["agent"]'))
+    cli.close()
+
+    const expected = {
+      description: '## Context\nÜnïcode',
+      checklist: [{ text: 'read it', done: false }],
+      labels: ['agent']
+    }
+    const state = repository.getState()
+    const tickets = state.boards![projectPath].tickets
+    const ticketIndex = tickets.findIndex((ticket) => ticket.id === 'ticket-b')
+    expect(tickets[ticketIndex]).toMatchObject(expected)
+
+    tickets[ticketIndex] = { ...tickets[ticketIndex], title: 'Edited in the app' }
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-b')
+    expect(reopened).toMatchObject({ ...expected, title: 'Edited in the app' })
+
+    // Editing the ticket rewrites its row, so the BLOBs are stored as TEXT from then on.
+    const inspector = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const storedTypes = inspector
+      .prepare("SELECT typeof(description) AS description, typeof(checklist_json) AS checklist FROM tickets WHERE id = 'ticket-b'")
+      .get()
+    inspector.close()
+    expect(storedTypes).toEqual({ description: 'text', checklist: 'text' })
   })
 
   it('writes a field the app cleared', () => {
@@ -388,5 +468,30 @@ describe('board preferences', () => {
     const asBob = new StateRepository(userDataPath, 'bob')
     asBob.addProjectMember(projectPath, 'bob')
     expect(asBob.getState().boardPreferences).toEqual({})
+  })
+})
+
+describe('StateRepository archived projects', () => {
+  it('keeps an archived project and its board through a save and reopen', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const loaded = repository.getState()
+    const archivedProjects = loaded.snapshot.projects.map((project) => ({ ...project, archived: true }))
+    repository.saveState({ ...loaded, snapshot: { ...loaded.snapshot, projects: archivedProjects } })
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, true]])
+    expect(reopened.boards?.[projectPath].tickets.map((ticket) => ticket.id)).toEqual(['ticket-a', 'ticket-b'])
+  })
+
+  it('adds the archived column to a database created before it existed', () => {
+    const userDataPath = freshUserDataPath()
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE projects DROP COLUMN archived')
+    olderDatabase.close()
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, false]])
   })
 })

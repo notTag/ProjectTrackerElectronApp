@@ -14,11 +14,19 @@ import { StateRepository } from './storage/stateRepository.js'
 import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOpenArgs,
+  ghosttyOsascriptArgs,
+  itermOsascriptArgs,
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
+import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
-import { availableAgents, type ProjectTrackerState } from '../src/shared/projectTypes.js'
+import {
+  availableAgents,
+  shellQuote,
+  type AutoRunTicketLaunch,
+  type ProjectTrackerState
+} from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -62,37 +70,44 @@ const run = (bin: string, args: string[]) =>
     execFile(bin, args, (error) => (error ? reject(error) : resolve()))
   })
 
-// Write the ticket's command where Warp looks for launch configurations, then
+// Write the tickets' commands where Warp looks for launch configurations, then
 // ask Warp to open it. One reused file rather than one per ticket: the config
 // is a hand-off, not a document worth keeping, and per-ticket files would pile
 // up in the user's Warp directory forever.
 // ponytail: single reused config. Two launches within the moment it takes Warp
-// to read the file would race; key the name per ticket if that ever bites.
+// to read the file would race; key the name per launch if that ever bites.
 //
 // This executes the command rather than pasting it. What makes that safe is the
 // single-quote wrapping applied in ticketShellCommand: ticket text — which can
-// arrive from a GitHub issue — lands as one literal argument to `claude`, never
+// arrive from a GitHub issue — lands as one literal argument to the agent, never
 // as shell code.
-const openWarpWithCommand = async (projectPath: string, command: string) => {
+const openWarpWithCommands = async (projectPath: string, commands: string[]) => {
   const configDirectory = path.join(app.getPath('home'), '.warp', 'launch_configurations')
   const configPath = path.join(configDirectory, `${WARP_LAUNCH_CONFIG_NAME}.yaml`)
   mkdirSync(configDirectory, { recursive: true })
-  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, command), 'utf8')
+  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, commands), 'utf8')
   await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
 }
 
-const openTerminalWithCommand = (projectPath: string, command: string) =>
-  run('osascript', terminalOsascriptArgs(projectPath, command))
+const openTerminalWithCommands = (projectPath: string, commands: string[]) =>
+  run('osascript', terminalOsascriptArgs(projectPath, commands))
 
-const openGhosttyWithCommand = (projectPath: string, command: string) =>
-  run('open', ghosttyOpenArgs(projectPath, command))
+const openItermWithCommands = (projectPath: string, commands: string[]) =>
+  run('osascript', itermOsascriptArgs(projectPath, commands))
+
+const openGhosttyWithCommands = (projectPath: string, commands: string[]) =>
+  commands.length === 1
+    ? run('open', ghosttyOpenArgs(projectPath, commands[0]))
+    : run('osascript', ghosttyOsascriptArgs(projectPath, commands))
 
 // Only the terminals can run a ticket's command; the editors in the allowlist
-// have no shell to run it in and keep the clipboard hand-off.
-const COMMAND_RUNNERS: Record<string, (projectPath: string, command: string) => Promise<void>> = {
-  warp: openWarpWithCommand,
-  terminal: openTerminalWithCommand,
-  ghostty: openGhosttyWithCommand
+// have no shell to run it in and keep the clipboard hand-off. Each runner opens
+// one new window with a tab per command.
+const COMMAND_RUNNERS: Record<string, (projectPath: string, commands: string[]) => Promise<void>> = {
+  warp: openWarpWithCommands,
+  terminal: openTerminalWithCommands,
+  iterm2: openItermWithCommands,
+  ghostty: openGhosttyWithCommands
 }
 const getIconPath = () => path.join(app.getAppPath(), 'assets/app-icon.png')
 const isHttpUrl = (value: string) => value.startsWith('https://') || value.startsWith('http://')
@@ -178,6 +193,17 @@ const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) => {
   if (devServerUrl && senderUrl.startsWith(allowedDevOrigin)) return
   if (!devServerUrl && senderUrl.startsWith('file://')) return
   throw new Error('Rejected IPC call from an unexpected renderer origin.')
+}
+
+const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
+  const candidate = value as Partial<AutoRunTicketLaunch> | null
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    Number.isInteger(candidate.number) &&
+    typeof candidate.branchName === 'string' &&
+    typeof candidate.command === 'string'
+  )
 }
 
 const isStringArray = (value: unknown): value is string[] =>
@@ -399,7 +425,7 @@ const registerIpc = () => {
 
     try {
       if (ticketCommand && runCommand) {
-        await runCommand(normalized, ticketCommand)
+        await runCommand(normalized, [ticketCommand])
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
       if (process.platform === 'darwin') {
@@ -413,6 +439,47 @@ const registerIpc = () => {
       clipboard.writeText(fallbackCommand)
       return { ok: true, appLabel: target.label, fallbackCommand }
     }
+  })
+
+  // Commands come from the renderer, same trust as project:open-in: each one
+  // carries its prompt single-quoted by ticketShellCommand. The target is
+  // resolved against the runner table, so only a known terminal is launched.
+  ipcMain.handle('lane:auto-run', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, targetId, tickets, useWorktrees } = (payload ?? {}) as {
+      projectPath?: unknown
+      targetId?: unknown
+      tickets?: unknown
+      useWorktrees?: unknown
+    }
+    if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+    if (!Array.isArray(tickets) || tickets.length === 0) throw new Error('No tickets to run.')
+    if (!tickets.every(isAutoRunTicketLaunch)) throw new Error('Invalid Auto Run ticket.')
+    // hasOwn, not a bare index: 'constructor' would otherwise resolve to Object.
+    const isKnownTerminal = typeof targetId === 'string' && Object.hasOwn(COMMAND_RUNNERS, targetId)
+    const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
+    if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
+    const normalized = assertScannedProjectPath(projectPath)
+
+    if (useWorktrees !== true) {
+      await runCommands(normalized, tickets.map((ticket) => ticket.command))
+      return { worktreePaths: [] }
+    }
+
+    // Fetched once for the whole lane. Worktrees are made one at a time: git
+    // locks the repository's worktree list, so parallel adds would trip on it.
+    const repositoryRoot = await repositoryRootOf(normalized)
+    const baseRef = await freshMainRef(repositoryRoot)
+    const worktreePaths: string[] = []
+    for (const ticket of tickets) {
+      const worktreePath = await ensureTicketWorktree(repositoryRoot, ticket.number, ticket.branchName, baseRef)
+      worktreePaths.push(worktreePath)
+    }
+    const commandsInWorktrees = tickets.map(
+      (ticket, index) => `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`
+    )
+    await runCommands(normalized, commandsInWorktrees)
+    return { worktreePaths }
   })
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {

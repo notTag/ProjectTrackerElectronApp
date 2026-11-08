@@ -6,6 +6,7 @@ import TicketGraph from '@/components/TicketGraph.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
+import { TERMINAL_TARGETS } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
@@ -16,6 +17,7 @@ import {
   availableAgents,
   checklistProgress,
   clampLaneWidth,
+  findAgent,
   formatLabels,
   parseLabels,
   removeChecklistItem,
@@ -24,6 +26,7 @@ import {
   getUnassignedLane,
   ticketAgentPrompt,
   ticketSearchText,
+  ticketBranchName,
   ticketShellCommand,
   toggleCardField,
   toggleHiddenLane,
@@ -315,6 +318,56 @@ const ticketCommand = (ticket: Ticket) => {
   return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket))
 }
 
+// Runs what the lane shows: an active filter narrows the batch, so the button
+// never launches tickets the user cannot see.
+// An unconfigured lane follows the Open In picker when that is a terminal, so
+// the first click uses a terminal the user is known to have.
+const autoRunTerminal = (lane: SwimLane) => {
+  const terminalId = lane.autoRunTerminalId ?? openInStore.selectedId
+  return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
+}
+
+const autoRunTooltip = (lane: SwimLane) => {
+  const terminalLabel = autoRunTerminal(lane).label
+  const agentName = findAgent(agents.value, lane.autoRunAgentId).name
+  return `Auto Run — one ${terminalLabel} tab per ticket, running ${agentName}`
+}
+
+// The button only asks; the dialog starts on the lane's defaults and lets this
+// one run pick a different agent or terminal without changing the lane.
+const autoRunConfirmLaneId = ref<string | null>(null)
+const autoRunConfirmAgentId = ref('')
+const autoRunConfirmTerminalId = ref('')
+const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
+const autoRunUsesWorktrees = (lane: SwimLane) => lane.autoRunWorktrees !== false
+
+const askToAutoRunLane = (lane: SwimLane) => {
+  autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
+  autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
+  autoRunConfirmLaneId.value = lane.id
+}
+
+// With worktrees on, the branch goes into the ticket before its prompt is
+// built, so the agent is told which branch it is working on. Any older
+// worktree path is dropped from the prompt: the tab runs in the new one.
+const confirmAutoRunLane = () => {
+  const lane = autoRunConfirmLane.value
+  autoRunConfirmLaneId.value = null
+  if (!lane) return
+  const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
+  const terminal = chosenTerminal ?? autoRunTerminal(lane)
+  const useWorktrees = autoRunUsesWorktrees(lane)
+  const launches = ticketsInLane(lane.id).map((ticket) => {
+    const branchName = ticketBranchName(ticket)
+    const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
+    const command = ticketShellCommand(ticketAsRun, lane, agent, promptContext(ticket))
+    return { ticket, launch: { number: ticket.number, branchName, command } }
+  })
+  if (launches.length === 0) return
+  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
+}
+
 const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 
@@ -439,6 +492,18 @@ const runTicketAgent = (ticket: Ticket) => {
         <header class="lane-heading" @dblclick="startTicketDraft(lane.id)">
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <button
+            class="icon-button auto-run-button"
+            :disabled="ticketsInLane(lane.id).length === 0 || store.autoRunning[lane.id]"
+            :title="autoRunTooltip(lane)"
+            :aria-label="`Auto Run ${lane.name}`"
+            @click="askToAutoRunLane(lane)"
+            @dblclick.stop
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M3 5.5v13a1 1 0 0 0 1.55.83L13 13.2V18.5a1 1 0 0 0 1.55.83l9-6.5a1 1 0 0 0 0-1.66l-9-6.5A1 1 0 0 0 13 5.5v5.3L4.55 4.67A1 1 0 0 0 3 5.5z" />
+            </svg>
+          </button>
           <button
             class="icon-button"
             title="How you want to build it"
@@ -641,8 +706,38 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.branchName ?? ''"
           placeholder="feat/board-ticket-fields"
-          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() })"
+          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() || undefined })"
         />
+      </label>
+
+      <label>
+        Worktree
+        <input
+          class="agent-file-path"
+          :value="openTicket.worktreePath ?? ''"
+          placeholder="/Users/me/Code/my-app-board-ticket-fields"
+          @change="
+            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+      </label>
+
+      <label>
+        GitHub PR
+        <input
+          type="url"
+          class="agent-file-path"
+          :value="openTicket.pullRequestUrl ?? ''"
+          placeholder="https://github.com/owner/repo/pull/123"
+          @change="
+            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
+          "
+        />
+        <!-- target=_blank routes through main's window-open handler, which hands http(s) URLs to the OS browser.
+             A scheme-less value would resolve against the app's own origin, so only absolute http(s) URLs get a link. -->
+        <a v-if="/^https?:\/\//.test(openTicket.pullRequestUrl ?? '')" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
+          Open pull request ↗
+        </a>
       </label>
 
       <section class="ticket-checklist">
@@ -727,6 +822,39 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
+  <div v-if="autoRunConfirmLane" class="modal-backdrop" @click.self="autoRunConfirmLaneId = null">
+    <section class="modal" role="alertdialog" aria-labelledby="auto-run-confirm-question">
+      <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
+      <p id="auto-run-confirm-question" class="auto-run-question">
+        Run {{ ticketsInLane(autoRunConfirmLane.id).length }} separate
+        <select v-model="autoRunConfirmAgentId" aria-label="Agent">
+          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+        </select>
+        agents for {{ ticketsInLane(autoRunConfirmLane.id).length }} tickets?
+      </p>
+      <p class="auto-run-question">
+        Each opens in its own
+        <select v-model="autoRunConfirmTerminalId" aria-label="Terminal">
+          <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+            {{ terminal.label }}
+          </option>
+        </select>
+        tab.
+      </p>
+      <p class="field-hint">
+        {{
+          autoRunUsesWorktrees(autoRunConfirmLane)
+            ? 'Each runs in .worktrees/tN on its own branch, cut from freshly fetched main.'
+            : 'All run in the project directory, on whatever branch it has checked out.'
+        }}
+      </p>
+      <div class="modal-actions">
+        <button class="secondary" @click="autoRunConfirmLaneId = null">Cancel</button>
+        <button @click="confirmAutoRunLane">Run</button>
+      </div>
+    </section>
+  </div>
+
   <div v-if="openLane" class="modal-backdrop" @click.self="openLaneId = null">
     <section class="modal lane-modal">
       <p class="eyebrow">Swim lane</p>
@@ -767,6 +895,43 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
+
+      <section class="ticket-agent">
+        <p class="eyebrow">Auto Run</p>
+        <label>
+          Agent
+          <select
+            :value="findAgent(agents, openLane.autoRunAgentId).id"
+            @change="editLane(openLane, { autoRunAgentId: ($event.target as HTMLSelectElement).value })"
+          >
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label>
+          Terminal
+          <select
+            :value="autoRunTerminal(openLane).id"
+            @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+          >
+            <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+              {{ terminal.label }}
+            </option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="autoRunUsesWorktrees(openLane)"
+            @change="editLane(openLane, { autoRunWorktrees: ($event.target as HTMLInputElement).checked })"
+          />
+          Worktree and branch per ticket
+        </label>
+        <span class="field-hint">
+          Auto Run on this lane opens one new window with a tab per visible ticket, each running its agent command.
+          With worktrees on, each ticket gets .worktrees/tN on its own branch off freshly fetched main, so parallel
+          agents never share a checkout. Terminal needs Accessibility permission to open tabs.
+        </span>
+      </section>
 
       <div class="modal-actions">
         <button
