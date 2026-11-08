@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import path from 'node:path'
 
 const APP_NAME = 'Project Tracker'
-const outputRoots = [path.resolve('release'), path.resolve('dist')]
+const outputRoots = [path.resolve('dist')]
 
 // Quit any running instance so `open` can't just refocus a stale window from a
 // previous (possibly mid-build) launch, then force a brand-new instance with -n.

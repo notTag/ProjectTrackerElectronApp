@@ -470,7 +470,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.6 Build and release — `package.json`
 
 - `bun run dev` runs the Vite dev server and Electron together with hot reload.
-- `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `release/`.
+- `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
 

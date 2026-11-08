@@ -265,7 +265,7 @@ const createWindow = async () => {
   if (devServerUrl) {
     await mainWindow.loadURL(devServerUrl)
   } else {
-    await mainWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'))
+    await mainWindow.loadFile(path.join(app.getAppPath(), 'out/renderer/index.html'))
   }
 }
 
