@@ -207,6 +207,9 @@ export interface TicketAgentRun {
   at: string
   laneId: string
   output: string
+  // Absent on runs saved before it existed; those show no completed badge
+  // rather than claiming a success nobody recorded.
+  succeeded?: boolean
 }
 
 export interface Ticket {
