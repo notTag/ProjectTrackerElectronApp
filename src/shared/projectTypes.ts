@@ -438,12 +438,34 @@ export const ticketBranchName = (ticket: Ticket): string => {
   return titleSlug ? `${ticketPrefix}-${titleSlug}` : ticketPrefix
 }
 
+// Long enough to tell tickets apart; the terminal truncates tabs further anyway,
+// which is why the number leads.
+const TAB_TITLE_MAX_CODE_POINTS = 40
+
+// Control characters become spaces: a title fed through a terminal escape could
+// otherwise end the sequence early (ESC, BEL) and inject its own. Counting code
+// points rather than UTF-16 units keeps an emoji's surrogate pair whole at the cut.
+export const ticketTabTitle = (ticket: Pick<Ticket, 'number' | 'title'>): string => {
+  const singleLineTitle = ticket.title.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
+  const codePoints = Array.from(`#${ticket.number} ${singleLineTitle}`.trim())
+  if (codePoints.length <= TAB_TITLE_MAX_CODE_POINTS) return codePoints.join('')
+  const keptText = codePoints.slice(0, TAB_TITLE_MAX_CODE_POINTS).join('').trimEnd()
+  return `${keptText}…`
+}
+
+// One tab of a terminal launch. No title leaves the terminal's own.
+export interface TerminalTab {
+  title?: string
+  command: string
+}
+
 // One ticket of an Auto Run as it crosses IPC. With worktrees on, main makes
 // the ticket's worktree on branchName and runs the command inside it.
 export interface AutoRunTicketLaunch {
   number: number
   branchName: string
   command: string
+  title?: string
 }
 
 export interface GithubIssue {

@@ -25,6 +25,7 @@ import {
   isWebUrl,
   shellQuote,
   type AutoRunTicketLaunch,
+  type TerminalTab,
   type ProjectTrackerState
 } from '../src/shared/projectTypes.js'
 
@@ -81,27 +82,27 @@ const run = (bin: string, args: string[]) =>
 // single-quote wrapping applied in ticketShellCommand: ticket text — which can
 // arrive from a GitHub issue — lands as one literal argument to the agent, never
 // as shell code.
-const openWarpWithCommands = async (projectPath: string, commands: string[]) => {
+const openWarpWithCommands = async (projectPath: string, tabs: TerminalTab[]) => {
   const configDirectory = path.join(app.getPath('home'), '.warp', 'launch_configurations')
   const configPath = path.join(configDirectory, `${WARP_LAUNCH_CONFIG_NAME}.yaml`)
   mkdirSync(configDirectory, { recursive: true })
-  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, commands), 'utf8')
+  writeFileSync(configPath, warpLaunchConfigYaml(projectPath, tabs), 'utf8')
   await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
 }
 
-const openTerminalWithCommands = (projectPath: string, commands: string[]) =>
-  run('osascript', terminalOsascriptArgs(projectPath, commands))
+const openTerminalWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
+  run('osascript', terminalOsascriptArgs(projectPath, tabs))
 
-const openItermWithCommands = (projectPath: string, commands: string[]) =>
-  run('osascript', itermOsascriptArgs(projectPath, commands))
+const openItermWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
+  run('osascript', itermOsascriptArgs(projectPath, tabs))
 
-const openGhosttyWithCommands = (projectPath: string, commands: string[]) =>
-  run('osascript', ghosttyOsascriptArgs(projectPath, commands))
+const openGhosttyWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
+  run('osascript', ghosttyOsascriptArgs(projectPath, tabs))
 
 // Only the terminals can run a ticket's command; the editors in the allowlist
 // have no shell to run it in and keep the clipboard hand-off. Each runner opens
 // one new window with a tab per command.
-const COMMAND_RUNNERS: Record<string, (projectPath: string, commands: string[]) => Promise<void>> = {
+const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<void>> = {
   warp: openWarpWithCommands,
   terminal: openTerminalWithCommands,
   iterm2: openItermWithCommands,
@@ -199,9 +200,16 @@ const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => 
     candidate !== null &&
     Number.isInteger(candidate.number) &&
     typeof candidate.branchName === 'string' &&
-    typeof candidate.command === 'string'
+    typeof candidate.command === 'string' &&
+    (candidate.title === undefined || typeof candidate.title === 'string')
   )
 }
+
+// Formatting is ticketTabTitle's job; this only refuses garbage, and an
+// oversized title is dropped rather than failing the run over a nicety.
+const TAB_TITLE_MAX_LENGTH = 200
+const usableTabTitle = (title: string | undefined) =>
+  title && title.length <= TAB_TITLE_MAX_LENGTH ? title : undefined
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === 'string')
@@ -422,7 +430,7 @@ const registerIpc = () => {
 
     try {
       if (ticketCommand && runCommand) {
-        await runCommand(normalized, [ticketCommand])
+        await runCommand(normalized, [{ command: ticketCommand }])
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
       if (process.platform === 'darwin') {
@@ -459,7 +467,8 @@ const registerIpc = () => {
     const normalized = assertScannedProjectPath(projectPath)
 
     if (useWorktrees !== true) {
-      await runCommands(normalized, tickets.map((ticket) => ticket.command))
+      const tabs = tickets.map((ticket) => ({ command: ticket.command, title: usableTabTitle(ticket.title) }))
+      await runCommands(normalized, tabs)
       return { worktreePaths: [] }
     }
 
@@ -472,10 +481,11 @@ const registerIpc = () => {
       const worktreePath = await ensureTicketWorktree(repositoryRoot, ticket.number, ticket.branchName, baseRef)
       worktreePaths.push(worktreePath)
     }
-    const commandsInWorktrees = tickets.map(
-      (ticket, index) => `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`
-    )
-    await runCommands(normalized, commandsInWorktrees)
+    const tabsInWorktrees = tickets.map((ticket, index) => ({
+      command: `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`,
+      title: usableTabTitle(ticket.title)
+    }))
+    await runCommands(normalized, tabsInWorktrees)
     return { worktreePaths }
   })
 

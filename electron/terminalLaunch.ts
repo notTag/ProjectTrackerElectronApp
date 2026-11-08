@@ -1,6 +1,7 @@
 /**
  * Builds the launch arguments that carry ticket commands into each supported
- * terminal — one tab per command, all in one new window.
+ * terminal — one tab per command, all in one new window, each tab titled after
+ * its ticket where the terminal allows it.
  *
  * None of them accept a command through `open -a <app> <dir>`, which takes a
  * directory and no argv, so each needs its own route: Warp reads a launch
@@ -11,7 +12,7 @@
  * that tests can reach.
  */
 
-import { shellQuote } from '../src/shared/projectTypes.js'
+import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
 
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 
@@ -20,27 +21,34 @@ export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 // pulling in a YAML serializer for two fields.
 const yamlDoubleQuoted = (value: string) => JSON.stringify(value)
 
-const warpTabYaml = (projectPath: string, command: string) => [
-  '      - layout:',
-  `          cwd: ${yamlDoubleQuoted(projectPath)}`,
-  '          commands:',
-  `            - exec: ${yamlDoubleQuoted(command)}`
-]
+// A tab's `title` sits beside its `layout`, so a titled tab opens its list
+// entry with the title instead.
+const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
+  const tabHeader = tab.title
+    ? [`      - title: ${yamlDoubleQuoted(tab.title)}`, '        layout:']
+    : ['      - layout:']
+  return [
+    ...tabHeader,
+    `          cwd: ${yamlDoubleQuoted(projectPath)}`,
+    '          commands:',
+    `            - exec: ${yamlDoubleQuoted(tab.command)}`
+  ]
+}
 
-export const warpLaunchConfigYaml = (projectPath: string, commands: string[]): string =>
+export const warpLaunchConfigYaml = (projectPath: string, tabs: TerminalTab[]): string =>
   [
     '---',
     `name: ${WARP_LAUNCH_CONFIG_NAME}`,
     'windows:',
     '  - tabs:',
-    ...commands.flatMap((command) => warpTabYaml(projectPath, command)),
+    ...tabs.flatMap((tab) => warpTabYaml(projectPath, tab)),
     ''
   ].join('\n')
 
-// AppleScript is passed as one -e per line. Commands travel as argv entries read
-// back via `item i of argv` rather than being interpolated into the script text,
-// so a prompt full of quotes and newlines never has to survive AppleScript string
-// escaping on top of the shell escaping it already carries.
+// AppleScript is passed as one -e per line. Commands and titles travel as argv
+// entries read back via `item i of argv` rather than being interpolated into the
+// script text, so a prompt full of quotes and newlines never has to survive
+// AppleScript string escaping on top of the shell escaping it already carries.
 const osascriptArgs = (scriptLines: string[], argv: string[]): string[] => [
   ...scriptLines.flatMap((line) => ['-e', line]),
   '--',
@@ -49,6 +57,35 @@ const osascriptArgs = (scriptLines: string[], argv: string[]): string[] => [
 
 const inProjectDirectory = (projectPath: string, command: string) => `cd ${shellQuote(projectPath)} && ${command}`
 
+// argv carries each tab as a [command, title] pair; a tab with no title gets an
+// empty string so the pairs never shift.
+const commandTitlePairs = (projectPath: string, tabs: TerminalTab[]) =>
+  tabs.flatMap((tab) => [inProjectDirectory(projectPath, tab.command), tab.title ?? ''])
+
+// A title is a nicety: inside `try` a terminal that refuses it still runs the
+// tab's command and the rest of the batch.
+const setTitleIfGiven = (...setTitleStatements: string[]) => [
+  'if tabTitle is not "" then',
+  'try',
+  ...setTitleStatements,
+  'end try',
+  'end if'
+]
+
+// Terminal and iTerm2 show a shell's own title escapes in place of a title set
+// while that shell is still starting, so their titles go on in a second pass
+// once the shells are up. Any later title escape (an agent, a prompt hook)
+// still replaces them.
+// ponytail: a fixed 1s wait, not a readiness check; a slow shell startup can
+// still win the race and leave that tab untitled.
+const titleAfterShellStartup = (tabListName: string, ...setTitleStatements: string[]) => [
+  'delay 1',
+  `repeat with i from 1 to count of ${tabListName}`,
+  'set tabTitle to item (2 * i) of argv',
+  ...setTitleIfGiven(...setTitleStatements),
+  'end repeat'
+]
+
 // Terminal's dictionary can open a window running something (`do script`) but
 // has no verb for a new tab, so later tabs come from pressing ⌘T through System
 // Events — which needs Accessibility permission for Project Tracker. A keystroke
@@ -56,15 +93,17 @@ const inProjectDirectory = (projectPath: string, command: string) => `cd ${shell
 // tab count is polled: if no tab appears the script errors rather than typing
 // the next command into the previous ticket's running agent. A single command
 // never touches System Events.
-export const terminalOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+export const terminalOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [
       'on run argv',
       'tell application "Terminal"',
       'activate',
-      'do script (item 1 of argv)',
+      'set newTab to do script (item 1 of argv)',
       'set targetWindow to front window',
-      'repeat with i from 2 to count of argv',
+      'set openedTabs to {}',
+      'repeat with i from 1 to (count of argv) div 2',
+      'if i > 1 then',
       'set tabCount to count of tabs of targetWindow',
       'set index of targetWindow to 1',
       'tell application "System Events" to tell process "Terminal" to set frontmost to true',
@@ -74,37 +113,50 @@ export const terminalOsascriptArgs = (projectPath: string, commands: string[]): 
       'delay 0.1',
       'end repeat',
       'if (count of tabs of targetWindow) = tabCount then error "Terminal did not open a new tab."',
-      'do script (item i of argv) in last tab of targetWindow',
+      'set newTab to do script (item (2 * i - 1) of argv) in last tab of targetWindow',
+      'end if',
+      'set end of openedTabs to newTab',
       'end repeat',
+      ...titleAfterShellStartup(
+        'openedTabs',
+        'set custom title of item i of openedTabs to tabTitle',
+        'set title displays custom title of item i of openedTabs to true'
+      ),
       'end tell',
       'end run'
     ],
-    commands.map((command) => inProjectDirectory(projectPath, command))
+    commandTitlePairs(projectPath, tabs)
   )
 
 // `write text` types into the tab's live shell, so the session outlives the
 // agent the same way Terminal's `do script` does.
-export const itermOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [
       'on run argv',
       'tell application "iTerm"',
       'activate',
       'set targetWindow to (create window with default profile)',
-      'repeat with i from 1 to count of argv',
+      'set tabSessions to {}',
+      'repeat with i from 1 to (count of argv) div 2',
       'if i > 1 then tell targetWindow to create tab with default profile',
-      'tell current session of targetWindow to write text (item i of argv)',
+      'set end of tabSessions to current session of targetWindow',
+      'tell current session of targetWindow to write text (item (2 * i - 1) of argv)',
       'end repeat',
+      ...titleAfterShellStartup('tabSessions', 'set name of item i of tabSessions to tabTitle'),
       'end tell',
       'end run'
     ],
-    commands.map((command) => inProjectDirectory(projectPath, command))
+    commandTitlePairs(projectPath, tabs)
   )
 
 // Ghostty 1.3+ scripting: `initial input` is typed into the tab's own shell
 // rather than replacing it (as `command` would), so the shell outlives the
-// agent with no exec trick. argv item 1 is the directory, the rest commands.
-export const ghosttyOsascriptArgs = (projectPath: string, commands: string[]): string[] =>
+// agent with no exec trick. argv item 1 is the directory, then [command, title]
+// pairs; the commands are not cd-prefixed, the configuration sets the directory.
+// `name override` (1.4+) pins the tab title over the terminal's own, so an
+// older Ghostty just keeps its default title.
+export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [
       'on run argv',
@@ -112,14 +164,19 @@ export const ghosttyOsascriptArgs = (projectPath: string, commands: string[]): s
       'activate',
       'set surfaceConfig to new surface configuration',
       'set initial working directory of surfaceConfig to (item 1 of argv)',
-      'set initial input of surfaceConfig to (item 2 of argv) & linefeed',
+      'repeat with i from 1 to ((count of argv) - 1) div 2',
+      'set initial input of surfaceConfig to (item (2 * i) of argv) & linefeed',
+      'if i = 1 then',
       'set targetWindow to new window with configuration surfaceConfig',
-      'repeat with i from 3 to count of argv',
-      'set initial input of surfaceConfig to (item i of argv) & linefeed',
-      'new tab in targetWindow with configuration surfaceConfig',
+      'set newTab to tab 1 of targetWindow',
+      'else',
+      'set newTab to new tab in targetWindow with configuration surfaceConfig',
+      'end if',
+      'set tabTitle to item (2 * i + 1) of argv',
+      ...setTitleIfGiven('set name override of newTab to tabTitle'),
       'end repeat',
       'end tell',
       'end run'
     ],
-    [projectPath, ...commands]
+    [projectPath, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
   )
