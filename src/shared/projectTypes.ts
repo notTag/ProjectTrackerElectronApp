@@ -623,6 +623,10 @@ export const worktreeFolderName = (worktreePath: string) => {
   return segments.at(-1) ?? worktreePath
 }
 
+// A scheme-less href would resolve against the app's own origin instead of
+// opening in the OS browser, so only absolute http(s) URLs become links.
+export const isWebUrl = (url: string | undefined): url is string => /^https?:\/\//.test(url ?? '')
+
 // GitHub PR URLs end in /pull/<number>; anything else still gets a link, just
 // without the number.
 export const pullRequestLabel = (pullRequestUrl: string) => {
@@ -641,23 +645,46 @@ export interface BoardPreferences {
   laneWidths: Record<string, number>
   hiddenLaneIds: string[]
   cardFields: TicketCardField[]
+  // Every card field that existed when these preferences were saved. A field
+  // missing from it shipped later, so it starts shown rather than looking
+  // switched off.
+  knownCardFields?: TicketCardField[]
 }
+
+const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
+
+// ponytail: the card fields that shipped before knownCardFields was recorded.
+const CARD_FIELDS_BEFORE_TRACKING: TicketCardField[] = [
+  'number',
+  'description',
+  'assignee',
+  'labels',
+  'checklist',
+  'branch'
+]
 
 export const createDefaultBoardPreferences = (): BoardPreferences => ({
   laneWidths: {},
   hiddenLaneIds: [],
-  cardFields: TICKET_CARD_FIELDS.map((field) => field.id)
+  cardFields: [...ALL_CARD_FIELDS],
+  knownCardFields: [...ALL_CARD_FIELDS]
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
 // before a field existed read back complete instead of undefined.
-export const getBoardPreferences = (
-  state: ProjectTrackerState,
-  projectPath: string
-): BoardPreferences => ({
-  ...createDefaultBoardPreferences(),
-  ...state.boardPreferences?.[projectPath]
-})
+export const getBoardPreferences = (state: ProjectTrackerState, projectPath: string): BoardPreferences => {
+  const saved = state.boardPreferences?.[projectPath]
+  const preferences = { ...createDefaultBoardPreferences(), ...saved }
+  if (!saved?.cardFields) return preferences
+
+  const knownWhenSaved = saved.knownCardFields ?? CARD_FIELDS_BEFORE_TRACKING
+  const fieldsAddedSinceSave = ALL_CARD_FIELDS.filter((field) => !knownWhenSaved.includes(field))
+  return {
+    ...preferences,
+    cardFields: [...saved.cardFields, ...fieldsAddedSinceSave],
+    knownCardFields: [...ALL_CARD_FIELDS]
+  }
+}
 
 export const clampLaneWidth = (width: number) =>
   Math.min(MAX_LANE_WIDTH, Math.max(MIN_LANE_WIDTH, Math.round(width)))

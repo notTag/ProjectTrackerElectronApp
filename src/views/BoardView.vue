@@ -19,6 +19,7 @@ import {
   clampLaneWidth,
   findAgent,
   formatLabels,
+  isWebUrl,
   parseLabels,
   pullRequestLabel,
   removeChecklistItem,
@@ -526,7 +527,7 @@ const runTicketAgent = (ticket: Ticket) => {
                 (showsField('checklist') && ticket.checklist?.length) ||
                 (showsField('branch') && ticket.branchName) ||
                 (showsField('worktree') && ticket.worktreePath) ||
-                (showsField('pullRequest') && ticket.pullRequestUrl)
+                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
             >
@@ -543,11 +544,12 @@ const runTicketAgent = (ticket: Ticket) => {
               >
                 ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
               </span>
-              <!-- .stop keeps the click from also opening the ticket modal. -->
+              <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
               <a
-                v-if="showsField('pullRequest') && ticket.pullRequestUrl"
+                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
                 :href="ticket.pullRequestUrl"
                 target="_blank"
+                draggable="false"
                 @click.stop
               >
                 {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
@@ -735,9 +737,7 @@ const runTicketAgent = (ticket: Ticket) => {
             editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
           "
         />
-        <!-- target=_blank routes through main's window-open handler, which hands http(s) URLs to the OS browser.
-             A scheme-less value would resolve against the app's own origin, so only absolute http(s) URLs get a link. -->
-        <a v-if="/^https?:\/\//.test(openTicket.pullRequestUrl ?? '')" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
+        <a v-if="isWebUrl(openTicket.pullRequestUrl)" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
           Open pull request ↗
         </a>
       </label>
