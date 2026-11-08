@@ -512,7 +512,7 @@ describe('ticketsToRun', () => {
     expect(ticketsToRun(tickets, new Set())).toEqual(tickets)
   })
 
-  it('runs nothing when the only checks are elsewhere, like another lane or a filtered-out card', () => {
-    expect(ticketsToRun(tickets, new Set(['z']))).toEqual([])
+  it('runs every ticket when the only checks are in another lane', () => {
+    expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
   })
 })

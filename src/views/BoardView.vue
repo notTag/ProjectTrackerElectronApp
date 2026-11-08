@@ -177,13 +177,6 @@ const ticketsInLane = (laneId: string) =>
 const selectedTicketIds = ref(new Set<string>())
 watch(projectPath, () => selectedTicketIds.value.clear())
 
-// Deleted tickets drop out, so a stale id never counts as an active selection.
-const liveSelectedTicketIds = computed(() => {
-  const boardTicketIds = board.value.tickets.map((ticket) => ticket.id)
-  const selectedOnBoard = boardTicketIds.filter((ticketId) => selectedTicketIds.value.has(ticketId))
-  return new Set(selectedOnBoard)
-})
-
 const toggleTicketSelected = (ticketId: string) => {
   if (selectedTicketIds.value.has(ticketId)) selectedTicketIds.value.delete(ticketId)
   else selectedTicketIds.value.add(ticketId)
@@ -362,7 +355,7 @@ const autoRunTerminal = (lane: SwimLane) => {
 
 const autoRunTickets = (lane: SwimLane) => {
   const visibleLaneTickets = ticketsInLane(lane.id)
-  return ticketsToRun(visibleLaneTickets, liveSelectedTicketIds.value)
+  return ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
 }
 
 const autoRunTooltip = (lane: SwimLane) => {
@@ -542,7 +535,6 @@ const runTicketAgent = (ticket: Ticket) => {
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button
             class="icon-button auto-run-button"
-            :disabled="autoRunTickets(lane).length === 0 || store.autoRunning[lane.id]"
             :title="autoRunTooltip(lane)"
             :aria-label="`Auto Run ${autoRunTickets(lane).length} in ${lane.name}`"
             @click="askToAutoRunLane(lane)"
