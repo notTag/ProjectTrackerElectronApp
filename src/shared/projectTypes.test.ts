@@ -17,6 +17,7 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketsToRun,
   agentForTicket,
   availableAgents,
   DEFAULT_AGENT,
@@ -495,5 +496,23 @@ describe('ticket card labels', () => {
     expect(isWebUrl('github.com/o/r/pull/35')).toBe(false)
     expect(isWebUrl('javascript:alert(1)')).toBe(false)
     expect(isWebUrl(undefined)).toBe(false)
+  })
+})
+
+describe('ticketsToRun', () => {
+  const tickets = [{ id: 'a' }, { id: 'b' }, { id: 'c' }] as Ticket[]
+
+  it('runs only the checked tickets', () => {
+    const ticketsRun = ticketsToRun(tickets, new Set(['a', 'c']))
+    const runIds = ticketsRun.map((ticket) => ticket.id)
+    expect(runIds).toEqual(['a', 'c'])
+  })
+
+  it('runs every ticket when none are checked', () => {
+    expect(ticketsToRun(tickets, new Set())).toEqual(tickets)
+  })
+
+  it('runs nothing when the only checks are elsewhere, like another lane or a filtered-out card', () => {
+    expect(ticketsToRun(tickets, new Set(['z']))).toEqual([])
   })
 })

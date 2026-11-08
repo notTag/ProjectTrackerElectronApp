@@ -1064,6 +1064,25 @@ code {
   cursor: grab;
   flex: 0 0 auto;
   transition: border-color 120ms ease;
+  /* Checkbox column on the left; every other child stacks in the second
+     column, so a wrapped title stays clear of the checkbox. */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+}
+
+.ticket > :not(.ticket-select) {
+  grid-column: 2;
+}
+
+.ticket-select {
+  grid-row: 1;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  cursor: pointer;
+  accent-color: var(--color-accent);
 }
 
 .ticket h3 {
