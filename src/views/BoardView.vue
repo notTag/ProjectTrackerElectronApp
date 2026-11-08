@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -166,6 +166,14 @@ const ticketsInLane = (laneId: string) =>
 // ponytail: in-memory only — a pick for the next run, not ticket data. Persist
 // it (store or board preferences) if it should survive leaving the board.
 const selectedTicketIds = ref(new Set<string>())
+watch(projectPath, () => selectedTicketIds.value.clear())
+
+// Deleted tickets drop out, so a stale id never counts as an active selection.
+const liveSelectedTicketIds = computed(() => {
+  const boardTicketIds = board.value.tickets.map((ticket) => ticket.id)
+  const selectedOnBoard = boardTicketIds.filter((ticketId) => selectedTicketIds.value.has(ticketId))
+  return new Set(selectedOnBoard)
+})
 
 const toggleTicketSelected = (ticketId: string) => {
   if (selectedTicketIds.value.has(ticketId)) selectedTicketIds.value.delete(ticketId)
@@ -321,7 +329,10 @@ const autoRunTerminal = (lane: SwimLane) => {
   return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
 }
 
-const autoRunTickets = (lane: SwimLane) => ticketsToRun(ticketsInLane(lane.id), selectedTicketIds.value)
+const autoRunTickets = (lane: SwimLane) => {
+  const visibleLaneTickets = ticketsInLane(lane.id)
+  return ticketsToRun(visibleLaneTickets, liveSelectedTicketIds.value)
+}
 
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
@@ -362,6 +373,8 @@ const confirmAutoRunLane = () => {
     return { ticket, launch: { number: ticket.number, branchName, command } }
   })
   if (launches.length === 0) return
+  // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
+  for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
 }
 
@@ -489,9 +502,9 @@ const runTicketAgent = (ticket: Ticket) => {
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button
             class="icon-button auto-run-button"
-            :disabled="ticketsInLane(lane.id).length === 0 || store.autoRunning[lane.id]"
+            :disabled="autoRunTickets(lane).length === 0 || store.autoRunning[lane.id]"
             :title="autoRunTooltip(lane)"
-            :aria-label="`Auto Run ${lane.name}`"
+            :aria-label="`Auto Run ${autoRunTickets(lane).length} in ${lane.name}`"
             @click="askToAutoRunLane(lane)"
             @dblclick.stop
           >

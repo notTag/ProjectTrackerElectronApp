@@ -470,14 +470,16 @@ describe('ticketsToRun', () => {
   const tickets = [{ id: 'a' }, { id: 'b' }, { id: 'c' }] as Ticket[]
 
   it('runs only the checked tickets', () => {
-    expect(ticketsToRun(tickets, new Set(['a', 'c'])).map((ticket) => ticket.id)).toEqual(['a', 'c'])
+    const ticketsRun = ticketsToRun(tickets, new Set(['a', 'c']))
+    const runIds = ticketsRun.map((ticket) => ticket.id)
+    expect(runIds).toEqual(['a', 'c'])
   })
 
   it('runs every ticket when none are checked', () => {
     expect(ticketsToRun(tickets, new Set())).toEqual(tickets)
   })
 
-  it('ignores checked ids that are not in the set, like a ticket from another lane', () => {
-    expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
+  it('runs nothing when the only checks are elsewhere, like another lane or a filtered-out card', () => {
+    expect(ticketsToRun(tickets, new Set(['z']))).toEqual([])
   })
 })
