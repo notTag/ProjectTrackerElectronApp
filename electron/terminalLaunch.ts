@@ -4,8 +4,7 @@
  *
  * None of them accept a command through `open -a <app> <dir>`, which takes a
  * directory and no argv, so each needs its own route: Warp reads a launch
- * configuration file, Terminal, iTerm2 and Ghostty are driven by AppleScript,
- * and a single Ghostty command can also go in as config keys on the command line.
+ * configuration file, and Terminal, iTerm2 and Ghostty are driven by AppleScript.
  *
  * Kept out of main.ts — which cannot be imported under test because it touches
  * the Electron app object at module load — so the escaping below has a home
@@ -124,28 +123,3 @@ export const ghosttyOsascriptArgs = (projectPath: string, commands: string[]): s
     ],
     [projectPath, ...commands]
   )
-
-// Ghostty refuses to launch its terminal from the CLI on macOS and documents
-// `open -na Ghostty.app --args` as the way in. Kept for single commands because
-// it works on Ghostty versions that predate the scripting dictionary.
-// `initial-command` applies to the first surface only, leaving later tabs as
-// normal shells; `-e` would have set the same key but also forces
-// quit-after-last-window-closed, which would take the user's other Ghostty
-// windows down when the agent exits.
-//
-// The `shell:` prefix pins the value to /bin/sh -c rather than leaving it to
-// Ghostty's direct-vs-shell heuristic, so the quoting in the command is read by
-// a shell exactly as it was written.
-//
-// The trailing exec is what makes this behave like the others. initial-command
-// replaces the shell, so without this the window would die the moment the agent
-// exited — `wait-after-command` only holds a dead terminal open until a
-// keypress. Exec'ing the login shell afterwards leaves a live one in the
-// project directory, which is what a hand-off is for.
-export const ghosttyOpenArgs = (projectPath: string, command: string): string[] => [
-  '-na',
-  'Ghostty.app',
-  '--args',
-  `--working-directory=${projectPath}`,
-  `--initial-command=shell:${command}; exec "$SHELL" -l`
-]

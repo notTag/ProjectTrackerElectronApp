@@ -6,10 +6,10 @@
   here rather than merged.
 
   apple-events is the addition. Handing tickets to Terminal, iTerm2 or Ghostty
-  (several at once, as tabs) goes through osascript, and under the hardened
+  goes through osascript, and under the hardened
   runtime an un-entitled app cannot send Apple Events at all — TCC attributes the
-  event to Project Tracker, not to osascript. Warp and a single Ghostty hand-off
-  are launched through Launch Services and need none of this.
+  event to Project Tracker, not to osascript. Warp is launched through Launch
+  Services and needs none of this.
 -->
 <plist version="1.0">
   <dict>
