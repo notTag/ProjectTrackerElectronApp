@@ -59,7 +59,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "Project Tracker uses Terminal to open a project and run the command for a ticket you hand off."
+        "NSAppleEventsUsageDescription": "Project Tracker uses your terminal app to open a project and run the command for each ticket you hand off."
       },
       "target": [
         "dmg",

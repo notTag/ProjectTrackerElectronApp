@@ -13,16 +13,21 @@ export interface OpenInTarget {
   label: string
   /** macOS application name passed to `open -a <appName> <dir>`. */
   appName: string
+  /** Terminals run a ticket's command; editors only open the folder. */
+  runsCommands: boolean
 }
 
 export const OPEN_IN_TARGETS: readonly OpenInTarget[] = [
-  { id: 'warp', label: 'Warp', appName: 'Warp' },
-  { id: 'terminal', label: 'Terminal', appName: 'Terminal' },
-  { id: 'ghostty', label: 'Ghostty', appName: 'Ghostty' },
-  { id: 'cursor', label: 'Cursor', appName: 'Cursor' },
-  { id: 'zed', label: 'Zed', appName: 'Zed' },
-  { id: 'vscode', label: 'VSCode', appName: 'Visual Studio Code' }
+  { id: 'warp', label: 'Warp', appName: 'Warp', runsCommands: true },
+  { id: 'terminal', label: 'Terminal', appName: 'Terminal', runsCommands: true },
+  { id: 'ghostty', label: 'Ghostty', appName: 'Ghostty', runsCommands: true },
+  { id: 'iterm2', label: 'iTerm2', appName: 'iTerm', runsCommands: true },
+  { id: 'cursor', label: 'Cursor', appName: 'Cursor', runsCommands: false },
+  { id: 'zed', label: 'Zed', appName: 'Zed', runsCommands: false },
+  { id: 'vscode', label: 'VSCode', appName: 'Visual Studio Code', runsCommands: false }
 ] as const
+
+export const TERMINAL_TARGETS = OPEN_IN_TARGETS.filter((target) => target.runsCommands)
 
 // First entry is the default; the picker also lists targets in this order.
 export const DEFAULT_OPEN_IN_TARGET_ID = OPEN_IN_TARGETS[0].id
