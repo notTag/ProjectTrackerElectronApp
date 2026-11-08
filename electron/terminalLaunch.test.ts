@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import {
   WARP_LAUNCH_CONFIG_NAME,
-  ghosttyOpenArgs,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   terminalOsascriptArgs,
@@ -68,37 +67,6 @@ describe('terminalOsascriptArgs', () => {
   it('leaves the command untouched so its own quoting survives', () => {
     const args = terminalOsascriptArgs('/tmp/project', [AWKWARD_COMMAND])
     expect(scriptArgument(args).endsWith(AWKWARD_COMMAND)).toBe(true)
-  })
-})
-
-describe('ghosttyOpenArgs', () => {
-  const valueOf = (args: string[], key: string) => {
-    const match = args.find((arg) => arg.startsWith(`${key}=`))
-    if (!match) throw new Error(`no ${key} argument emitted`)
-    return match.slice(key.length + 1)
-  }
-
-  it('goes through open -na, which is the only supported route on macOS', () => {
-    const args = ghosttyOpenArgs('/tmp/project', 'claude hello')
-    expect(args.slice(0, 3)).toEqual(['-na', 'Ghostty.app', '--args'])
-  })
-
-  it('sets the working directory and the first-surface command', () => {
-    const args = ghosttyOpenArgs('/tmp/my project', 'claude hello')
-    expect(valueOf(args, '--working-directory')).toBe('/tmp/my project')
-    expect(valueOf(args, '--initial-command')).toBe('shell:claude hello; exec "$SHELL" -l')
-  })
-
-  it('pins the command to a shell so its quoting is honoured', () => {
-    const args = ghosttyOpenArgs('/tmp/project', AWKWARD_COMMAND)
-    expect(valueOf(args, '--initial-command')).toContain(`shell:${AWKWARD_COMMAND}`)
-  })
-
-  // initial-command replaces the shell, so without this the window dies with
-  // the agent instead of handing the project directory back to the user.
-  it('leaves a live login shell behind once the agent exits', () => {
-    const args = ghosttyOpenArgs('/tmp/project', 'claude hello')
-    expect(valueOf(args, '--initial-command').endsWith('; exec "$SHELL" -l')).toBe(true)
   })
 })
 

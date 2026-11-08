@@ -13,7 +13,6 @@ import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
 import {
   WARP_LAUNCH_CONFIG_NAME,
-  ghosttyOpenArgs,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   terminalOsascriptArgs,
@@ -97,9 +96,7 @@ const openItermWithCommands = (projectPath: string, commands: string[]) =>
   run('osascript', itermOsascriptArgs(projectPath, commands))
 
 const openGhosttyWithCommands = (projectPath: string, commands: string[]) =>
-  commands.length === 1
-    ? run('open', ghosttyOpenArgs(projectPath, commands[0]))
-    : run('osascript', ghosttyOsascriptArgs(projectPath, commands))
+  run('osascript', ghosttyOsascriptArgs(projectPath, commands))
 
 // Only the terminals can run a ticket's command; the editors in the allowlist
 // have no shell to run it in and keep the clipboard hand-off. Each runner opens

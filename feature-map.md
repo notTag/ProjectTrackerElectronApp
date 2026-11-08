@@ -388,7 +388,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
-  - **Ghostty**: `open -na Ghostty.app` for a single command, or Ghostty 1.3+ scripting (`initial input`) for several.
+  - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
