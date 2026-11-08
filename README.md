@@ -138,6 +138,8 @@ The app saves its data outside the repository, in Electron's `userData` director
 ~/Library/Application Support/Project Tracker/project-tracker.sqlite
 ```
 
+When you write file contents into a text column from the `sqlite3` CLI, wrap them as `CAST(readfile('<path>') AS TEXT)`. A bare `readfile()` returns a BLOB, which SQLite stores as-is. The app decodes BLOBs as UTF-8 when it reads them, but other tools may not.
+
 Projects, swim lanes and tickets are stored as shared rows, so every member sees the same edits. Project membership determines who can see a project; ticket assignment records who's working on it.
 
 | Table | Notes |

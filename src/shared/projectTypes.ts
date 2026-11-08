@@ -29,6 +29,10 @@ export interface ProjectRecord {
   hasReadme: boolean
   lastModifiedAt?: string
   lastScannedAt: string
+  // Set when the user deletes the scan directory holding this project. The row
+  // and everything hanging off it (notes, board) are kept but never shown;
+  // adding the directory back clears the flag.
+  archived?: boolean
 }
 
 export interface ProjectSnapshot {
@@ -125,16 +129,51 @@ export const mergeScannedProjects = (
       github: existing?.github ?? project.github
     }
   })
+  // A scan never finds archived projects (they sit outside every scan
+  // directory) or hidden ones (the scanner skips hidden paths). Dropping what
+  // the scan missed would delete them and their boards — carry them over.
+  const scannedPaths = new Set(scannedProjects.map((project) => project.path))
+  const isSkippedByScan = (project: ProjectRecord) =>
+    project.archived || isInsideAny(project.path, previous.hiddenPaths)
+  const unscannedProjects = previous.snapshot.projects.filter(
+    (project) => isSkippedByScan(project) && !scannedPaths.has(project.path)
+  )
 
   return {
     ...previous,
     updatedAt: new Date().toISOString(),
     snapshot: {
       scannedAt: new Date().toISOString(),
-      projects,
+      projects: [...projects, ...unscannedProjects],
       failures
     }
   }
+}
+
+const isInsideAny = (target: string, parents: string[]) =>
+  parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
+
+// What the user sees as deleting a scan directory archives its projects
+// instead: nothing is ever destroyed, so re-adding the folder brings it all
+// back. Projects still covered by a remaining (nested) scan directory stay put.
+export const removeScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const remainingDirectories = state.scanDirectories.filter((entry) => entry !== directory)
+  const isOrphaned = (target: string) =>
+    isInsideAny(target, [directory]) && !isInsideAny(target, remainingDirectories)
+  const projects = state.snapshot.projects.map((project) =>
+    isOrphaned(project.path) ? { ...project, archived: true } : project
+  )
+  return { ...state, scanDirectories: remainingDirectories, snapshot: { ...state.snapshot, projects } }
+}
+
+// Re-adding a directory brings back whatever was archived under it, with its
+// notes, status, priority and board exactly as they were left.
+export const addScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const scanDirectories = [...new Set([...state.scanDirectories, directory])]
+  const projects = state.snapshot.projects.map((project) =>
+    project.archived && isInsideAny(project.path, [directory]) ? { ...project, archived: false } : project
+  )
+  return { ...state, scanDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
 export interface SwimLane {
@@ -148,6 +187,13 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
+  // What the lane's Auto Run button launches: which agent works each ticket and
+  // which terminal hosts the tabs. Absent means the defaults.
+  autoRunAgentId?: string
+  autoRunTerminalId?: string
+  // Each Auto Run ticket gets its own git worktree and branch off freshly
+  // fetched main. Absent (lanes saved before it existed) means on.
+  autoRunWorktrees?: boolean
 }
 
 export interface ChecklistItem {
@@ -179,6 +225,8 @@ export interface Ticket {
   updatedAt?: string
   labels?: string[]
   branchName?: string
+  worktreePath?: string
+  pullRequestUrl?: string
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
@@ -243,17 +291,16 @@ export const ticketSearchText = (ticket: Ticket) => {
 
 // A coding agent a ticket can be handed to. `command` is the CLI that takes the
 // prompt as its last argument and runs in the project directory; `headlessArgs`
-// go before the prompt when it runs in the background with nobody watching.
+// go before the prompt when it runs in the background with nobody watching, and
+// `promptArgs` go before it when it runs in a terminal someone is watching.
 export interface Agent {
   id: string
   name: string
   command: string
   headlessArgs: string[]
+  promptArgs?: string[]
 }
 
-// ponytail: one built-in agent. Agents saved in state are offered alongside it,
-// so adding Codex or another CLI is one entry, not a code change.
-//
 // acceptEdits lets a background run write its output files without a human to
 // approve them, while shell commands stay denied — the run can draft, not execute.
 export const DEFAULT_AGENT: Agent = {
@@ -263,15 +310,44 @@ export const DEFAULT_AGENT: Agent = {
   headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
 }
 
-export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => [
-  DEFAULT_AGENT,
-  ...(state.agents ?? []).filter((agent) => agent.id !== DEFAULT_AGENT.id)
-]
+// Codex's workspace-write sandbox is the closest match to acceptEdits: files in
+// the project can change, nothing outside it can.
+const CODEX_AGENT: Agent = {
+  id: 'codex',
+  name: 'Codex',
+  command: 'codex',
+  headlessArgs: ['exec', '--sandbox', 'workspace-write']
+}
+
+// Hermes reads its first positional as a subcommand, so a bare prompt would be
+// rejected as an unknown command — the prompt has to ride on a flag.
+const HERMES_AGENT: Agent = {
+  id: 'hermes',
+  name: 'Hermes',
+  command: 'hermes',
+  headlessArgs: ['-z'],
+  promptArgs: ['chat', '-q']
+}
+
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
+
+// Agents saved in state are offered alongside the built-ins, so adding another
+// CLI is one entry, not a code change. A saved agent with a built-in's id wins
+// over it — someone who configured their own codex keeps their binary and args —
+// except the default, which stays fixed as the fallback every ticket runs with.
+export const availableAgents = (state: Pick<ProjectTrackerState, 'agents'>): Agent[] => {
+  const savedAgents = (state.agents ?? []).filter((agent) => agent.id !== DEFAULT_AGENT.id)
+  const savedAgentIds = new Set(savedAgents.map((agent) => agent.id))
+  const unshadowedBuiltIns = OPTIONAL_BUILT_IN_AGENTS.filter((agent) => !savedAgentIds.has(agent.id))
+  return [DEFAULT_AGENT, ...unshadowedBuiltIns, ...savedAgents]
+}
+
+export const findAgent = (agents: Agent[], agentId?: string): Agent =>
+  agents.find((agent) => agent.id === agentId) ?? DEFAULT_AGENT
 
 // A ticket that never picked an agent still runs — with the default — so the
 // hand-off works before anyone touches the picker.
-export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent =>
-  agents.find((agent) => agent.id === ticket.agentId) ?? DEFAULT_AGENT
+export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent => findAgent(agents, ticket.agentId)
 
 export interface TicketPromptContext {
   assigneeName?: string
@@ -287,6 +363,8 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     context.assigneeName ? `Assignee: ${context.assigneeName}` : '',
     ticket.labels?.length ? `Labels: ${formatLabels(ticket.labels)}` : '',
     ticket.branchName ? `Branch: ${ticket.branchName}` : '',
+    ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
+    ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
@@ -302,6 +380,14 @@ const outputInstruction = (outputTarget: string) =>
       'If that location already exists, use it as-is without asking; otherwise create it.'
   ].join('\n')
 
+// The prompt reaches the agent as a CLI argument, and Claude Code's parser
+// reads an argument starting with "-" as an option: a lane prompt written as a
+// bullet list ("- Create a PRD…") failed with `error: unknown option`.
+// A leading heading avoids that without a per-agent `--` separator, which
+// custom agents with arbitrary flags couldn't be relied on to accept.
+const guardAgainstOptionParsing = (prompt: string): string =>
+  prompt.startsWith('-') ? `Instructions:\n${prompt}` : prompt
+
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
 // output location closes it out as the last thing the agent reads.
@@ -314,7 +400,8 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
   const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, output]
-  return sections.filter(Boolean).join('\n\n')
+  const prompt = sections.filter(Boolean).join('\n\n')
+  return guardAgainstOptionParsing(prompt)
 }
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
@@ -333,7 +420,30 @@ export const ticketShellCommand = (
   context: TicketPromptContext = {}
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return `${agent.command} ${shellQuote(prompt)}`
+  const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  return commandWords.join(' ')
+}
+
+// Enough of the title to recognise the ticket; the number already identifies it.
+const BRANCH_SLUG_WORD_COUNT = 3
+
+// A ticket's own branch wins; otherwise one is derived from its number and
+// title, so a re-run of the same ticket lands on the same branch.
+export const ticketBranchName = (ticket: Ticket): string => {
+  const ownBranch = ticket.branchName?.trim()
+  if (ownBranch) return ownBranch
+  const titleWords = ticket.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const titleSlug = titleWords.slice(0, BRANCH_SLUG_WORD_COUNT).join('-')
+  const ticketPrefix = `t${ticket.number}`
+  return titleSlug ? `${ticketPrefix}-${titleSlug}` : ticketPrefix
+}
+
+// One ticket of an Auto Run as it crosses IPC. With worktrees on, main makes
+// the ticket's worktree on branchName and runs the command inside it.
+export interface AutoRunTicketLaunch {
+  number: number
+  branchName: string
+  command: string
 }
 
 export interface GithubIssue {

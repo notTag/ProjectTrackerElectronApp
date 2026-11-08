@@ -38,6 +38,21 @@ export const LEGACY_BACKUP_FILE_NAME = 'project-tracker.pre-wal-backup.sqlite'
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
 
+// SQLite stores whatever type it is given, so an outside writer can leave a
+// BLOB in a TEXT column (sqlite3's readfile() does). node:sqlite returns it as
+// a Uint8Array, and String() on that gives "35,35,32,…" instead of the text.
+// The schema has no real BLOB columns, so every one is decoded on the way out.
+// ponytail: bytes that aren't valid UTF-8 decode to U+FFFD, and the next edit to
+// that row saves the lossy text. Use a fatal decoder if non-UTF-8 writers appear.
+const utf8Decoder = new TextDecoder()
+const decodeBlobs = (row: Row): Row => {
+  const entries = Object.entries(row).map(([column, value]) => [
+    column,
+    value instanceof Uint8Array ? utf8Decoder.decode(value) : value
+  ])
+  return Object.fromEntries(entries)
+}
+
 const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
@@ -106,6 +121,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   createdAt: String(row.created_at),
   updatedAt: asText(row.updated_at),
   branchName: asText(row.branch_name),
+  worktreePath: asText(row.worktree_path),
+  pullRequestUrl: asText(row.pull_request_url),
   assigneeId: asText(row.assignee_id),
   labels: parseJson<string[] | undefined>(row.labels_json, undefined),
   checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
@@ -129,7 +146,9 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   jsonOrNull(ticket.checklist),
   jsonOrNull(ticket.agentRun),
   ticket.externalId ?? null,
-  ticket.externalUrl ?? null
+  ticket.externalUrl ?? null,
+  ticket.worktreePath ?? null,
+  ticket.pullRequestUrl ?? null
 ]
 
 export class StateRepository {
@@ -201,7 +220,8 @@ export class StateRepository {
   }
 
   private select(sql: string, params: SQLInputValue[] = []): Row[] {
-    return this.db.prepare(sql).all(...params)
+    const rows = this.db.prepare(sql).all(...params)
+    return rows.map(decodeBlobs)
   }
 
   private run(sql: string, params: SQLInputValue[] = []) {
@@ -337,11 +357,14 @@ export class StateRepository {
   upsertSwimLane(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         id, project_path, name, agent_prompt, agent_file_path, output_target,
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
+         auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
+         auto_run_worktrees = excluded.auto_run_worktrees,
          position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
@@ -350,6 +373,9 @@ export class StateRepository {
         lane.agentPrompt,
         lane.agentFilePath,
         lane.outputTarget ?? '',
+        lane.autoRunAgentId ?? null,
+        lane.autoRunTerminalId ?? null,
+        lane.autoRunWorktrees === false ? 0 : 1,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
       ]
@@ -412,7 +438,8 @@ export class StateRepository {
       hasPackageJson: asBool(row.has_package_json),
       hasReadme: asBool(row.has_readme),
       lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: String(row.last_scanned_at)
+      lastScannedAt: String(row.last_scanned_at),
+      archived: asBool(row.archived)
     }))
   }
 
@@ -438,7 +465,10 @@ export class StateRepository {
         name: String(row.name),
         agentPrompt: String(row.agent_prompt),
         agentFilePath: String(row.agent_file_path),
-        outputTarget: String(row.output_target)
+        outputTarget: String(row.output_target),
+        autoRunAgentId: asText(row.auto_run_agent_id),
+        autoRunTerminalId: asText(row.auto_run_terminal_id),
+        autoRunWorktrees: asBool(row.auto_run_worktrees)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
@@ -560,8 +590,9 @@ export class StateRepository {
     this.run(
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
-         branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
+         worktree_path, pull_request_url, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -572,7 +603,7 @@ export class StateRepository {
       `UPDATE tickets SET
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
-         agent_run_json = ?, external_id = ?, external_url = ?
+         agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
@@ -584,15 +615,17 @@ export class StateRepository {
     this.run(
       `INSERT INTO projects (
          path, name, status, priority, notes, source, package_manager, github_url,
-         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         github_json, has_git, has_package_json, has_readme, last_modified_at, last_scanned_at,
+         archived
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          name = excluded.name, status = excluded.status, priority = excluded.priority,
          notes = excluded.notes, source = excluded.source,
          package_manager = excluded.package_manager, github_url = excluded.github_url,
          github_json = excluded.github_json, has_git = excluded.has_git,
          has_package_json = excluded.has_package_json, has_readme = excluded.has_readme,
-         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at`,
+         last_modified_at = excluded.last_modified_at, last_scanned_at = excluded.last_scanned_at,
+         archived = excluded.archived`,
       [
         project.path,
         project.name,
@@ -607,7 +640,8 @@ export class StateRepository {
         project.hasPackageJson ? 1 : 0,
         project.hasReadme ? 1 : 0,
         project.lastModifiedAt ?? null,
-        project.lastScannedAt
+        project.lastScannedAt,
+        project.archived ? 1 : 0
       ]
     )
     // Scanning a project is what grants the scanner access to it.
