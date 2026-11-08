@@ -76,8 +76,13 @@ const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
 const anyModalOpen = computed(
   () =>
-    Boolean(openTicketId.value || openLaneId.value || ticketDraft.value || laneDraftName.value !== null) ||
-    boardSettingsOpen.value
+    Boolean(
+      openTicketId.value ||
+        openLaneId.value ||
+        ticketDraft.value ||
+        laneDraftName.value !== null ||
+        autoRunConfirmLaneId.value
+    ) || boardSettingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -188,6 +193,7 @@ const closeModals = () => {
   ticketDraft.value = null
   laneDraftName.value = null
   boardSettingsOpen.value = false
+  autoRunConfirmLaneId.value = null
   checklistDraft.value = ''
 }
 
@@ -211,6 +217,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   if (anyModalOpen.value) {
     closeModals()
     event.preventDefault()
+    return
+  }
+  // The shortcut lands people in the filter, so Escape there should only leave
+  // the filter, not the board.
+  if (event.target === filterQueryInput.value) {
+    filterQueryInput.value?.blur()
     return
   }
   void router.push('/')
@@ -434,7 +446,7 @@ const runTicketAgent = (ticket: Ticket) => {
         ref="filterQueryInput"
         v-model="filterQuery"
         class="filter-query"
-        aria-keyshortcuts="Meta+Shift+F"
+        aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
