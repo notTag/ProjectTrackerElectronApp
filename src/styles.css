@@ -1444,8 +1444,13 @@ code {
   padding: 0;
 }
 
-.checkbox-label {
+/* The modal selectors match `.ticket-modal label`'s specificity, which would
+   otherwise stack the checkbox above its text. */
+.checkbox-label,
+.ticket-modal .checkbox-label,
+.lane-modal .checkbox-label {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
