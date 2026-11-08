@@ -714,11 +714,11 @@ export const setLaneWidth = (
   laneWidths: { ...preferences.laneWidths, [laneId]: clampLaneWidth(width) }
 })
 
-// Any check on the board narrows a run to checked tickets only, even if that
-// leaves none here; falling back to "all" would launch work nobody picked.
-// With nothing checked the whole set runs, so a lane still runs without ticking.
+// Each lane decides on its own: checked tickets in this set narrow the run to
+// just those; with none checked here the whole set runs, whatever is checked
+// in other lanes.
 export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<string>): Ticket[] => {
-  const nothingSelected = selectedTicketIds.size === 0
-  if (nothingSelected) return tickets
-  return tickets.filter((ticket) => selectedTicketIds.has(ticket.id))
+  const selectedTickets = tickets.filter((ticket) => selectedTicketIds.has(ticket.id))
+  const nothingSelectedHere = selectedTickets.length === 0
+  return nothingSelectedHere ? tickets : selectedTickets
 }
