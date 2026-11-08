@@ -154,8 +154,10 @@ export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): st
 // rather than replacing it (as `command` would), so the shell outlives the
 // agent with no exec trick. argv item 1 is the directory, then [command, title]
 // pairs; the commands are not cd-prefixed, the configuration sets the directory.
-// `name override` (1.4+) pins the tab title over the terminal's own, so an
-// older Ghostty just keeps its default title.
+// The tab's `name override` (1.4+) pins its title over the terminal's own. It is
+// written as its raw event code: AppleScript resolves dictionary terms at
+// compile time, so the bare term would fail the whole script on 1.3, where the
+// raw code only fails inside `try` and the tab keeps its default title.
 export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [
@@ -173,7 +175,7 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): 
       'set newTab to new tab in targetWindow with configuration surfaceConfig',
       'end if',
       'set tabTitle to item (2 * i + 1) of argv',
-      ...setTitleIfGiven('set name override of newTab to tabTitle'),
+      ...setTitleIfGiven('set «class GTno» of newTab to tabTitle'),
       'end repeat',
       'end tell',
       'end run'

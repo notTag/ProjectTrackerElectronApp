@@ -151,7 +151,7 @@ describe('tab titles', () => {
   it('Ghostty pairs each command with its title after the directory', () => {
     const args = ghosttyOsascriptArgs('/tmp/project', titledTabs)
     expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'claude one', HOSTILE_TITLE, 'claude two', '#34 Second'])
-    expect(args).toContain('set name override of newTab to tabTitle')
+    expect(args).toContain('set «class GTno» of newTab to tabTitle')
   })
 
   it.each([
