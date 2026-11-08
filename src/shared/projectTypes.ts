@@ -29,6 +29,10 @@ export interface ProjectRecord {
   hasReadme: boolean
   lastModifiedAt?: string
   lastScannedAt: string
+  // Set when the user deletes the scan directory holding this project. The row
+  // and everything hanging off it (notes, board) are kept but never shown;
+  // adding the directory back clears the flag.
+  archived?: boolean
 }
 
 export interface ProjectSnapshot {
@@ -125,16 +129,51 @@ export const mergeScannedProjects = (
       github: existing?.github ?? project.github
     }
   })
+  // A scan never finds archived projects (they sit outside every scan
+  // directory) or hidden ones (the scanner skips hidden paths). Dropping what
+  // the scan missed would delete them and their boards — carry them over.
+  const scannedPaths = new Set(scannedProjects.map((project) => project.path))
+  const isSkippedByScan = (project: ProjectRecord) =>
+    project.archived || isInsideAny(project.path, previous.hiddenPaths)
+  const unscannedProjects = previous.snapshot.projects.filter(
+    (project) => isSkippedByScan(project) && !scannedPaths.has(project.path)
+  )
 
   return {
     ...previous,
     updatedAt: new Date().toISOString(),
     snapshot: {
       scannedAt: new Date().toISOString(),
-      projects,
+      projects: [...projects, ...unscannedProjects],
       failures
     }
   }
+}
+
+const isInsideAny = (target: string, parents: string[]) =>
+  parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
+
+// What the user sees as deleting a scan directory archives its projects
+// instead: nothing is ever destroyed, so re-adding the folder brings it all
+// back. Projects still covered by a remaining (nested) scan directory stay put.
+export const removeScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const remainingDirectories = state.scanDirectories.filter((entry) => entry !== directory)
+  const isOrphaned = (target: string) =>
+    isInsideAny(target, [directory]) && !isInsideAny(target, remainingDirectories)
+  const projects = state.snapshot.projects.map((project) =>
+    isOrphaned(project.path) ? { ...project, archived: true } : project
+  )
+  return { ...state, scanDirectories: remainingDirectories, snapshot: { ...state.snapshot, projects } }
+}
+
+// Re-adding a directory brings back whatever was archived under it, with its
+// notes, status, priority and board exactly as they were left.
+export const addScanDirectory = (state: ProjectTrackerState, directory: string): ProjectTrackerState => {
+  const scanDirectories = [...new Set([...state.scanDirectories, directory])]
+  const projects = state.snapshot.projects.map((project) =>
+    project.archived && isInsideAny(project.path, [directory]) ? { ...project, archived: false } : project
+  )
+  return { ...state, scanDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
 export interface SwimLane {
@@ -152,6 +191,9 @@ export interface SwimLane {
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
   autoRunTerminalId?: string
+  // Each Auto Run ticket gets its own git worktree and branch off freshly
+  // fetched main. Absent (lanes saved before it existed) means on.
+  autoRunWorktrees?: boolean
 }
 
 export interface ChecklistItem {
@@ -377,6 +419,28 @@ export const ticketShellCommand = (
   const prompt = ticketAgentPrompt(ticket, lane, context)
   const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
+}
+
+// Enough of the title to recognise the ticket; the number already identifies it.
+const BRANCH_SLUG_WORD_COUNT = 3
+
+// A ticket's own branch wins; otherwise one is derived from its number and
+// title, so a re-run of the same ticket lands on the same branch.
+export const ticketBranchName = (ticket: Ticket): string => {
+  const ownBranch = ticket.branchName?.trim()
+  if (ownBranch) return ownBranch
+  const titleWords = ticket.title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const titleSlug = titleWords.slice(0, BRANCH_SLUG_WORD_COUNT).join('-')
+  const ticketPrefix = `t${ticket.number}`
+  return titleSlug ? `${ticketPrefix}-${titleSlug}` : ticketPrefix
+}
+
+// One ticket of an Auto Run as it crosses IPC. With worktrees on, main makes
+// the ticket's worktree on branchName and runs the command inside it.
+export interface AutoRunTicketLaunch {
+  number: number
+  branchName: string
+  command: string
 }
 
 export interface GithubIssue {

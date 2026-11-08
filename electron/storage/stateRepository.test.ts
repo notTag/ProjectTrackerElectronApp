@@ -1,15 +1,27 @@
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
 import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
 
-const freshUserDataPath = () => mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+const createdUserDataPaths: string[] = []
+
+const freshUserDataPath = () => {
+  const userDataPath = mkdtempSync(path.join(tmpdir(), 'project-tracker-test-'))
+  createdUserDataPaths.push(userDataPath)
+  return userDataPath
+}
+
+afterEach(() => {
+  for (const userDataPath of createdUserDataPaths.splice(0)) {
+    rmSync(userDataPath, { recursive: true, force: true })
+  }
+})
 
 const stateWithBoard = (): ProjectTrackerState => {
   const seed = createSeedState()
@@ -23,7 +35,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2' }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -91,6 +103,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
+    expect(board?.lanes[1].autoRunWorktrees).toBe(false)
+    expect(board?.lanes[0].autoRunWorktrees).toBe(true)
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
     expect(board?.tickets.map((ticket) => ticket.number)).toEqual([1, 2])
     expect(board?.tickets[0].labels).toEqual(['bug'])
@@ -454,5 +468,30 @@ describe('board preferences', () => {
     const asBob = new StateRepository(userDataPath, 'bob')
     asBob.addProjectMember(projectPath, 'bob')
     expect(asBob.getState().boardPreferences).toEqual({})
+  })
+})
+
+describe('StateRepository archived projects', () => {
+  it('keeps an archived project and its board through a save and reopen', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const loaded = repository.getState()
+    const archivedProjects = loaded.snapshot.projects.map((project) => ({ ...project, archived: true }))
+    repository.saveState({ ...loaded, snapshot: { ...loaded.snapshot, projects: archivedProjects } })
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, true]])
+    expect(reopened.boards?.[projectPath].tickets.map((ticket) => ticket.id)).toEqual(['ticket-a', 'ticket-b'])
+  })
+
+  it('adds the archived column to a database created before it existed', () => {
+    const userDataPath = freshUserDataPath()
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE projects DROP COLUMN archived')
+    olderDatabase.close()
+
+    const reopened = new StateRepository(userDataPath).getState()
+    expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, false]])
   })
 })

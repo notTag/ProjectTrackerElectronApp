@@ -1389,3 +1389,24 @@ code {
 .page-find input { width: 220px; }
 .page-find span { min-width: 65px; color: var(--color-text-muted); font-size: .8rem; }
 .page-find button { padding: 0 12px; }
+
+.auto-run-question {
+  font-size: 1.05rem;
+  line-height: 2;
+}
+
+.auto-run-question select {
+  margin: 0 0.25rem;
+}
+
+/* The fast-forward glyph is drawn larger than the ⚙ text glyph, so it drops
+   the padding to sit in the same box. */
+.auto-run-button {
+  padding: 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
