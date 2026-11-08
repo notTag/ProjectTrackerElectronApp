@@ -7,3 +7,7 @@ dist/
 assets/app-icon-normalized.png
 assets/app-icon.iconset/
 assets/app-icon.icns
+
+# Claude Code local-only settings and agent worktrees
+.claude/settings.local.json
+.claude/worktrees/
