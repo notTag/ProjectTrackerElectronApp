@@ -23,6 +23,7 @@ import {
   DEFAULT_AGENT,
   ticketAgentPrompt,
   ticketBranchName,
+  ticketTabTitle,
   ticketShellCommand,
   type SwimLane,
   type Ticket,
@@ -514,5 +515,28 @@ describe('ticketsToRun', () => {
 
   it('runs every ticket when the only checks are in another lane', () => {
     expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
+  })
+})
+
+describe('ticketTabTitle', () => {
+  it('leads with the ticket number', () => {
+    expect(ticketTabTitle({ number: 33, title: 'Short title' })).toBe('#33 Short title')
+  })
+
+  it('cuts a long title to 40 code points plus an ellipsis', () => {
+    const title = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' })
+    expect(title).toBe('#33 Auto-run should attempt to set a tit…')
+    expect(Array.from(title)).toHaveLength(41)
+  })
+
+  it('never splits an emoji at the cut', () => {
+    const title = ticketTabTitle({ number: 1, title: `${'a'.repeat(37)}🚀🚀` })
+    expect(title).toBe(`#1 ${'a'.repeat(37)}…`)
+    const atCut = ticketTabTitle({ number: 1, title: `${'a'.repeat(36)}🚀tail` })
+    expect(atCut).toBe(`#1 ${'a'.repeat(36)}🚀…`)
+  })
+
+  it('strips newlines and terminal control characters', () => {
+    expect(ticketTabTitle({ number: 7, title: 'one\n two\u001b]0;pwn\u0007\tend' })).toBe('#7 one two ]0;pwn end')
   })
 })
