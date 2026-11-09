@@ -11,6 +11,7 @@ import {
   createDefaultBoard,
   createSeedState,
   getBoard,
+  moveLaneInBoard,
   removeLaneFromBoard,
   getUnassignedLane,
   normalizeBoard,
@@ -84,6 +85,53 @@ describe('removeLaneFromBoard', () => {
   it('leaves lanes and tickets alone when the id matches nothing', () => {
     const board = boardWithTickets()
     expect(removeLaneFromBoard(board, 'nope')).toEqual(board)
+  })
+})
+
+describe('moveLaneInBoard', () => {
+  const lane = (id: string): SwimLane => ({ id, name: id, agentPrompt: '', agentFilePath: '' })
+  const boardOf = (...laneIds: string[]): ProjectBoard => ({
+    lanes: laneIds.map(lane),
+    tickets: [
+      { id: 't', number: 1, laneId: 'c', title: 'T', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
+    ]
+  })
+  const laneOrder = (board: ProjectBoard) => board.lanes.map((entry) => entry.id)
+
+  it('moves a lane left, before an earlier lane', () => {
+    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'c', 'a'))).toEqual(['c', 'a', 'b'])
+  })
+
+  it('moves a lane right, before a later lane', () => {
+    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c', 'd'), 'a', 'c'))).toEqual(['b', 'a', 'c', 'd'])
+  })
+
+  it('moves a lane to the end when there is no anchor', () => {
+    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'a', null))).toEqual(['b', 'c', 'a'])
+  })
+
+  it('keeps a hidden lane in its slot when the view only sees the others', () => {
+    // The view sees [a, b, c]; gh is hidden. Dropping c before a must not
+    // displace gh, which an index-based move would.
+    expect(laneOrder(moveLaneInBoard(boardOf('gh', 'a', 'b', 'c'), 'c', 'a'))).toEqual(['gh', 'c', 'a', 'b'])
+  })
+
+  it('puts the lane first when dropped before No status', () => {
+    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'c', UNASSIGNED_LANE_ID))).toEqual(['c', 'a', 'b'])
+  })
+
+  it('returns the same board when nothing would move', () => {
+    const board = boardOf('a', 'b', 'c')
+    expect(moveLaneInBoard(board, 'b', 'b')).toBe(board)
+    expect(moveLaneInBoard(board, 'b', 'c')).toBe(board)
+    expect(moveLaneInBoard(board, 'c', null)).toBe(board)
+    expect(moveLaneInBoard(board, 'nope', 'a')).toBe(board)
+    expect(moveLaneInBoard(board, UNASSIGNED_LANE_ID, 'a')).toBe(board)
+  })
+
+  it('leaves tickets where they are', () => {
+    const board = boardOf('a', 'b', 'c')
+    expect(moveLaneInBoard(board, 'c', 'a').tickets).toBe(board.tickets)
   })
 })
 

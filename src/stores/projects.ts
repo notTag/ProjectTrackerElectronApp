@@ -9,6 +9,7 @@ import {
   getBoard,
   getBoardPreferences,
   mergeScannedProjects,
+  moveLaneInBoard,
   removeLaneFromBoard,
   removeScanDirectory,
   updateLaneInBoard,
@@ -42,6 +43,15 @@ interface ProjectsStoreState {
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
 let saveQueue = Promise.resolve()
 
+type StateUpdate = (currentState: ProjectTrackerState) => ProjectTrackerState
+
+const boardUpdate =
+  (projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard): StateUpdate =>
+  (currentState) => {
+    const nextBoard = mutate(getBoard(currentState, projectPath))
+    return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
+  }
+
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
     state: createSeedState(),
@@ -72,13 +82,7 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateBoard(projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard) {
-      return this.save((currentState) => ({
-        ...currentState,
-        boards: {
-          ...currentState.boards,
-          [projectPath]: mutate(getBoard(currentState, projectPath))
-        }
-      }))
+      return this.save(boardUpdate(projectPath, mutate))
     },
 
     boardPreferences(projectPath: string): BoardPreferences {
@@ -112,6 +116,27 @@ export const useProjectsStore = defineStore('projects', {
       const persisted = await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: saved.filePath })
       if (!persisted) throw new Error(this.error ?? 'Saved the file but could not update the lane.')
       return saved
+    },
+
+    // Optimistic: the lane lands in its new slot on drop rather than after the
+    // IPC round trip. A failed write moves it back to where it was.
+    async moveLane(projectPath: string, laneId: string, beforeLaneId: string | null) {
+      const boardBeforeMove = getBoard(this.state, projectPath)
+      const movedBoard = moveLaneInBoard(boardBeforeMove, laneId, beforeLaneId)
+      if (movedBoard === boardBeforeMove) return
+
+      const originalPosition = boardBeforeMove.lanes.findIndex((lane) => lane.id === laneId)
+      const originalNextLane = boardBeforeMove.lanes[originalPosition + 1]
+      const originalNextLaneId = originalNextLane?.id ?? null
+      const moveBeforeLane = (anchorLaneId: string | null) =>
+        boardUpdate(projectPath, (board) => moveLaneInBoard(board, laneId, anchorLaneId))
+
+      this.state = moveBeforeLane(beforeLaneId)(this.state)
+      // The move is re-applied to whatever state the queue hands over, so a
+      // save that finished in between can't drop it. The undo is anchored on
+      // the old neighbour rather than restoring the old lane array, so any
+      // other lane edit that landed meanwhile survives.
+      await this.save(moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
     },
 
     async removeLane(projectPath: string, laneId: string) {
@@ -206,17 +231,29 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
-    async save(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
+    // Throws on failure, unlike save(). `undo` reverts an optimistic edit and
+    // runs inside the same queue link, so a save queued behind this one can't
+    // read the edit before it is taken back and persist it.
+    async writeState(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate) {
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
+          try {
+            this.state = await projectTrackerApi.saveProjectState(candidate)
+          } catch (error) {
+            if (undo) this.state = undo(this.state)
+            throw error
+          }
+        })
+      await saveQueue
+    },
+
+    async save(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate) {
       this.saving = true
       this.error = null
       try {
-        saveQueue = saveQueue
-          .catch(() => undefined)
-          .then(async () => {
-            const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
-            this.state = await projectTrackerApi.saveProjectState(candidate)
-          })
-        await saveQueue
+        await this.writeState(nextState, undo)
         return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
