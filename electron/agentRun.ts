@@ -7,14 +7,15 @@
  * home that tests can reach.
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, type ExecFileException } from 'node:child_process'
 import path from 'node:path'
 
-import type { Agent } from '../src/shared/projectTypes.js'
+import { AGENT_RUN_CANCELLED_OUTPUT, type Agent } from '../src/shared/projectTypes.js'
 
 // ponytail: an agent run is one-shot prelim work, not a session. Half an hour
-// covers it; add a cancel button if runs ever need stopping sooner.
-const AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
+// covers it; anything sooner is the Cancel button's job.
+const AGENT_RUN_TIMEOUT_MINUTES = 30
+const AGENT_RUN_TIMEOUT_MS = AGENT_RUN_TIMEOUT_MINUTES * 60 * 1000
 const AGENT_RUN_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
 // Packaged apps launched from Finder don't inherit the user's shell PATH, so a
@@ -33,6 +34,18 @@ export interface AgentRunResult {
   output: string
 }
 
+// execFile's own error message is "Command failed: <command> <every arg>", and
+// the last arg is the whole prompt — pages of text that bury the actual reason.
+const describeFailure = (agent: Agent, error: ExecFileException, signal?: AbortSignal): string => {
+  if (signal?.aborted) return AGENT_RUN_CANCELLED_OUTPUT
+  if (error.code === 'ENOENT') {
+    return `${agent.name} CLI (\`${agent.command}\`) was not found. Install it or add it to your PATH.`
+  }
+  if (error.killed) return `${agent.name} timed out after ${AGENT_RUN_TIMEOUT_MINUTES} minutes.`
+  if (typeof error.code === 'number') return `${agent.name} exited with code ${error.code}.`
+  return `${agent.name} failed: ${error.signal ?? error.code ?? 'unknown error'}.`
+}
+
 // execFile with an argv array, no shell: the prompt — which can carry text from
 // a GitHub issue — reaches the agent as one literal argument, never as code.
 // Resolves even on failure so whatever the agent printed still reaches the
@@ -41,7 +54,8 @@ export const runAgentHeadless = (
   agent: Agent,
   prompt: string,
   projectPath: string,
-  homeDirectory: string
+  homeDirectory: string,
+  signal?: AbortSignal
 ): Promise<AgentRunResult> =>
   new Promise((resolve) => {
     const args = [...agent.headlessArgs, prompt]
@@ -49,15 +63,13 @@ export const runAgentHeadless = (
       cwd: projectPath,
       env: { ...process.env, PATH: agentSearchPath(homeDirectory) },
       timeout: AGENT_RUN_TIMEOUT_MS,
-      maxBuffer: AGENT_RUN_MAX_OUTPUT_BYTES
+      maxBuffer: AGENT_RUN_MAX_OUTPUT_BYTES,
+      signal
     }
     const child = execFile(agent.command, args, options, (error, stdout, stderr) => {
       if (!error) return resolve({ succeeded: true, output: stdout.trim() })
 
-      const commandMissing = (error as NodeJS.ErrnoException).code === 'ENOENT'
-      const failureReason = commandMissing
-        ? `${agent.name} CLI (\`${agent.command}\`) was not found. Install it or add it to your PATH.`
-        : error.message
+      const failureReason = describeFailure(agent, error, signal)
       const output = [stdout.trim(), stderr.trim(), failureReason].filter(Boolean).join('\n\n')
       resolve({ succeeded: false, output })
     })

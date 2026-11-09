@@ -215,6 +215,10 @@ export interface TicketAgentRun {
   succeeded?: boolean
 }
 
+// The whole output of a run stopped from the board — distinct from a failure so
+// the store can say "cancelled" instead of raising an error.
+export const AGENT_RUN_CANCELLED_OUTPUT = 'Cancelled.'
+
 export interface Ticket {
   id: string
   // Human-facing ticket number, unique within its board and stable once assigned.

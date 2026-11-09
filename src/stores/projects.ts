@@ -4,6 +4,7 @@ import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { resolveAutoRunTerminal } from '@/shared/openInTargets'
 import { useOpenInStore } from '@/stores/openIn'
 import {
+  AGENT_RUN_CANCELLED_OUTPUT,
   addGithubIssuesToBoard,
   autoRunUsesWorktrees,
   availableAgents,
@@ -584,7 +585,7 @@ export const useProjectsStore = defineStore('projects', {
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt)
+          .runTicketAgent(projectPath, ticket.id, agentId, prompt)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false
@@ -597,12 +598,19 @@ export const useProjectsStore = defineStore('projects', {
         }
         await this.updateTicket(projectPath, ticket.id, { agentRun })
         if (result.succeeded) this.notice = `Agent finished #${ticket.number}.`
+        else if (result.output === AGENT_RUN_CANCELLED_OUTPUT) this.notice = `Agent run on #${ticket.number} cancelled.`
         else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.agentRunning[ticket.id] = false
       }
+    },
+
+    // Resolves through runTicketAgent's own await, which records the run as
+    // cancelled — nothing to clean up here.
+    async cancelTicketAgent(ticketId: string) {
+      await projectTrackerApi.cancelTicketAgent(ticketId)
     },
 
     async fetchGithub(path: string) {

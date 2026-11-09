@@ -23,6 +23,16 @@ describe('runAgentHeadless', () => {
     const result = await runAgentHeadless(failing, 'prompt', tmpdir(), tmpdir())
     expect(result.succeeded).toBe(false)
     expect(result.output).toContain('partial')
+    expect(result.output).toContain('Echo exited with code 2.')
+    expect(result.output).not.toContain('Command failed')
+  })
+
+  it('reports a cancelled run as cancelled, not as a crash', async () => {
+    const hanging = { ...echoLastArgument, headlessArgs: ['-e', 'setTimeout(() => {}, 60_000)'] }
+    const controller = new AbortController()
+    const run = runAgentHeadless(hanging, 'prompt', tmpdir(), tmpdir(), controller.signal)
+    controller.abort()
+    expect(await run).toEqual({ succeeded: false, output: 'Cancelled.' })
   })
 
   it('names the missing CLI instead of surfacing a bare ENOENT', async () => {

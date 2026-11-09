@@ -10,7 +10,7 @@ Project Tracker is a macOS desktop app for keeping track of projects on your mac
 - Import open GitHub issues as tickets. Importing again skips issues you've already pulled in, using the issue number to avoid duplicates.
 - Assign shared tickets to a user and use the *Assigned to me* filter to find your work.
 
-Agent prompts can be saved and edited, but they don't run yet. Connecting an agent provider is still on the to-do list.
+Open a ticket and press **▶ Run** to run its agent (Claude Code by default; Codex, Hermes or your own CLI per ticket) in the background. The agent gets the lane's prompt, its markdown file and the ticket's fields. Its output is saved on the ticket and survives a restart. A run can be cancelled while it works, and a failed run says why.
 
 ## Prerequisites
 
