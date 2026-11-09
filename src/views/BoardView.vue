@@ -310,6 +310,51 @@ const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
 }
 
+// Live copies of the two lane fields, because both inputs only commit on blur:
+// the button has to enable as soon as a prompt is typed, and has to send what
+// is on screen rather than whatever state held before the blur landed.
+const laneMarkdownDraft = ref({ agentPrompt: '', agentFilePath: '' })
+const laneMarkdownStatus = ref<{ saving: boolean; savedMessage: string; error: string }>({
+  saving: false,
+  savedMessage: '',
+  error: ''
+})
+
+watch(
+  // Separate getters, not one getter returning an array: a fresh array on every
+  // board refresh would reset the draft mid-typing.
+  [() => openLane.value?.agentPrompt, () => openLane.value?.agentFilePath],
+  ([agentPrompt, agentFilePath]) => {
+    laneMarkdownDraft.value = { agentPrompt: agentPrompt ?? '', agentFilePath: agentFilePath ?? '' }
+  },
+  { immediate: true }
+)
+watch(openLaneId, () => {
+  laneMarkdownStatus.value = { saving: false, savedMessage: '', error: '' }
+})
+
+const canSaveLaneMarkdown = computed(
+  () => laneMarkdownDraft.value.agentPrompt.trim() !== '' && !laneMarkdownStatus.value.saving
+)
+
+// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
+const ipcErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
+
+const saveLaneMarkdown = async (lane: SwimLane) => {
+  const { agentPrompt, agentFilePath } = laneMarkdownDraft.value
+  laneMarkdownStatus.value = { saving: true, savedMessage: '', error: '' }
+  try {
+    const saved = await store.saveLaneAgentMarkdown(projectPath.value, lane, agentPrompt, agentFilePath)
+    const verb = saved.appended ? 'Appended to' : 'Saved to'
+    laneMarkdownStatus.value = { saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' }
+  } catch (error) {
+    laneMarkdownStatus.value = { saving: false, savedMessage: '', error: ipcErrorMessage(error) }
+  }
+}
+
 const dropOnLane = async (laneId: string) => {
   const ticketId = draggedTicketId.value
   draggedTicketId.value = null
@@ -951,9 +996,17 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-prompt"
           :value="openLane.agentPrompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
+          @input="laneMarkdownDraft.agentPrompt = ($event.target as HTMLTextAreaElement).value"
           @change="editLane(openLane, { agentPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
       </label>
+      <button
+        class="secondary save-agent-markdown"
+        :disabled="!canSaveLaneMarkdown"
+        @click="saveLaneMarkdown(openLane)"
+      >
+        {{ laneMarkdownStatus.saving ? 'Saving…' : 'Save to Agent Markdown' }}
+      </button>
 
       <label>
         Agent markdown file
@@ -961,9 +1014,15 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openLane.agentFilePath"
           placeholder="/Users/you/Projects/thing/docs/prd-template.md"
+          @input="laneMarkdownDraft.agentFilePath = ($event.target as HTMLInputElement).value"
           @change="editLane(openLane, { agentFilePath: ($event.target as HTMLInputElement).value })"
         />
-        <span class="field-hint">Used alongside the prompt above — both are sent when both are filled in.</span>
+        <span v-if="laneMarkdownStatus.error" class="field-hint field-error">{{ laneMarkdownStatus.error }}</span>
+        <span v-else-if="laneMarkdownStatus.savedMessage" class="field-hint">{{ laneMarkdownStatus.savedMessage }}</span>
+        <span v-else class="field-hint">
+          Used alongside the prompt above — both are sent when both are filled in. Left empty, Save to Agent Markdown
+          creates one in the project's agent-context/ folder.
+        </span>
       </label>
 
       <label>
