@@ -47,7 +47,7 @@ interface ProjectTrackerElectronApi {
     laneName: string,
     agentFilePath: string,
     content: string
-  ): Promise<{ filePath: string }>
+  ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>

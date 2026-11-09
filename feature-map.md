@@ -364,8 +364,9 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Save to Agent Markdown** button, under the prompt. Disabled while the prompt is empty or a save is running. It writes the prompt to a markdown file and links that file to the lane:
   - File field empty: creates `<project>/agent-context/<PROJECT>-<LANE>-AgentContext.md`, making the folder if it's missing. Names are sanitized: spaces and `/ \` become `-`, and `: * ? " < > |` are dropped.
-  - File field set: overwrites that file without asking, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project.
-  - On success the field hint reads "Saved to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
+  - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project.
+  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too, so saving twice adds the prompt twice.
+  - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
 - **Auto Run** section:

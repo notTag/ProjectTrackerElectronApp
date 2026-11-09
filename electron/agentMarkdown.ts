@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { AGENT_CONTEXT_DIRECTORY, agentMarkdownFileName } from '../src/shared/projectTypes.js'
@@ -37,9 +37,22 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
   return resolved
 }
 
-export const saveAgentMarkdown = (target: AgentMarkdownTarget, content: string): string => {
+const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
+
+// A guide that already has content may have been written by hand, so it is
+// never replaced: the prompt goes on the end, after a blank line. Only a
+// missing or blank file is written outright.
+export const saveAgentMarkdown = (target: AgentMarkdownTarget, content: string) => {
   const filePath = resolveAgentMarkdownPath(target)
   mkdirSync(path.dirname(filePath), { recursive: true })
-  writeFileSync(filePath, content, 'utf8')
-  return filePath
+
+  const existing = readIfExists(filePath)
+  const appended = existing.trim() !== ''
+  if (appended) {
+    const separator = existing.endsWith('\n') ? '\n' : '\n\n'
+    appendFileSync(filePath, `${separator}${content}`, 'utf8')
+  } else {
+    writeFileSync(filePath, content, 'utf8')
+  }
+  return { filePath, appended }
 }

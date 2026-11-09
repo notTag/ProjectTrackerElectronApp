@@ -314,9 +314,9 @@ const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
 // the button has to enable as soon as a prompt is typed, and has to send what
 // is on screen rather than whatever state held before the blur landed.
 const laneMarkdownDraft = ref({ agentPrompt: '', agentFilePath: '' })
-const laneMarkdownStatus = ref<{ saving: boolean; savedPath: string; error: string }>({
+const laneMarkdownStatus = ref<{ saving: boolean; savedMessage: string; error: string }>({
   saving: false,
-  savedPath: '',
+  savedMessage: '',
   error: ''
 })
 
@@ -328,7 +328,7 @@ watch(
   { immediate: true }
 )
 watch(openLaneId, () => {
-  laneMarkdownStatus.value = { saving: false, savedPath: '', error: '' }
+  laneMarkdownStatus.value = { saving: false, savedMessage: '', error: '' }
 })
 
 const canSaveLaneMarkdown = computed(
@@ -343,12 +343,13 @@ const ipcErrorMessage = (error: unknown) => {
 
 const saveLaneMarkdown = async (lane: SwimLane) => {
   const { agentPrompt, agentFilePath } = laneMarkdownDraft.value
-  laneMarkdownStatus.value = { saving: true, savedPath: '', error: '' }
+  laneMarkdownStatus.value = { saving: true, savedMessage: '', error: '' }
   try {
-    const savedPath = await store.saveLaneAgentMarkdown(projectPath.value, lane, agentPrompt, agentFilePath)
-    laneMarkdownStatus.value = { saving: false, savedPath, error: '' }
+    const saved = await store.saveLaneAgentMarkdown(projectPath.value, lane, agentPrompt, agentFilePath)
+    const verb = saved.appended ? 'Appended to' : 'Saved to'
+    laneMarkdownStatus.value = { saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' }
   } catch (error) {
-    laneMarkdownStatus.value = { saving: false, savedPath: '', error: ipcErrorMessage(error) }
+    laneMarkdownStatus.value = { saving: false, savedMessage: '', error: ipcErrorMessage(error) }
   }
 }
 
@@ -1015,7 +1016,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="editLane(openLane, { agentFilePath: ($event.target as HTMLInputElement).value })"
         />
         <span v-if="laneMarkdownStatus.error" class="field-hint field-error">{{ laneMarkdownStatus.error }}</span>
-        <span v-else-if="laneMarkdownStatus.savedPath" class="field-hint">Saved to {{ laneMarkdownStatus.savedPath }}</span>
+        <span v-else-if="laneMarkdownStatus.savedMessage" class="field-hint">{{ laneMarkdownStatus.savedMessage }}</span>
         <span v-else class="field-hint">
           Used alongside the prompt above — both are sent when both are filled in. Left empty, Save to Agent Markdown
           creates one in the project's agent-context/ folder.

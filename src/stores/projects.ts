@@ -108,10 +108,10 @@ export const useProjectsStore = defineStore('projects', {
     // The prompt is saved alongside the path because the textarea only commits
     // on blur, so the text being written may not be in state yet.
     async saveLaneAgentMarkdown(projectPath: string, lane: SwimLane, agentPrompt: string, agentFilePath: string) {
-      const { filePath } = await projectTrackerApi.saveLaneAgentMarkdown(projectPath, lane.name, agentFilePath, agentPrompt)
-      await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: filePath })
+      const saved = await projectTrackerApi.saveLaneAgentMarkdown(projectPath, lane.name, agentFilePath, agentPrompt)
+      await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: saved.filePath })
       if (this.error) throw new Error(this.error)
-      return filePath
+      return saved
     },
 
     async removeLane(projectPath: string, laneId: string) {

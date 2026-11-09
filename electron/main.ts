@@ -601,8 +601,7 @@ const registerIpc = () => {
       laneName: laneName as string,
       agentFilePath: agentFilePath as string
     }
-    const filePath = saveAgentMarkdown(target, content as string)
-    return { filePath }
+    return saveAgentMarkdown(target, content as string)
   })
 }
 

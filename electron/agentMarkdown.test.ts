@@ -50,16 +50,37 @@ describe('resolveAgentMarkdownPath', () => {
 describe('saveAgentMarkdown', () => {
   it('creates agent-context/ and writes the prompt', () => {
     const projectPath = freshProjectPath()
-    const filePath = saveAgentMarkdown(target(projectPath), '# Guide\n')
-    expect(readFileSync(filePath, 'utf8')).toBe('# Guide\n')
+    const saved = saveAgentMarkdown(target(projectPath), '# Guide\n')
+    expect(saved.appended).toBe(false)
+    expect(readFileSync(saved.filePath, 'utf8')).toBe('# Guide\n')
   })
 
-  it('overwrites an explicit path, creating missing parents', () => {
+  it('creates missing parents for an explicit path', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'nested', 'deeper', 'guide.md')
     saveAgentMarkdown(target(projectPath, explicitPath), 'first')
-    writeFileSync(explicitPath, 'edited by hand')
-    saveAgentMarkdown(target(projectPath, explicitPath), 'second')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('second')
+    expect(readFileSync(explicitPath, 'utf8')).toBe('first')
+  })
+
+  it('replaces a blank file', () => {
+    const projectPath = freshProjectPath()
+    const explicitPath = path.join(projectPath, 'guide.md')
+    writeFileSync(explicitPath, '  \n')
+    const saved = saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    expect(saved.appended).toBe(false)
+    expect(readFileSync(explicitPath, 'utf8')).toBe('prompt')
+  })
+
+  it('appends to a file that has content, after a blank line', () => {
+    const projectPath = freshProjectPath()
+    const explicitPath = path.join(projectPath, 'guide.md')
+    writeFileSync(explicitPath, '# Hand-written')
+    const saved = saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    expect(saved.appended).toBe(true)
+    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written\n\nprompt')
+
+    writeFileSync(explicitPath, '# Ends with newline\n')
+    saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    expect(readFileSync(explicitPath, 'utf8')).toBe('# Ends with newline\n\nprompt')
   })
 })
