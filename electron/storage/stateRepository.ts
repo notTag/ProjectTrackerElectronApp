@@ -128,7 +128,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
   agentRun: parseJson<Ticket['agentRun']>(row.agent_run_json, undefined),
   externalId: asText(row.external_id),
-  externalUrl: asText(row.external_url)
+  externalUrl: asText(row.external_url),
+  fullAuto: asBool(row.full_auto)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -148,7 +149,8 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   ticket.externalId ?? null,
   ticket.externalUrl ?? null,
   ticket.worktreePath ?? null,
-  ticket.pullRequestUrl ?? null
+  ticket.pullRequestUrl ?? null,
+  ticket.fullAuto ? 1 : 0
 ]
 
 export class StateRepository {
@@ -358,13 +360,13 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
-         auto_run_worktrees = excluded.auto_run_worktrees,
+         auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
@@ -376,6 +378,7 @@ export class StateRepository {
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
+        lane.fullAuto ? 1 : 0,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
       ]
@@ -468,7 +471,8 @@ export class StateRepository {
         outputTarget: String(row.output_target),
         autoRunAgentId: asText(row.auto_run_agent_id),
         autoRunTerminalId: asText(row.auto_run_terminal_id),
-        autoRunWorktrees: asBool(row.auto_run_worktrees)
+        autoRunWorktrees: asBool(row.auto_run_worktrees),
+        fullAuto: asBool(row.full_auto)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
@@ -591,8 +595,8 @@ export class StateRepository {
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
-         worktree_path, pull_request_url, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         worktree_path, pull_request_url, full_auto, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -603,7 +607,8 @@ export class StateRepository {
       `UPDATE tickets SET
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
-         agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?
+         agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
+         full_auto = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )

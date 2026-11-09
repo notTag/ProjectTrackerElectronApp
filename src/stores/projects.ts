@@ -1,8 +1,15 @@
 import { defineStore } from 'pinia'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
+import { resolveAutoRunTerminal } from '@/shared/openInTargets'
+import { useOpenInStore } from '@/stores/openIn'
 import {
   addGithubIssuesToBoard,
+  autoRunUsesWorktrees,
+  availableAgents,
+  buildAutoRunLaunch,
+  findAgent,
+  fullAutoHandoffs,
   addScanDirectory,
   addTicketToBoard,
   createSeedState,
@@ -13,6 +20,7 @@ import {
   removeScanDirectory,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
+  type FullAutoHandoff,
   type BoardPreferences,
   type ProjectBoard,
   type ProjectPriority,
@@ -41,6 +49,33 @@ interface ProjectsStoreState {
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
 let saveQueue = Promise.resolve()
+
+interface ProjectHandoffs {
+  projectPath: string
+  handoffs: FullAutoHandoff[]
+}
+
+// A ticket whose lane differs between what this window last held (or just
+// wrote) and a fresh read was moved by someone else: an agent writing to the
+// DB. Moves made in this window are already in `before`, so they never count.
+const handoffsBetween = (before: ProjectTrackerState, after: ProjectTrackerState): ProjectHandoffs[] => {
+  const projectPaths = Object.keys(after.boards ?? {})
+  const perProject = projectPaths.map((projectPath) => ({
+    projectPath,
+    handoffs: fullAutoHandoffs(getBoard(before, projectPath), getBoard(after, projectPath))
+  }))
+  return perProject.filter((entry) => entry.handoffs.length > 0)
+}
+
+const groupByDestinationLane = (handoffs: FullAutoHandoff[]): FullAutoHandoff[][] => {
+  const groups = new Map<string, FullAutoHandoff[]>()
+  for (const handoff of handoffs) {
+    const group = groups.get(handoff.toLane.id) ?? []
+    group.push(handoff)
+    groups.set(handoff.toLane.id, group)
+  }
+  return [...groups.values()]
+}
 
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
@@ -182,29 +217,75 @@ export const useProjectsStore = defineStore('projects', {
     // Picks up writes from other processes. Queued behind pending saves so the
     // fresh read never lands between a save's mutate and its write, which keeps
     // the main process's diff baseline equal to the state the renderer holds.
+    // The previous state is read inside the queued callback, not before it is
+    // queued, so each outside move shows up in exactly one diff.
     async refresh() {
+      let handoffs: ProjectHandoffs[] = []
       saveQueue = saveQueue
         .catch(() => undefined)
         .then(async () => {
           const freshState = await projectTrackerApi.refreshProjectState()
-          if (freshState) this.state = freshState
+          if (!freshState) return
+          handoffs = handoffsBetween(this.state, freshState)
+          this.state = freshState
         })
       try {
         await saveQueue
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       }
+      this.startFullAutoHandoffs(handoffs)
+    },
+
+    // Launched after the queue settles rather than inside it, so a slow
+    // worktree fetch never holds up saves.
+    startFullAutoHandoffs(projectHandoffs: ProjectHandoffs[]) {
+      const agents = availableAgents(this.state)
+      const pickerTargetId = useOpenInStore().selectedId
+      for (const { projectPath, handoffs } of projectHandoffs) {
+        for (const laneHandoffs of groupByDestinationLane(handoffs)) {
+          const toLane = laneHandoffs[0].toLane
+          const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
+          if (this.autoRunning[toLane.id]) {
+            this.notice = `Full auto skipped ${ticketNumbers}: ${toLane.name} Auto Run already running`
+            continue
+          }
+          const agent = findAgent(agents, toLane.autoRunAgentId)
+          const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
+          // ponytail: worktrees decided once per lane batch; any ticket with a
+          // worktree turns them on for the batch, matching ensureTicketWorktree reuse.
+          const useWorktrees = laneHandoffs.some(({ ticket }) => autoRunUsesWorktrees(toLane, ticket))
+          const launches = laneHandoffs.map(({ ticket }) =>
+            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket), useWorktrees)
+          )
+          const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
+          void launch.then((launched) => {
+            if (launched) this.notice = `Full auto: ${ticketNumbers} → ${toLane.name}`
+          })
+        }
+      }
+    },
+
+    promptContextFor(ticket: Ticket) {
+      const assignee = this.state.users.find((user) => user.id === ticket.assigneeId)
+      return { assigneeName: assignee?.name }
     },
 
     async save(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
       this.saving = true
       this.error = null
+      // A save also returns a fresh read, so an agent's move can arrive here
+      // instead of through refresh. Diffing against the candidate keeps this
+      // save's own edits out of it.
+      let handoffs: ProjectHandoffs[] = []
       try {
         saveQueue = saveQueue
           .catch(() => undefined)
           .then(async () => {
             const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
-            this.state = await projectTrackerApi.saveProjectState(candidate)
+            const savedState = await projectTrackerApi.saveProjectState(candidate)
+            handoffs = handoffsBetween(candidate, savedState)
+            this.state = savedState
           })
         await saveQueue
       } catch (error) {
@@ -212,6 +293,7 @@ export const useProjectsStore = defineStore('projects', {
       } finally {
         this.saving = false
       }
+      this.startFullAutoHandoffs(handoffs)
     },
 
     async pickDirectory() {
@@ -361,8 +443,8 @@ export const useProjectsStore = defineStore('projects', {
       terminalLabel: string,
       launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
       useWorktrees: boolean
-    ) {
-      if (this.autoRunning[laneId]) return
+    ): Promise<boolean> {
+      if (this.autoRunning[laneId]) return false
       this.autoRunning[laneId] = true
       try {
         const ticketLaunches = launches.map((entry) => entry.launch)
@@ -370,7 +452,7 @@ export const useProjectsStore = defineStore('projects', {
         const tabWord = launches.length === 1 ? 'tab' : 'tabs'
         const worktreeNote = useWorktrees ? ', one worktree each' : ''
         this.notice = `Auto Run opened ${launches.length} ${tabWord} in ${terminalLabel}${worktreeNote}.`
-        if (worktreePaths.length === 0) return
+        if (worktreePaths.length === 0) return true
         const updatedAt = new Date().toISOString()
         const placementByTicketId = new Map(
           launches.map(({ ticket, launch }, index) => [
@@ -388,8 +470,10 @@ export const useProjectsStore = defineStore('projects', {
             return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
           })
         }))
+        return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+        return false
       } finally {
         this.autoRunning[laneId] = false
       }
