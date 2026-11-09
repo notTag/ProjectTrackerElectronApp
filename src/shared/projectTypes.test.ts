@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAutoRunLaunch,
+  fullAutoHandoffs,
+  isFullAuto,
+  autoRunUsesWorktrees,
   addGithubIssuesToBoard,
   agentMarkdownFileName,
   addScanDirectory,
@@ -587,6 +591,109 @@ describe('ticketTabTitle', () => {
 
   it('strips newlines and terminal control characters', () => {
     expect(ticketTabTitle({ number: 7, title: 'one\n two\u001b]0;pwn\u0007\tend' })).toBe('#7 one two ]0;pwn end')
+  })
+})
+
+describe('full auto', () => {
+  const lane = (id: string, overrides: Partial<SwimLane> = {}): SwimLane => ({
+    id,
+    name: id.toUpperCase(),
+    agentPrompt: `Do the ${id} work.`,
+    agentFilePath: '',
+    ...overrides
+  })
+
+  const ticket = (overrides: Partial<Ticket> = {}): Ticket => ({
+    id: 'ticket-1',
+    number: 7,
+    laneId: 'prd',
+    title: 'Add the thing',
+    description: 'Make it work.',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  })
+
+  const FULL_AUTO_SECTION = 'Full auto is on.'
+
+  it('is on when either the lane or the ticket says so', () => {
+    expect(isFullAuto(ticket(), lane('prd'))).toBe(false)
+    expect(isFullAuto(ticket(), lane('prd', { fullAuto: true }))).toBe(true)
+    expect(isFullAuto(ticket({ fullAuto: true }), lane('prd'))).toBe(true)
+    expect(isFullAuto(ticket({ fullAuto: true }), lane('prd', { fullAuto: true }))).toBe(true)
+  })
+
+  it('adds the full auto section before the output only when on, and leaves the off prompt unchanged', () => {
+    const outputLane = lane('prd', { outputTarget: 'docs/prd/' })
+    const offPrompt = ticketAgentPrompt(ticket(), outputLane)
+    expect(offPrompt).not.toContain(FULL_AUTO_SECTION)
+    expect(ticketAgentPrompt(ticket({ fullAuto: false }), outputLane)).toBe(offPrompt)
+
+    const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
+    const sections = onPrompt.split('\n\n')
+    expect(sections.at(-2)).toMatch(/^Full auto is on\. .*Then exit\.$/)
+    expect(sections.at(-1)).toMatch(/^Output: docs\/prd\//)
+    const onPromptWithoutSection = sections.filter((section) => !section.startsWith(FULL_AUTO_SECTION)).join('\n\n')
+    expect(onPromptWithoutSection).toBe(offPrompt)
+  })
+
+  const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
+    lanes: [lane('prd', prdOverrides), lane('dev'), lane('empty', { agentPrompt: '  ' })],
+    tickets
+  })
+
+  const handoffTicketNumbers = (before: ProjectBoard, after: ProjectBoard) =>
+    fullAutoHandoffs(before, after).map((handoff) => `${handoff.ticket.number}:${handoff.fromLane.id}->${handoff.toLane.id}`)
+
+  it('hands off a ticket moved out of a full auto lane', () => {
+    const before = boardWith([ticket()], { fullAuto: true })
+    const after = boardWith([ticket({ laneId: 'dev' })], { fullAuto: true })
+    expect(handoffTicketNumbers(before, after)).toEqual(['7:prd->dev'])
+  })
+
+  it('hands off a full auto ticket moved out of any lane', () => {
+    const before = boardWith([ticket({ fullAuto: true })])
+    const after = boardWith([ticket({ fullAuto: true, laneId: 'dev' })])
+    const [handoff] = fullAutoHandoffs(before, after)
+    expect(handoff.ticket).toBe(after.tickets[0])
+    expect(handoff.toLane.name).toBe('DEV')
+  })
+
+  it('does not hand off when full auto is off, the target has no prompt, or the target is unassigned', () => {
+    const offBefore = boardWith([ticket()])
+    const offAfter = boardWith([ticket({ laneId: 'dev' })])
+    expect(handoffTicketNumbers(offBefore, offAfter)).toEqual([])
+
+    const onBefore = boardWith([ticket({ fullAuto: true })])
+    expect(handoffTicketNumbers(onBefore, boardWith([ticket({ fullAuto: true, laneId: 'empty' })]))).toEqual([])
+    const toUnassigned = boardWith([ticket({ fullAuto: true, laneId: UNASSIGNED_LANE_ID })])
+    toUnassigned.unassignedLane = lane(UNASSIGNED_LANE_ID)
+    expect(handoffTicketNumbers(onBefore, toUnassigned)).toEqual([])
+  })
+
+  it('does not hand off an unmoved ticket or one new in the next board', () => {
+    const before = boardWith([ticket({ fullAuto: true })])
+    expect(handoffTicketNumbers(before, boardWith([ticket({ fullAuto: true, title: 'Renamed' })]))).toEqual([])
+    const newTicket = ticket({ id: 'new', number: 8, fullAuto: true, laneId: 'dev' })
+    expect(handoffTicketNumbers(before, boardWith([ticket({ fullAuto: true }), newTicket]))).toEqual([])
+  })
+
+  it('keeps a ticket on its existing branch and drops its worktree path from the prompt when worktrees are on', () => {
+    const placedTicket = ticket({ branchName: 't7-existing', worktreePath: '/code/.worktrees/t7' })
+    const { launch } = buildAutoRunLaunch(placedTicket, lane('dev'), DEFAULT_AGENT, {}, true)
+    expect(launch.branchName).toBe('t7-existing')
+    expect(launch.command).toContain('Branch: t7-existing')
+    expect(launch.command).not.toContain('Worktree:')
+    expect(launch.title).toBe('#7 Add the thing')
+
+    const inPlace = buildAutoRunLaunch(placedTicket, lane('dev'), DEFAULT_AGENT, {}, false)
+    expect(inPlace.launch.command).toContain('Worktree: /code/.worktrees/t7')
+  })
+
+  it('keeps worktrees on for a ticket that already has one, even when the lane has them off', () => {
+    const worktreesOff = lane('dev', { autoRunWorktrees: false })
+    expect(autoRunUsesWorktrees(worktreesOff)).toBe(false)
+    expect(autoRunUsesWorktrees(worktreesOff, ticket({ worktreePath: '/code/.worktrees/t7' }))).toBe(true)
+    expect(autoRunUsesWorktrees(lane('dev'), ticket())).toBe(true)
   })
 })
 

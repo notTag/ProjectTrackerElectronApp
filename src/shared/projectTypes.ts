@@ -194,6 +194,9 @@ export interface SwimLane {
   // Each Auto Run ticket gets its own git worktree and branch off freshly
   // fetched main. Absent (lanes saved before it existed) means on.
   autoRunWorktrees?: boolean
+  // When this lane's agent moves a ticket on, the destination lane's agent
+  // starts on it with no click. Absent means off.
+  fullAuto?: boolean
 }
 
 export interface ChecklistItem {
@@ -238,6 +241,8 @@ export interface Ticket {
   // re-pulling issues updates nothing and duplicates nothing.
   externalId?: string
   externalUrl?: string
+  // Full auto for this ticket in every lane, whatever the lane's own toggle says.
+  fullAuto?: boolean
 }
 
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
@@ -388,6 +393,13 @@ const outputInstruction = (outputTarget: string) =>
 const guardAgainstOptionParsing = (prompt: string): string =>
   prompt.startsWith('-') ? `Instructions:\n${prompt}` : prompt
 
+// Either toggle is enough: the lane's covers every ticket it runs, the
+// ticket's covers that ticket wherever it runs.
+export const isFullAuto = (ticket: Ticket, lane: SwimLane): boolean => Boolean(lane.fullAuto || ticket.fullAuto)
+
+const FULL_AUTO_INSTRUCTION =
+  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Then exit."
+
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
 // output location closes it out as the last thing the agent reads.
@@ -399,7 +411,8 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, output]
+  const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
+  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
@@ -482,6 +495,63 @@ export interface AutoRunTicketLaunch {
   branchName: string
   command: string
   title?: string
+}
+
+export interface AutoRunLaunchEntry {
+  ticket: Ticket
+  launch: AutoRunTicketLaunch
+}
+
+// With worktrees on, the branch goes into the ticket before its prompt is
+// built, so the agent is told which branch it is working on. Any older
+// worktree path is dropped from the prompt: the tab runs in the one main
+// returns, which for a ticket that already has one is the same path.
+export const buildAutoRunLaunch = (
+  ticket: Ticket,
+  lane: SwimLane,
+  agent: Agent,
+  context: TicketPromptContext,
+  useWorktrees: boolean
+): AutoRunLaunchEntry => {
+  const branchName = ticketBranchName(ticket)
+  const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
+  const command = ticketShellCommand(ticketAsRun, lane, agent, context)
+  return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
+}
+
+// A ticket that already has a worktree keeps working in it even when the next
+// lane has worktrees off, so a handoff never loses the previous lane's work.
+export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =>
+  lane.autoRunWorktrees !== false || Boolean(ticket?.worktreePath)
+
+export const laneHasAgentWork = (lane: SwimLane): boolean =>
+  Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
+
+export interface FullAutoHandoff {
+  ticket: Ticket
+  fromLane: SwimLane
+  toLane: SwimLane
+}
+
+const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
+  laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
+
+// The lane a ticket LEFT decides: its agent did the work and moved the ticket.
+// Tickets new in nextBoard have no previous lane, so they never hand off.
+export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: ProjectBoard): FullAutoHandoff[] => {
+  const previousLaneIdByTicketId = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket.laneId]))
+  const handoffs: FullAutoHandoff[] = []
+  for (const ticket of nextBoard.tickets) {
+    const previousLaneId = previousLaneIdByTicketId.get(ticket.id)
+    if (previousLaneId === undefined || previousLaneId === ticket.laneId) continue
+    if (ticket.laneId === UNASSIGNED_LANE_ID) continue
+    const fromLane = boardLaneById(previousBoard, previousLaneId)
+    const toLane = boardLaneById(nextBoard, ticket.laneId)
+    if (!fromLane || !toLane) continue
+    if (!isFullAuto(ticket, fromLane) || !laneHasAgentWork(toLane)) continue
+    handoffs.push({ ticket, fromLane, toLane })
+  }
+  return handoffs
 }
 
 export interface GithubIssue {

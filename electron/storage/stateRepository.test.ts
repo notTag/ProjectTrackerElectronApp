@@ -40,7 +40,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -62,7 +62,8 @@ const stateWithBoard = (): ProjectTrackerState => {
             externalUrl: 'https://github.com/o/r/issues/7',
             branchName: 'feat/a',
             worktreePath: '/code/app-a',
-            pullRequestUrl: 'https://github.com/o/r/pull/8'
+            pullRequestUrl: 'https://github.com/o/r/pull/8',
+            fullAuto: true
           },
           {
             id: 'ticket-b',
@@ -111,6 +112,10 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
     expect(board?.lanes[1].autoRunWorktrees).toBe(false)
     expect(board?.lanes[0].autoRunWorktrees).toBe(true)
+    expect(board?.lanes[1].fullAuto).toBe(true)
+    expect(board?.lanes[0].fullAuto).toBe(false)
+    expect(board?.tickets[0].fullAuto).toBe(true)
+    expect(board?.tickets[1].fullAuto).toBe(false)
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
     expect(board?.tickets.map((ticket) => ticket.number)).toEqual([1, 2])
     expect(board?.tickets[0].labels).toEqual(['bug'])
@@ -390,6 +395,7 @@ describe('legacy databases', () => {
     expect(state.snapshot.projects.map((project) => project.name)).toEqual(['Legacy'])
     expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js', 'Kept'])
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
     const reopened = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
