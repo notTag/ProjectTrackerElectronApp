@@ -176,7 +176,7 @@ const LANE_DRAG_THRESHOLD_PX = 4
 const laneDrag = ref<{
   laneId: string
   startX: number
-  dx: number
+  offsetX: number
   active: boolean
   beforeLaneId: string | null
   indicatorLeft: number | null
@@ -196,13 +196,16 @@ const startTicketDraftFromHeading = (laneId: string) => {
 const startLaneDrag = (lane: SwimLane, event: PointerEvent) => {
   const pressedHeaderButton = (event.target as HTMLElement).closest('button')
   if (event.button !== 0 || pressedHeaderButton || !laneCanMove(lane.id)) return
-  laneDrag.value = { laneId: lane.id, startX: event.clientX, dx: 0, active: false, beforeLaneId: null, indicatorLeft: null }
+  laneDrag.value = { laneId: lane.id, startX: event.clientX, offsetX: 0, active: false, beforeLaneId: null, indicatorLeft: null }
   // Captured straight away (as the resize handle does) so a fast flick that
   // leaves the header before the threshold still arrives here.
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
-const laneElements = () => Array.from(boardElement.value?.querySelectorAll<HTMLElement>('.lane[data-lane-id]') ?? [])
+const laneElements = () => {
+  const matches = boardElement.value?.querySelectorAll<HTMLElement>('.lane[data-lane-id]')
+  return matches ? Array.from(matches) : []
+}
 
 // The first sibling whose midpoint is right of the pointer is the lane the
 // dragged one lands in front of; past the last midpoint there is no anchor.
@@ -227,8 +230,8 @@ const laneAnchorAt = (pointerX: number, draggedLaneId: string) => {
 const trackLaneDrag = (event: PointerEvent) => {
   const drag = laneDrag.value
   if (!drag) return
-  drag.dx = event.clientX - drag.startX
-  if (!drag.active && Math.abs(drag.dx) < LANE_DRAG_THRESHOLD_PX) return
+  drag.offsetX = event.clientX - drag.startX
+  if (!drag.active && Math.abs(drag.offsetX) < LANE_DRAG_THRESHOLD_PX) return
   drag.active = true
   const { beforeLaneId, indicatorLeft } = laneAnchorAt(event.clientX, drag.laneId)
   const dropWouldMoveNothing = moveLaneInBoard(board.value, drag.laneId, beforeLaneId) === board.value
@@ -249,46 +252,65 @@ const cancelLaneDrag = () => {
   laneDrag.value = null
 }
 
-// Saved once on release, like the resize. A drop outside the board, or into
-// the lane's own slot, writes nothing. The store places the lane at once and
-// puts it back if the save fails.
+// A refresh, filter or hide can unmount the dragged header mid-drag. Its
+// lostpointercapture then fires at the document, not the header, so the
+// drag would never end on its own.
+watch(movableVisibleLanes, (lanes) => {
+  const drag = laneDrag.value
+  if (!drag) return
+  const draggedLaneStillShown = lanes.some((lane) => lane.id === drag.laneId)
+  if (!draggedLaneStillShown || !laneCanMove(drag.laneId)) cancelLaneDrag()
+})
+
+// Saved once on release, like the resize. A drop outside the board writes
+// nothing; a drop into the lane's own slot is a no-op the store skips. The
+// store places the lane at once and puts it back if the save fails.
 const endLaneDrag = async (event: PointerEvent) => {
   const drag = laneDrag.value
   const droppedOnBoard = pointerIsOverBoard(event)
   cancelLaneDrag()
   if (!drag?.active || !droppedOnBoard) return
-  const dropWouldMoveNothing = moveLaneInBoard(board.value, drag.laneId, drag.beforeLaneId) === board.value
-  if (dropWouldMoveNothing) return
   await store.moveLane(projectPath.value, drag.laneId, drag.beforeLaneId)
 }
 
 const laneDragStyle = (laneId: string) => {
   const drag = laneDrag.value
   // X only: Y is never written, so the lane cannot drift vertically.
-  if (drag?.active && drag.laneId === laneId) return { transform: `translateX(${drag.dx}px)` }
+  if (drag?.active && drag.laneId === laneId) return { transform: `translateX(${drag.offsetX}px)` }
   return {}
 }
 
-const focusLaneHeading = (laneId: string) =>
-  boardElement.value?.querySelector<HTMLElement>(`.lane[data-lane-id="${CSS.escape(laneId)}"] .lane-heading`)?.focus()
+const focusLaneHeading = (laneId: string) => {
+  const escapedLaneId = CSS.escape(laneId)
+  const headingSelector = `.lane[data-lane-id="${escapedLaneId}"] .lane-heading`
+  const heading = boardElement.value?.querySelector<HTMLElement>(headingSelector)
+  heading?.focus()
+}
 
 // Keyboard path for the same move: one slot per press. Moving right means
 // landing before the lane two along, since the next one is the one to pass.
 const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   const isLeft = event.key === 'ArrowLeft'
   const isRight = event.key === 'ArrowRight'
-  if (!event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
+  // Keys bubbling up from the ▶ / ⚙ buttons inside the header aren't a lane move.
+  const fromHeadingItself = event.target === event.currentTarget
+  if (!fromHeadingItself || !event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
   event.preventDefault()
   const lanes = movableVisibleLanes.value
   const position = lanes.findIndex((entry) => entry.id === lane.id)
   const atLeftEdge = position <= 0
   const atRightEdge = position === lanes.length - 1
   if ((isLeft && atLeftEdge) || (isRight && atRightEdge)) return
-  const beforeLaneId = isLeft ? lanes[position - 1].id : (lanes[position + 2]?.id ?? null)
-  await store.moveLane(projectPath.value, lane.id, beforeLaneId)
+  const laneTwoToTheRight = lanes[position + 2]
+  const rightAnchorId = laneTwoToTheRight?.id ?? null
+  const beforeLaneId = isLeft ? lanes[position - 1].id : rightAnchorId
+  // moveLane places the lane synchronously, so focus is restored after the
+  // re-render rather than after the save; a quick second press still lands.
+  const saving = store.moveLane(projectPath.value, lane.id, beforeLaneId)
   // The keyed v-for may re-insert the moved lane's DOM node, which drops focus.
   await nextTick()
   focusLaneHeading(lane.id)
+  await saving
 }
 
 const matchesAssignee = (ticket: Ticket) =>
@@ -695,6 +717,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @pointermove="trackLaneDrag"
           @pointerup="endLaneDrag"
           @pointercancel="cancelLaneDrag"
+          @lostpointercapture="cancelLaneDrag"
           @keydown="moveLaneByKeyboard(lane, $event)"
         >
           <h2>{{ lane.name }}</h2>

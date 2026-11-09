@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createSeedState, type ProjectTrackerState } from '@/shared/projectTypes'
+import { createSeedState, getBoard, type ProjectTrackerState } from '@/shared/projectTypes'
 
 const saveProjectState = vi.fn<(state: ProjectTrackerState) => Promise<ProjectTrackerState>>()
 
@@ -60,5 +60,21 @@ describe('moveLane', () => {
     const store = storeWithLanes('a', 'b', 'c')
     await store.moveLane(PROJECT, 'b', 'c')
     expect(saveProjectState).not.toHaveBeenCalled()
+  })
+
+  it('takes a failed move back before a save queued behind it reads the state', async () => {
+    saveProjectState
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockImplementation((state) => Promise.resolve(state))
+    const store = storeWithLanes('a', 'b', 'c')
+
+    const moving = store.moveLane(PROJECT, 'a', null)
+    const laterSave = store.updateLane(PROJECT, 'b', { name: 'renamed' })
+    await Promise.all([moving, laterSave])
+
+    const persistedState = saveProjectState.mock.calls[1][0]
+    const persistedOrder = getBoard(persistedState, PROJECT).lanes.map((entry) => entry.id)
+    expect(persistedOrder).toEqual(['a', 'b', 'c'])
+    expect(laneOrder(store)).toEqual(['a', 'b', 'c'])
   })
 })
