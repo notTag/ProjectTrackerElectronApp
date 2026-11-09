@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('projectTracker', {
   runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>
     invokePlain('ticket:run-agent', { projectPath, agentId, prompt }),
   readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
+  saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
+    invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
   setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)

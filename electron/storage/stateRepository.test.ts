@@ -5,7 +5,12 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
+import {
+  createSeedState,
+  UNASSIGNED_LANE_ID,
+  updateLaneInBoard,
+  type ProjectTrackerState
+} from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
 import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
 
@@ -501,5 +506,31 @@ describe('StateRepository archived projects', () => {
 
     const reopened = new StateRepository(userDataPath).getState()
     expect(reopened.snapshot.projects.map((project) => [project.path, project.archived])).toEqual([[projectPath, false]])
+  })
+
+  it('creates the unassigned lane row the first time it is configured', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const initial = stateWithBoard()
+    const projectPath = initial.snapshot.projects[0].path
+    const { unassignedLane: _dropped, ...boardWithoutUnassigned } = initial.boards![projectPath]
+    const saved = repository.saveState({ ...initial, boards: { [projectPath]: boardWithoutUnassigned } })
+
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const countUnassignedRows = () =>
+      database.prepare('SELECT COUNT(*) AS count FROM swim_lanes WHERE is_unassigned = 1').get() as { count: number }
+    expect(countUnassignedRows().count).toBe(0)
+
+    const agentFilePath = `${projectPath}/agent-context/app-No-status-AgentContext.md`
+    const patch = { agentPrompt: 'Triage this.', agentFilePath }
+    const updatedBoard = updateLaneInBoard(saved.boards![projectPath], UNASSIGNED_LANE_ID, patch)
+    repository.saveState({ ...saved, boards: { [projectPath]: updatedBoard } })
+
+    const row = database
+      .prepare('SELECT id, agent_file_path FROM swim_lanes WHERE is_unassigned = 1')
+      .get() as { id: string; agent_file_path: string }
+    database.close()
+    expect(row).toEqual({ id: UNASSIGNED_LANE_ID, agent_file_path: agentFilePath })
+    expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentFilePath).toBe(agentFilePath)
   })
 })
