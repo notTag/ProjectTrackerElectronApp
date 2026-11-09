@@ -35,3 +35,10 @@ export const DEFAULT_OPEN_IN_TARGET_ID = OPEN_IN_TARGETS[0].id
 /** Resolve a target by id; returns undefined for unknown ids (untrusted input). */
 export const findOpenInTarget = (id: string): OpenInTarget | undefined =>
   OPEN_IN_TARGETS.find((target) => target.id === id)
+
+// A lane with no terminal of its own follows the Open In picker when that is a
+// terminal, so Auto Run uses a terminal the user is known to have.
+export const resolveAutoRunTerminal = (laneTerminalId: string | undefined, pickerTargetId: string): OpenInTarget => {
+  const terminalId = laneTerminalId ?? pickerTargetId
+  return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
+}

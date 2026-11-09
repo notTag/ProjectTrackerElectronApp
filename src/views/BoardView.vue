@@ -6,7 +6,7 @@ import TicketGraph from '@/components/TicketGraph.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import { TERMINAL_TARGETS } from '@/shared/openInTargets'
+import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
@@ -14,11 +14,14 @@ import {
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
   agentForTicket,
+  autoRunUsesWorktrees,
   availableAgents,
+  buildAutoRunLaunch,
   checklistProgress,
   clampLaneWidth,
   findAgent,
   formatLabels,
+  isFullAuto,
   isWebUrl,
   moveLaneInBoard,
   parseLabels,
@@ -29,8 +32,6 @@ import {
   getUnassignedLane,
   ticketAgentPrompt,
   ticketSearchText,
-  ticketBranchName,
-  ticketTabTitle,
   ticketShellCommand,
   ticketsToRun,
   toggleCardField,
@@ -554,10 +555,7 @@ const ticketCommand = (ticket: Ticket) => {
 // never launches tickets the user cannot see. Checked tickets narrow it further.
 // An unconfigured lane follows the Open In picker when that is a terminal, so
 // the first click uses a terminal the user is known to have.
-const autoRunTerminal = (lane: SwimLane) => {
-  const terminalId = lane.autoRunTerminalId ?? openInStore.selectedId
-  return TERMINAL_TARGETS.find((target) => target.id === terminalId) ?? TERMINAL_TARGETS[0]
-}
+const autoRunTerminal = (lane: SwimLane) => resolveAutoRunTerminal(lane.autoRunTerminalId, openInStore.selectedId)
 
 const autoRunTickets = (lane: SwimLane) => {
   const visibleLaneTickets = ticketsInLane(lane.id)
@@ -577,7 +575,6 @@ const autoRunConfirmLaneId = ref<string | null>(null)
 const autoRunConfirmAgentId = ref('')
 const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
-const autoRunUsesWorktrees = (lane: SwimLane) => lane.autoRunWorktrees !== false
 
 const askToAutoRunLane = (lane: SwimLane) => {
   autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
@@ -585,9 +582,6 @@ const askToAutoRunLane = (lane: SwimLane) => {
   autoRunConfirmLaneId.value = lane.id
 }
 
-// With worktrees on, the branch goes into the ticket before its prompt is
-// built, so the agent is told which branch it is working on. Any older
-// worktree path is dropped from the prompt: the tab runs in the new one.
 const confirmAutoRunLane = () => {
   const lane = autoRunConfirmLane.value
   autoRunConfirmLaneId.value = null
@@ -596,12 +590,9 @@ const confirmAutoRunLane = () => {
   const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
-  const launches = autoRunTickets(lane).map((ticket) => {
-    const branchName = ticketBranchName(ticket)
-    const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
-    const command = ticketShellCommand(ticketAsRun, lane, agent, promptContext(ticket))
-    return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
-  })
+  const launches = autoRunTickets(lane).map((ticket) =>
+    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees)
+  )
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
@@ -824,6 +815,11 @@ const runTicketAgent = (ticket: Ticket) => {
               >✓</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
+              <span
+                v-if="isFullAuto(ticket, laneOfTicket(ticket))"
+                class="full-auto-badge"
+                title="Full auto: the next lane's agent starts when this one moves the ticket on"
+              >auto</span>
             </h3>
             <p v-if="showsField('description') && ticket.description" class="ticket-preview">
               {{ ticket.description }}
@@ -1090,6 +1086,17 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openTicket.fullAuto)"
+            @change="editTicket(openTicket, { fullAuto: ($event.target as HTMLInputElement).checked })"
+          />
+          Full auto
+        </label>
+        <span class="field-hint">
+          In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
+        </span>
         <p class="agent-hint">
           The agent gets this ticket, its lane's prompt, markdown file and output location.
           Run works in the background and saves its output below — it can write files but not run
@@ -1254,6 +1261,18 @@ const runTicketAgent = (ticket: Ticket) => {
           />
           Worktree and branch per ticket
         </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.fullAuto)"
+            @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
+          />
+          Full auto: start the next lane's agent when this lane's agent moves a ticket on
+        </label>
+        <span class="field-hint">
+          The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it
+          waits until focus leaves it.
+        </span>
         <span class="field-hint">
           Auto Run on this lane opens one new window with a tab per visible ticket, each running its agent command.
           With worktrees on, each ticket gets .worktrees/tN on its own branch off freshly fetched main, so parallel
