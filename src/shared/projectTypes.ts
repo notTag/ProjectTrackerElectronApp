@@ -398,7 +398,7 @@ const guardAgainstOptionParsing = (prompt: string): string =>
 export const isFullAuto = (ticket: Ticket, lane: SwimLane): boolean => Boolean(lane.fullAuto || ticket.fullAuto)
 
 const FULL_AUTO_INSTRUCTION =
-  "Full auto is on. Work without stopping to ask for confirmation. When done, move the ticket to the next lane as instructed above. The next lane's agent starts automatically. Then exit."
+  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Then exit."
 
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the

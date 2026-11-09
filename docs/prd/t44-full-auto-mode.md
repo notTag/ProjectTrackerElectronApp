@@ -51,7 +51,7 @@ Getting one ticket from PRD to Merge Request takes an Auto Run click per lane, a
 - In `refresh()`, inside the queued `.then`: snapshot `this.state` boards, swap in `freshState`, then for each project board run `fullAutoHandoffs(old, new)`
 - Group the handoffs by destination lane and make one `autoRunLane` call per lane, using `buildAutoRunLaunch` with the lane's `autoRunAgentId` and the terminal from `lane.autoRunTerminalId ?? useOpenInStore().selectedId` (move `autoRunTerminal` into a shared helper so the board and the store resolve it the same way). Set `useWorktrees` per D5
 - Don't `await` the launches inside the queue. Start them after the refresh finishes, so a slow `git fetch` doesn't hold up saves
-- If `autoRunning[laneId]` is already set, show `notice`: "Full auto skipped #N: <lane> Auto Run already running", so the drop is visible
+- If that lane is already launching in the same project (`autoRunning` keyed by project + lane), queue the handoff and show `notice`: "Full auto queued #N: <lane> Auto Run already running". It runs when the launch finishes, for tickets still in that lane
 - Notice on success: `Full auto: #N → <lane>`
 
 ### R6. Tests

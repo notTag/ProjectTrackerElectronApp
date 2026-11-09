@@ -67,14 +67,38 @@ const handoffsBetween = (before: ProjectTrackerState, after: ProjectTrackerState
   return perProject.filter((entry) => entry.handoffs.length > 0)
 }
 
-const groupByDestinationLane = (handoffs: FullAutoHandoff[]): FullAutoHandoff[][] => {
+// One autoRunLane call per lane and worktree choice, so a lane with worktrees
+// off only creates worktrees for tickets that already have one.
+const groupByLaunch = (toLaneHandoffs: FullAutoHandoff[]): FullAutoHandoff[][] => {
   const groups = new Map<string, FullAutoHandoff[]>()
-  for (const handoff of handoffs) {
-    const group = groups.get(handoff.toLane.id) ?? []
+  for (const handoff of toLaneHandoffs) {
+    const useWorktrees = autoRunUsesWorktrees(handoff.toLane, handoff.ticket)
+    const groupKey = `${handoff.toLane.id}:${useWorktrees}`
+    const group = groups.get(groupKey) ?? []
     group.push(handoff)
-    groups.set(handoff.toLane.id, group)
+    groups.set(groupKey, group)
   }
   return [...groups.values()]
+}
+
+// Lane ids repeat across projects (every board has `in-pr`), so a run is keyed by both.
+const autoRunKey = (projectPath: string, laneId: string) => `${projectPath}\n${laneId}`
+
+// Handoffs that arrived while their lane was launching. The move is already in
+// state, so no later diff would see it again: they run when the lane frees up.
+const deferredHandoffs = new Map<string, ProjectHandoffs>()
+
+const deferHandoffs = (projectPath: string, handoffs: FullAutoHandoff[]) => {
+  const runKey = autoRunKey(projectPath, handoffs[0].toLane.id)
+  const deferred = deferredHandoffs.get(runKey) ?? { projectPath, handoffs: [] }
+  deferred.handoffs.push(...handoffs)
+  deferredHandoffs.set(runKey, deferred)
+}
+
+const takeDeferredHandoffs = (runKey: string): ProjectHandoffs | undefined => {
+  const deferred = deferredHandoffs.get(runKey)
+  deferredHandoffs.delete(runKey)
+  return deferred
 }
 
 export const useProjectsStore = defineStore('projects', {
@@ -240,21 +264,21 @@ export const useProjectsStore = defineStore('projects', {
     // Launched after the queue settles rather than inside it, so a slow
     // worktree fetch never holds up saves.
     startFullAutoHandoffs(projectHandoffs: ProjectHandoffs[]) {
+      if (projectHandoffs.length === 0) return
       const agents = availableAgents(this.state)
       const pickerTargetId = useOpenInStore().selectedId
       for (const { projectPath, handoffs } of projectHandoffs) {
-        for (const laneHandoffs of groupByDestinationLane(handoffs)) {
+        for (const laneHandoffs of groupByLaunch(handoffs)) {
           const toLane = laneHandoffs[0].toLane
           const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
-          if (this.autoRunning[toLane.id]) {
-            this.notice = `Full auto skipped ${ticketNumbers}: ${toLane.name} Auto Run already running`
+          if (this.autoRunning[autoRunKey(projectPath, toLane.id)]) {
+            deferHandoffs(projectPath, laneHandoffs)
+            this.notice = `Full auto queued ${ticketNumbers}: ${toLane.name} Auto Run already running`
             continue
           }
           const agent = findAgent(agents, toLane.autoRunAgentId)
           const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
-          // ponytail: worktrees decided once per lane batch; any ticket with a
-          // worktree turns them on for the batch, matching ensureTicketWorktree reuse.
-          const useWorktrees = laneHandoffs.some(({ ticket }) => autoRunUsesWorktrees(toLane, ticket))
+          const useWorktrees = autoRunUsesWorktrees(toLane, laneHandoffs[0].ticket)
           const launches = laneHandoffs.map(({ ticket }) =>
             buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket), useWorktrees)
           )
@@ -444,8 +468,9 @@ export const useProjectsStore = defineStore('projects', {
       launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
       useWorktrees: boolean
     ): Promise<boolean> {
-      if (this.autoRunning[laneId]) return false
-      this.autoRunning[laneId] = true
+      const runKey = autoRunKey(path, laneId)
+      if (this.autoRunning[runKey]) return false
+      this.autoRunning[runKey] = true
       try {
         const ticketLaunches = launches.map((entry) => entry.launch)
         const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)
@@ -475,8 +500,24 @@ export const useProjectsStore = defineStore('projects', {
         this.error = error instanceof Error ? error.message : String(error)
         return false
       } finally {
-        this.autoRunning[laneId] = false
+        this.autoRunning[runKey] = false
+        this.startDeferredHandoffs(runKey)
       }
+    },
+
+    // A queued ticket may have moved on (or been dragged away) while it waited;
+    // only the ones still in the destination lane launch, as they are now.
+    startDeferredHandoffs(runKey: string) {
+      const deferred = takeDeferredHandoffs(runKey)
+      if (!deferred) return
+      const board = getBoard(this.state, deferred.projectPath)
+      const stillWaiting = deferred.handoffs.flatMap((handoff) => {
+        const currentTicket = board.tickets.find((ticket) => ticket.id === handoff.ticket.id)
+        const isStillInLane = currentTicket?.laneId === handoff.toLane.id
+        return isStillInLane ? [{ ...handoff, ticket: currentTicket }] : []
+      })
+      if (stillWaiting.length === 0) return
+      this.startFullAutoHandoffs([{ projectPath: deferred.projectPath, handoffs: stillWaiting }])
     },
 
     // The lane is captured at start, not read back at the end: the ticket may be

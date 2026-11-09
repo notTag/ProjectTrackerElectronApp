@@ -87,15 +87,35 @@ describe('full auto handoff', () => {
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
   })
 
-  it('says so instead of dropping silently when the lane is already launching', async () => {
+  it('queues a handoff into a lane that is already launching and runs it once the lane frees up', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('prd')
-    store.autoRunning.dev = true
+    let finishFirstLaunch = () => {}
+    api.autoRunLane.mockReturnValueOnce(
+      new Promise((resolve) => (finishFirstLaunch = () => resolve({ worktreePaths: [] })))
+    )
+    void store.autoRunLane(PROJECT_PATH, 'dev', 'iterm2', 'iTerm2', [], false)
     api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
 
     await store.refresh()
+    expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    expect(store.notice).toBe('Full auto queued #7: In Development Auto Run already running')
 
-    expect(api.autoRunLane).not.toHaveBeenCalled()
-    expect(store.notice).toBe('Full auto skipped #7: In Development Auto Run already running')
+    finishFirstLaunch()
+    await flushLaunches()
+    expect(api.autoRunLane).toHaveBeenCalledTimes(2)
+    expect(store.notice).toBe('Full auto: #7 → In Development')
+  })
+
+  it('is not blocked by a same-named lane launching in another project', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('prd')
+    store.autoRunning['/code/other\ndev'] = true
+    api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
+
+    await store.refresh()
+    await flushLaunches()
+
+    expect(api.autoRunLane).toHaveBeenCalledTimes(1)
   })
 })
