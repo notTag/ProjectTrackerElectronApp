@@ -10,12 +10,11 @@ export interface AgentMarkdownTarget {
   agentFilePath: string
 }
 
-const isInside = (target: string, parent: string) => target.startsWith(`${parent}${path.sep}`)
-
-// An empty field gets the generated name under <project>/agent-context/, and
-// that path must stay inside it. A path the user typed is honoured wherever it
-// points — they chose it — but only as a .md file, so a stray paste can't
-// overwrite something like ~/.zshrc.
+// An empty field gets the generated name under <project>/agent-context/; the
+// sanitized name has no separators or leading dots, so it can't climb out.
+// A path the user typed is honoured, but only as a .md file, so a stray paste
+// can't overwrite something like ~/.zshrc. Main further confines it to the
+// scan directories.
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
   const explicitPath = target.agentFilePath.trim()
@@ -28,30 +27,27 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
     return resolved
   }
 
-  const contextDirectory = path.join(projectPath, AGENT_CONTEXT_DIRECTORY)
   const fileName = agentMarkdownFileName(target.projectName, target.laneName)
-  const resolved = path.resolve(contextDirectory, fileName)
-  if (!isInside(resolved, contextDirectory)) {
-    throw new Error('Generated agent markdown path escaped the agent-context directory.')
-  }
-  return resolved
+  return path.join(projectPath, AGENT_CONTEXT_DIRECTORY, fileName)
 }
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
 
 // A guide that already has content may have been written by hand, so it is
 // never replaced: the prompt goes on the end, after a blank line. Only a
-// missing or blank file is written outright.
-export const saveAgentMarkdown = (target: AgentMarkdownTarget, content: string) => {
-  const filePath = resolveAgentMarkdownPath(target)
+// missing or blank file is written outright. Re-saving the same prompt is a
+// no-op, so repeated clicks don't stack copies.
+export const saveAgentMarkdown = (filePath: string, content: string) => {
   mkdirSync(path.dirname(filePath), { recursive: true })
 
   const existing = readIfExists(filePath)
-  const appended = existing.trim() !== ''
+  const hasContent = existing.trim() !== ''
+  const alreadySaved = hasContent && existing.trimEnd().endsWith(content.trimEnd())
+  const appended = hasContent && !alreadySaved
   if (appended) {
     const separator = existing.endsWith('\n') ? '\n' : '\n\n'
     appendFileSync(filePath, `${separator}${content}`, 'utf8')
-  } else {
+  } else if (!hasContent) {
     writeFileSync(filePath, content, 'utf8')
   }
   return { filePath, appended }

@@ -47,10 +47,13 @@ describe('resolveAgentMarkdownPath', () => {
   })
 })
 
+const save = (markdownTarget: ReturnType<typeof target>, content: string) =>
+  saveAgentMarkdown(resolveAgentMarkdownPath(markdownTarget), content)
+
 describe('saveAgentMarkdown', () => {
   it('creates agent-context/ and writes the prompt', () => {
     const projectPath = freshProjectPath()
-    const saved = saveAgentMarkdown(target(projectPath), '# Guide\n')
+    const saved = save(target(projectPath), '# Guide\n')
     expect(saved.appended).toBe(false)
     expect(readFileSync(saved.filePath, 'utf8')).toBe('# Guide\n')
   })
@@ -58,7 +61,7 @@ describe('saveAgentMarkdown', () => {
   it('creates missing parents for an explicit path', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'nested', 'deeper', 'guide.md')
-    saveAgentMarkdown(target(projectPath, explicitPath), 'first')
+    save(target(projectPath, explicitPath), 'first')
     expect(readFileSync(explicitPath, 'utf8')).toBe('first')
   })
 
@@ -66,7 +69,7 @@ describe('saveAgentMarkdown', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
     writeFileSync(explicitPath, '  \n')
-    const saved = saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    const saved = save(target(projectPath, explicitPath), 'prompt')
     expect(saved.appended).toBe(false)
     expect(readFileSync(explicitPath, 'utf8')).toBe('prompt')
   })
@@ -75,12 +78,20 @@ describe('saveAgentMarkdown', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
     writeFileSync(explicitPath, '# Hand-written')
-    const saved = saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    const saved = save(target(projectPath, explicitPath), 'prompt')
     expect(saved.appended).toBe(true)
     expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written\n\nprompt')
 
     writeFileSync(explicitPath, '# Ends with newline\n')
-    saveAgentMarkdown(target(projectPath, explicitPath), 'prompt')
+    save(target(projectPath, explicitPath), 'prompt')
     expect(readFileSync(explicitPath, 'utf8')).toBe('# Ends with newline\n\nprompt')
+  })
+
+  it('does not stack a second copy when the same prompt is saved again', () => {
+    const projectPath = freshProjectPath()
+    save(target(projectPath), 'prompt\n')
+    const again = save(target(projectPath), 'prompt\n')
+    expect(again.appended).toBe(false)
+    expect(readFileSync(again.filePath, 'utf8')).toBe('prompt\n')
   })
 })

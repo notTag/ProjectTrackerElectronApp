@@ -321,7 +321,9 @@ const laneMarkdownStatus = ref<{ saving: boolean; savedMessage: string; error: s
 })
 
 watch(
-  () => [openLane.value?.agentPrompt, openLane.value?.agentFilePath],
+  // Separate getters, not one getter returning an array: a fresh array on every
+  // board refresh would reset the draft mid-typing.
+  [() => openLane.value?.agentPrompt, () => openLane.value?.agentFilePath],
   ([agentPrompt, agentFilePath]) => {
     laneMarkdownDraft.value = { agentPrompt: agentPrompt ?? '', agentFilePath: agentFilePath ?? '' }
   },

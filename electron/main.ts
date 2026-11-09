@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'n
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { saveAgentMarkdown } from './agentMarkdown.js'
+import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadless } from './agentRun.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
@@ -601,7 +601,14 @@ const registerIpc = () => {
       laneName: laneName as string,
       agentFilePath: agentFilePath as string
     }
-    return saveAgentMarkdown(target, content as string)
+    // Same boundary as every other path IPC: keeps a typed path from reaching
+    // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.
+    const filePath = resolveAgentMarkdownPath(target)
+    const scanDirectories = stateRepository.getState().scanDirectories.map(normalizePath)
+    if (!isInsideAny(filePath, scanDirectories)) {
+      throw new Error('Agent markdown file must be inside a scanned directory.')
+    }
+    return saveAgentMarkdown(filePath, content as string)
   })
 }
 

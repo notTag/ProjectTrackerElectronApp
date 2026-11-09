@@ -72,7 +72,7 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateBoard(projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard) {
-      await this.save((currentState) => ({
+      return this.save((currentState) => ({
         ...currentState,
         boards: {
           ...currentState.boards,
@@ -101,7 +101,7 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateLane(projectPath: string, laneId: string, patch: Partial<Omit<SwimLane, 'id'>>) {
-      await this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
+      return this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
     },
 
     // File first, DB second: a failed write throws before the lane is touched.
@@ -109,8 +109,8 @@ export const useProjectsStore = defineStore('projects', {
     // on blur, so the text being written may not be in state yet.
     async saveLaneAgentMarkdown(projectPath: string, lane: SwimLane, agentPrompt: string, agentFilePath: string) {
       const saved = await projectTrackerApi.saveLaneAgentMarkdown(projectPath, lane.name, agentFilePath, agentPrompt)
-      await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: saved.filePath })
-      if (this.error) throw new Error(this.error)
+      const persisted = await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: saved.filePath })
+      if (!persisted) throw new Error(this.error ?? 'Saved the file but could not update the lane.')
       return saved
     },
 
@@ -217,8 +217,10 @@ export const useProjectsStore = defineStore('projects', {
             this.state = await projectTrackerApi.saveProjectState(candidate)
           })
         await saveQueue
+        return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+        return false
       } finally {
         this.saving = false
       }
