@@ -742,6 +742,7 @@ const runTicketAgent = (ticket: Ticket) => {
         :style="{ width: `${laneWidth(lane.id)}px`, ...laneDragStyle(lane.id) }"
         @dragover.prevent
         @drop.prevent="dropOnLane(lane.id)"
+        @dblclick.self="startTicketDraft(lane.id)"
       >
         <header
           class="lane-heading"
