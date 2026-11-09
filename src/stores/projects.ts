@@ -105,8 +105,38 @@ export const useProjectsStore = defineStore('projects', {
       await this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
     },
 
+    // Optimistic: the lane lands in its new slot on drop rather than after the
+    // IPC round trip. A failed write moves it back to where it was.
     async moveLane(projectPath: string, laneId: string, beforeLaneId: string | null) {
-      await this.updateBoard(projectPath, (board) => moveLaneInBoard(board, laneId, beforeLaneId))
+      const boardBeforeMove = getBoard(this.state, projectPath)
+      const movedBoard = moveLaneInBoard(boardBeforeMove, laneId, beforeLaneId)
+      if (movedBoard === boardBeforeMove) return
+
+      const originalPosition = boardBeforeMove.lanes.findIndex((lane) => lane.id === laneId)
+      const originalNextLaneId = boardBeforeMove.lanes[originalPosition + 1]?.id ?? null
+      const withBoard = (state: ProjectTrackerState, board: ProjectBoard) => ({
+        ...state,
+        boards: { ...state.boards, [projectPath]: board }
+      })
+
+      this.state = withBoard(this.state, movedBoard)
+      this.saving = true
+      this.error = null
+      try {
+        // Re-applied to whatever state the queue hands over, so a save that
+        // finished in between can't drop the move.
+        await this.writeState((currentState) =>
+          withBoard(currentState, moveLaneInBoard(getBoard(currentState, projectPath), laneId, beforeLaneId))
+        )
+      } catch (error) {
+        // Anchored back on its old neighbour rather than restoring the old lane
+        // array, so any other lane edit that landed meanwhile survives.
+        const boardNow = getBoard(this.state, projectPath)
+        this.state = withBoard(this.state, moveLaneInBoard(boardNow, laneId, originalNextLaneId))
+        this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.saving = false
+      }
     },
 
     async removeLane(projectPath: string, laneId: string) {
@@ -201,17 +231,23 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
+    // Throws on failure, unlike save(), for callers that must undo something
+    // when the write doesn't land.
+    async writeState(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
+          this.state = await projectTrackerApi.saveProjectState(candidate)
+        })
+      await saveQueue
+    },
+
     async save(nextState?: ProjectTrackerState | ((currentState: ProjectTrackerState) => ProjectTrackerState)) {
       this.saving = true
       this.error = null
       try {
-        saveQueue = saveQueue
-          .catch(() => undefined)
-          .then(async () => {
-            const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
-            this.state = await projectTrackerApi.saveProjectState(candidate)
-          })
-        await saveQueue
+        await this.writeState(nextState)
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {

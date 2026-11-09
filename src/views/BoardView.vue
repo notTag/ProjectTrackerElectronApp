@@ -250,9 +250,8 @@ const cancelLaneDrag = () => {
 }
 
 // Saved once on release, like the resize. A drop outside the board, or into
-// the lane's own slot, writes nothing.
-// ponytail: the lane snaps back for one IPC round trip before the saved order
-// renders; add an optimistic store update if that flicker ever shows.
+// the lane's own slot, writes nothing. The store places the lane at once and
+// puts it back if the save fails.
 const endLaneDrag = async (event: PointerEvent) => {
   const drag = laneDrag.value
   const droppedOnBoard = pointerIsOverBoard(event)
