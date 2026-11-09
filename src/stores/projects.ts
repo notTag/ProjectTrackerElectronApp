@@ -104,6 +104,16 @@ export const useProjectsStore = defineStore('projects', {
       await this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
     },
 
+    // File first, DB second: a failed write throws before the lane is touched.
+    // The prompt is saved alongside the path because the textarea only commits
+    // on blur, so the text being written may not be in state yet.
+    async saveLaneAgentMarkdown(projectPath: string, lane: SwimLane, agentPrompt: string, agentFilePath: string) {
+      const { filePath } = await projectTrackerApi.saveLaneAgentMarkdown(projectPath, lane.name, agentFilePath, agentPrompt)
+      await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: filePath })
+      if (this.error) throw new Error(this.error)
+      return filePath
+    },
+
     async removeLane(projectPath: string, laneId: string) {
       await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
     },

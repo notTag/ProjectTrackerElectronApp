@@ -42,6 +42,12 @@ interface ProjectTrackerElectronApi {
   ): Promise<{ worktreePaths: string[] }>
   runTicketAgent(path: string, agentId: string, prompt: string): Promise<{ succeeded: boolean; output: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
+  saveLaneAgentMarkdown(
+    projectPath: string,
+    laneName: string,
+    agentFilePath: string,
+    content: string
+  ): Promise<{ filePath: string }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>

@@ -81,6 +81,9 @@ export const projectTrackerApi = {
   readProjectReadme(path: string) {
     return requireElectron().readProjectReadme(path)
   },
+  saveLaneAgentMarkdown(projectPath: string, laneName: string, agentFilePath: string, content: string) {
+    return requireElectron().saveLaneAgentMarkdown(projectPath, laneName, agentFilePath, content)
+  },
 
   fetchProjectGithub(githubUrl: string) {
     return requireElectron().fetchProjectGithub(githubUrl)

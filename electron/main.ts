@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'n
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadless } from './agentRun.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
@@ -581,6 +582,27 @@ const registerIpc = () => {
     const readmePath = path.join(normalized, readmeName)
     if (!statSync(readmePath).isFile()) return { content: null, fileName: null }
     return toPlainJson({ content: readFileSync(readmePath, 'utf8'), fileName: readmeName })
+  })
+
+  ipcMain.handle('lane:save-agent-markdown', (event, request: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneName, agentFilePath, content } = (request ?? {}) as Record<string, unknown>
+    const fieldsAreStrings = [projectPath, laneName, agentFilePath, content].every((field) => typeof field === 'string')
+    if (!fieldsAreStrings) throw new Error('Invalid save request.')
+
+    const normalized = assertScannedProjectPath(projectPath as string)
+    // The name comes from our own state, not the renderer, since it becomes part of a path.
+    const project = stateRepository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
+    if (!project) throw new Error('Unknown project.')
+
+    const target = {
+      projectPath: normalized,
+      projectName: project.name,
+      laneName: laneName as string,
+      agentFilePath: agentFilePath as string
+    }
+    const filePath = saveAgentMarkdown(target, content as string)
+    return { filePath }
   })
 }
 

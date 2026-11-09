@@ -404,6 +404,22 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   return guardAgainstOptionParsing(prompt)
 }
 
+export const AGENT_CONTEXT_DIRECTORY = 'agent-context'
+
+// Path separators become word breaks ("ProjectTracker/electron-app" reads as
+// "ProjectTracker-electron-app"); the other characters filesystems reject are
+// dropped. Leading dots go so a name can't produce a hidden file or "..".
+const fileNamePart = (value: string, fallback: string): string => {
+  const hyphenated = value.trim().replace(/[\s/\\]+/g, '-')
+  const withoutForbidden = hyphenated.replace(/[:*?"<>|]/g, '')
+  const withoutLeadingDots = withoutForbidden.replace(/^\.+/, '')
+  const collapsed = withoutLeadingDots.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
+  return collapsed || fallback
+}
+
+export const agentMarkdownFileName = (projectName: string, laneName: string): string =>
+  `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentContext.md`
+
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
 // embedded quote cannot appear inside them at all — it has to close the string,
