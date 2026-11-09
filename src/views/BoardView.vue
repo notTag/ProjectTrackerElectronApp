@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -20,6 +20,7 @@ import {
   findAgent,
   formatLabels,
   isWebUrl,
+  moveLaneInBoard,
   parseLabels,
   pullRequestLabel,
   removeChecklistItem,
@@ -159,6 +160,138 @@ const endLaneResize = async () => {
   await savePreferences(setLaneWidth(preferences.value, resize.laneId, resize.width))
 }
 
+// Lane order is board data, shared by every user, so a move goes through the
+// store rather than preferences. Only rendered lanes can be anchors; the
+// helper's id anchoring keeps hidden lanes where they were.
+const boardElement = ref<HTMLElement | null>(null)
+
+// A filtered board shows one lane, so there is nothing to order it against —
+// and a drop "before nothing" would send it to the end.
+const laneCanMove = (laneId: string) => laneId !== UNASSIGNED_LANE_ID && !filterLaneId.value
+
+const movableVisibleLanes = computed(() => visibleLanes.value.filter((lane) => lane.id !== UNASSIGNED_LANE_ID))
+
+const LANE_DRAG_THRESHOLD_PX = 4
+
+const laneDrag = ref<{
+  laneId: string
+  startX: number
+  dx: number
+  active: boolean
+  beforeLaneId: string | null
+  indicatorLeft: number | null
+} | null>(null)
+
+// A drag ends with a click on the header; two quick drags would read as a
+// double-click and open a ticket draft. Remembering when the last drag ended
+// lets the double-click handler tell them apart.
+let lastLaneDragEndedAt = 0
+const LANE_DRAG_DBLCLICK_GRACE_MS = 500
+
+const startTicketDraftFromHeading = (laneId: string) => {
+  const endedRecently = performance.now() - lastLaneDragEndedAt < LANE_DRAG_DBLCLICK_GRACE_MS
+  if (!endedRecently) startTicketDraft(laneId)
+}
+
+const startLaneDrag = (lane: SwimLane, event: PointerEvent) => {
+  const pressedHeaderButton = (event.target as HTMLElement).closest('button')
+  if (event.button !== 0 || pressedHeaderButton || !laneCanMove(lane.id)) return
+  laneDrag.value = { laneId: lane.id, startX: event.clientX, dx: 0, active: false, beforeLaneId: null, indicatorLeft: null }
+  // Captured straight away (as the resize handle does) so a fast flick that
+  // leaves the header before the threshold still arrives here.
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+
+const laneElements = () => Array.from(boardElement.value?.querySelectorAll<HTMLElement>('.lane[data-lane-id]') ?? [])
+
+// The first sibling whose midpoint is right of the pointer is the lane the
+// dragged one lands in front of; past the last midpoint there is no anchor.
+const laneAnchorAt = (pointerX: number, draggedLaneId: string) => {
+  const siblings = laneElements().filter((element) => {
+    const siblingId = element.dataset.laneId
+    return siblingId !== draggedLaneId && siblingId !== UNASSIGNED_LANE_ID
+  })
+  const anchor = siblings.find((element) => {
+    const rect = element.getBoundingClientRect()
+    return rect.left + rect.width / 2 > pointerX
+  })
+  const lastSibling = siblings.at(-1)
+  // Half the 12px board gap, so the line sits centered between two lanes.
+  const halfGap = 6
+  let indicatorLeft: number | null = null
+  if (anchor) indicatorLeft = anchor.offsetLeft - halfGap
+  else if (lastSibling) indicatorLeft = lastSibling.offsetLeft + lastSibling.offsetWidth + halfGap
+  return { beforeLaneId: anchor?.dataset.laneId ?? null, indicatorLeft }
+}
+
+const trackLaneDrag = (event: PointerEvent) => {
+  const drag = laneDrag.value
+  if (!drag) return
+  drag.dx = event.clientX - drag.startX
+  if (!drag.active && Math.abs(drag.dx) < LANE_DRAG_THRESHOLD_PX) return
+  drag.active = true
+  const { beforeLaneId, indicatorLeft } = laneAnchorAt(event.clientX, drag.laneId)
+  const dropWouldMoveNothing = moveLaneInBoard(board.value, drag.laneId, beforeLaneId) === board.value
+  drag.beforeLaneId = beforeLaneId
+  drag.indicatorLeft = dropWouldMoveNothing ? null : indicatorLeft
+}
+
+const pointerIsOverBoard = (event: PointerEvent) => {
+  const rect = boardElement.value?.getBoundingClientRect()
+  if (!rect) return false
+  const insideX = event.clientX >= rect.left && event.clientX <= rect.right
+  const insideY = event.clientY >= rect.top && event.clientY <= rect.bottom
+  return insideX && insideY
+}
+
+const cancelLaneDrag = () => {
+  if (laneDrag.value?.active) lastLaneDragEndedAt = performance.now()
+  laneDrag.value = null
+}
+
+// Saved once on release, like the resize. A drop outside the board, or into
+// the lane's own slot, writes nothing.
+// ponytail: the lane snaps back for one IPC round trip before the saved order
+// renders; add an optimistic store update if that flicker ever shows.
+const endLaneDrag = async (event: PointerEvent) => {
+  const drag = laneDrag.value
+  const droppedOnBoard = pointerIsOverBoard(event)
+  cancelLaneDrag()
+  if (!drag?.active || !droppedOnBoard) return
+  const dropWouldMoveNothing = moveLaneInBoard(board.value, drag.laneId, drag.beforeLaneId) === board.value
+  if (dropWouldMoveNothing) return
+  await store.moveLane(projectPath.value, drag.laneId, drag.beforeLaneId)
+}
+
+const laneDragStyle = (laneId: string) => {
+  const drag = laneDrag.value
+  // X only: Y is never written, so the lane cannot drift vertically.
+  if (drag?.active && drag.laneId === laneId) return { transform: `translateX(${drag.dx}px)` }
+  return {}
+}
+
+const focusLaneHeading = (laneId: string) =>
+  boardElement.value?.querySelector<HTMLElement>(`.lane[data-lane-id="${CSS.escape(laneId)}"] .lane-heading`)?.focus()
+
+// Keyboard path for the same move: one slot per press. Moving right means
+// landing before the lane two along, since the next one is the one to pass.
+const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
+  const isLeft = event.key === 'ArrowLeft'
+  const isRight = event.key === 'ArrowRight'
+  if (!event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
+  event.preventDefault()
+  const lanes = movableVisibleLanes.value
+  const position = lanes.findIndex((entry) => entry.id === lane.id)
+  const atLeftEdge = position <= 0
+  const atRightEdge = position === lanes.length - 1
+  if ((isLeft && atLeftEdge) || (isRight && atRightEdge)) return
+  const beforeLaneId = isLeft ? lanes[position - 1].id : (lanes[position + 2]?.id ?? null)
+  await store.moveLane(projectPath.value, lane.id, beforeLaneId)
+  // The keyed v-for may re-insert the moved lane's DOM node, which drops focus.
+  await nextTick()
+  focusLaneHeading(lane.id)
+}
+
 const matchesAssignee = (ticket: Ticket) =>
   !showOnlyMine.value || ticket.assigneeId === store.state.userId
 
@@ -229,6 +362,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     return
   }
   if (event.key !== 'Escape') return
+  // Claimed before anything else: an unhandled Escape leaves the board.
+  if (laneDrag.value?.active) {
+    cancelLaneDrag()
+    event.preventDefault()
+    return
+  }
   if (anyModalOpen.value) {
     closeModals()
     event.preventDefault()
@@ -521,17 +660,44 @@ const runTicketAgent = (ticket: Ticket) => {
       <button @click="laneDraftName = ''">Create swim lane</button>
     </section>
 
-    <section v-else class="board" aria-label="Swim lanes">
+    <section
+      v-else
+      ref="boardElement"
+      class="board"
+      :class="{ 'board-lane-dragging': laneDrag?.active }"
+      aria-label="Swim lanes"
+    >
+      <div
+        v-if="laneDrag?.active && laneDrag.indicatorLeft !== null"
+        class="lane-drop-indicator"
+        :style="{ left: `${laneDrag.indicatorLeft}px` }"
+        aria-hidden="true"
+      />
       <section
         v-for="lane in visibleLanes"
         :key="lane.id"
         class="lane"
-        :class="{ 'lane-unassigned': lane.id === UNASSIGNED_LANE_ID }"
-        :style="{ width: `${laneWidth(lane.id)}px` }"
+        :data-lane-id="lane.id"
+        :class="{
+          'lane-unassigned': lane.id === UNASSIGNED_LANE_ID,
+          'lane-dragging': laneDrag?.active && laneDrag.laneId === lane.id
+        }"
+        :style="{ width: `${laneWidth(lane.id)}px`, ...laneDragStyle(lane.id) }"
         @dragover.prevent
         @drop.prevent="dropOnLane(lane.id)"
       >
-        <header class="lane-heading" @dblclick="startTicketDraft(lane.id)">
+        <header
+          class="lane-heading"
+          :class="{ 'lane-heading-movable': laneCanMove(lane.id) }"
+          :tabindex="laneCanMove(lane.id) ? 0 : undefined"
+          :aria-keyshortcuts="laneCanMove(lane.id) ? 'Alt+ArrowLeft Alt+ArrowRight' : undefined"
+          @dblclick="startTicketDraftFromHeading(lane.id)"
+          @pointerdown="startLaneDrag(lane, $event)"
+          @pointermove="trackLaneDrag"
+          @pointerup="endLaneDrag"
+          @pointercancel="cancelLaneDrag"
+          @keydown="moveLaneByKeyboard(lane, $event)"
+        >
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <button

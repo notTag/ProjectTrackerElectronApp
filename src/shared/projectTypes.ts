@@ -524,6 +524,32 @@ export const updateLaneInBoard = (
   }
 }
 
+// Anchored on a lane id rather than an index: the board view only sees its
+// visible lanes, and a hidden lane (e.g. GitHub Issues) would shift any index
+// it handed over. An anchor id lands in the same place whatever is hidden.
+// Returns the original board when nothing would move, so callers can skip the
+// save. No status lives outside `lanes`, so it can neither move nor be passed:
+// dropping before it means "first".
+export const moveLaneInBoard = (
+  board: ProjectBoard,
+  laneId: string,
+  beforeLaneId: string | null
+): ProjectBoard => {
+  const movingLane = board.lanes.find((lane) => lane.id === laneId)
+  if (!movingLane || beforeLaneId === laneId) return board
+
+  const otherLanes = board.lanes.filter((lane) => lane.id !== laneId)
+  const anchorIndex = otherLanes.findIndex((lane) => lane.id === beforeLaneId)
+  const anchorFound = anchorIndex !== -1
+  const dropsAheadOfEveryLane = beforeLaneId === UNASSIGNED_LANE_ID
+  let insertAt = anchorFound ? anchorIndex : otherLanes.length
+  if (dropsAheadOfEveryLane) insertAt = 0
+  const reorderedLanes = [...otherLanes.slice(0, insertAt), movingLane, ...otherLanes.slice(insertAt)]
+
+  const orderUnchanged = reorderedLanes.every((lane, index) => lane === board.lanes[index])
+  return orderUnchanged ? board : { ...board, lanes: reorderedLanes }
+}
+
 export const createDefaultBoard = (): ProjectBoard => ({
   lanes: DEFAULT_LANE_NAMES.map((name) => ({
     id: laneIdFromName(name),

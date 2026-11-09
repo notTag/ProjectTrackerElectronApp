@@ -9,6 +9,7 @@ import {
   getBoard,
   getBoardPreferences,
   mergeScannedProjects,
+  moveLaneInBoard,
   removeLaneFromBoard,
   removeScanDirectory,
   updateLaneInBoard,
@@ -102,6 +103,10 @@ export const useProjectsStore = defineStore('projects', {
 
     async updateLane(projectPath: string, laneId: string, patch: Partial<Omit<SwimLane, 'id'>>) {
       await this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
+    },
+
+    async moveLane(projectPath: string, laneId: string, beforeLaneId: string | null) {
+      await this.updateBoard(projectPath, (board) => moveLaneInBoard(board, laneId, beforeLaneId))
     },
 
     async removeLane(projectPath: string, laneId: string) {
