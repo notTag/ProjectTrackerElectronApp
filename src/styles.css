@@ -1274,6 +1274,15 @@ code {
   font-size: 0.75rem;
 }
 
+.field-hint.field-error {
+  color: var(--color-destructive);
+}
+
+/* The modal is a column flex, which would stretch the button full width. */
+.save-agent-markdown {
+  align-self: flex-start;
+}
+
 .project-heading-actions {
   display: flex;
   gap: 6px;

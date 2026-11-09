@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   addGithubIssuesToBoard,
+  agentMarkdownFileName,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -586,5 +587,28 @@ describe('ticketTabTitle', () => {
 
   it('strips newlines and terminal control characters', () => {
     expect(ticketTabTitle({ number: 7, title: 'one\n two\u001b]0;pwn\u0007\tend' })).toBe('#7 one two ]0;pwn end')
+  })
+})
+
+describe('agentMarkdownFileName', () => {
+  it('turns spaces and path separators into hyphens', () => {
+    expect(agentMarkdownFileName('My Project', 'In Review')).toBe('My-Project-In-Review-AgentContext.md')
+    expect(agentMarkdownFileName('ProjectTracker/electron-app', 'PRD')).toBe('ProjectTracker-electron-app-PRD-AgentContext.md')
+  })
+
+  it('strips characters filesystems reject', () => {
+    expect(agentMarkdownFileName('a:b*c?d"e<f>g|h', 'lane')).toBe('abcdefgh-lane-AgentContext.md')
+  })
+
+  it('never yields a path separator or a leading dot from a traversal name', () => {
+    const fileName = agentMarkdownFileName('app', '../../etc/passwd')
+    expect(fileName).not.toMatch(/[/\\]/)
+    expect(fileName.startsWith('.')).toBe(false)
+    expect(agentMarkdownFileName('..', '.hidden')).toBe('project-hidden-AgentContext.md')
+  })
+
+  it('falls back when a part sanitizes to nothing', () => {
+    expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
+    expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
   })
 })
