@@ -74,8 +74,12 @@ export const projectTrackerApi = {
     return requireElectron().autoRunLane(path, targetId, tickets, useWorktrees)
   },
 
-  runTicketAgent(path: string, agentId: string, prompt: string) {
-    return requireElectron().runTicketAgent(path, agentId, prompt)
+  runTicketAgent(path: string, ticketId: string, agentId: string, prompt: string) {
+    return requireElectron().runTicketAgent(path, ticketId, agentId, prompt)
+  },
+
+  cancelTicketAgent(ticketId: string) {
+    return requireElectron().cancelTicketAgent(ticketId)
   },
 
   readProjectReadme(path: string) {

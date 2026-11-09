@@ -37,6 +37,7 @@ const APP_NAME = 'Project Tracker'
 
 let mainWindow: BrowserWindow | null = null
 let stateRepository: StateRepository
+const runningAgentControllers = new Map<string, AbortController>()
 
 // ponytail: slow fixed poll for writes from other processes (a second app
 // instance, the sqlite3 CLI). The renderer also refreshes on window focus and
@@ -492,12 +493,14 @@ const registerIpc = () => {
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, agentId, prompt } = (payload ?? {}) as {
+    const { projectPath, ticketId, agentId, prompt } = (payload ?? {}) as {
       projectPath?: unknown
+      ticketId?: unknown
       agentId?: unknown
       prompt?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+    if (typeof ticketId !== 'string') throw new Error('Invalid ticket.')
     if (typeof agentId !== 'string') throw new Error('Invalid agent.')
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
     // Resolved by id against known agents rather than taking a command from the
@@ -505,7 +508,22 @@ const registerIpc = () => {
     const agent = availableAgents(stateRepository.getState()).find((entry) => entry.id === agentId)
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
+    // The store already refuses a second run on a ticket that is running, so
+    // one controller per ticket id is all cancel needs to find.
+    const controller = new AbortController()
+    runningAgentControllers.set(ticketId, controller)
+    try {
+      const result = await runAgentHeadless(agent, prompt, normalized, app.getPath('home'), controller.signal)
+      return toPlainJson(result)
+    } finally {
+      runningAgentControllers.delete(ticketId)
+    }
+  })
+
+  ipcMain.handle('ticket:cancel-agent', (event, ticketId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof ticketId !== 'string') throw new Error('Invalid ticket.')
+    runningAgentControllers.get(ticketId)?.abort()
   })
 
   ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {

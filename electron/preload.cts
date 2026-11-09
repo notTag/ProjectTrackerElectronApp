@@ -38,8 +38,9 @@ contextBridge.exposeInMainWorld('projectTracker', {
     invokePlain('project:open-in', { projectPath, targetId, command }),
   autoRunLane: (projectPath: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) =>
     invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees }),
-  runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>
-    invokePlain('ticket:run-agent', { projectPath, agentId, prompt }),
+  runTicketAgent: (projectPath: string, ticketId: string, agentId: string, prompt: string) =>
+    invokePlain('ticket:run-agent', { projectPath, ticketId, agentId, prompt }),
+  cancelTicketAgent: (ticketId: string) => invokePlain('ticket:cancel-agent', ticketId),
   readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
   saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
     invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),

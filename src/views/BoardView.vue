@@ -1113,6 +1113,14 @@ const runTicketAgent = (ticket: Ticket) => {
             {{ store.agentRunning[openTicket.id] ? 'Running…' : '▶ Run' }}
           </button>
           <button
+            v-if="store.agentRunning[openTicket.id]"
+            class="secondary"
+            title="Stop the background run"
+            @click="store.cancelTicketAgent(openTicket.id)"
+          >
+            ■ Cancel
+          </button>
+          <button
             class="secondary"
             :title="`Run in ${openInStore.selectedTarget.label} — terminals run it, editors get it on the clipboard`"
             @click="openTicketInShell(openTicket)"
@@ -1125,6 +1133,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <section v-if="openTicket.agentRun" class="ticket-agent-run">
         <p class="eyebrow">
           Last agent run · {{ laneName(openTicket.agentRun.laneId) }} · {{ formatDateTime(openTicket.agentRun.at) }}
+          <template v-if="openTicket.agentRun.succeeded === false"> · failed</template>
         </p>
         <pre>{{ openTicket.agentRun.output }}</pre>
       </section>
