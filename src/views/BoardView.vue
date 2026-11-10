@@ -33,6 +33,7 @@ import {
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
+  ticketTabTitle,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -357,6 +358,17 @@ const assignToMe = (ticket: Ticket) => {
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
 
+// Keyed on githubUrl too: on a deep link the project isn't loaded yet, so the
+// pull waits for the url to show up instead of seeing "no repo" and skipping.
+// The board route is reused across projects, hence a watch, not onMounted.
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (url) void store.autoPullGithubIssues(path)
+  },
+  { immediate: true }
+)
+
 const closeModals = () => {
   openTicketId.value = null
   openLaneId.value = null
@@ -606,8 +618,11 @@ const confirmAutoRunLane = () => {
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
 }
 
-const openTicketInShell = (ticket: Ticket) =>
-  store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
+const openTicketInShell = (ticket: Ticket) => {
+  const command = ticketCommand(ticket)
+  const tabTitle = ticketTabTitle(ticket)
+  return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
+}
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
 // lane says nothing about the work in this one.
