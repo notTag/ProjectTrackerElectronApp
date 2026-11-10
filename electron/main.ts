@@ -476,11 +476,9 @@ const registerIpc = () => {
     const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
     if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    // Last tab, in the project root even with worktrees on: it watches every
-    // ticket rather than working on one.
-    const orchestratorTabs = orchestratorLaunch
-      ? [{ command: `cd ${shellQuote(normalized)} && ${orchestratorLaunch.command}`, title: orchestratorLaunch.title }]
-      : []
+    // Last tab, left in the project root (where every runner starts a tab) even
+    // with worktrees on: it watches every ticket rather than working on one.
+    const orchestratorTabs = orchestratorLaunch ? [orchestratorLaunch] : []
 
     if (useWorktrees !== true) {
       const ticketTabs = tickets.map((ticket) => ({ command: ticket.command, title: usableTabTitle(ticket.title) }))

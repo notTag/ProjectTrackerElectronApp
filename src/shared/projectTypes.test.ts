@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
   buildAutoRunLaunch,
@@ -998,8 +999,9 @@ describe('Auto Run orchestrator', () => {
     })
 
     it('gives a read-only DB query scoped to the project, and forbids writes', () => {
-      expect(prompt).toContain(`sqlite3 -readonly "${TRACKER_DATABASE_PATH}"`)
-      expect(prompt).toContain("WHERE project_path = '/Users/me/Code/it''s-mine' AND number IN (12, 13);")
+      expect(prompt).toContain(`sqlite3 -readonly "${TRACKER_DATABASE_PATH}" '`)
+      const scopedSql = "WHERE project_path = '/Users/me/Code/it''s-mine' AND number IN (12, 13);"
+      expect(prompt).toContain(shellQuote(scopedSql).slice(1))
       expect(prompt).toContain('Never write to the database')
     })
 
@@ -1020,7 +1022,7 @@ describe('Auto Run orchestrator', () => {
       expect(iterm).toContain('tell application "iTerm"')
       expect(iterm).toContain("'close s'")
       const terminal = orchestratorPrompt(inDev, entries, context('terminal'))
-      expect(terminal).toContain('custom title of t starts with "#<N> "')
+      expect(terminal).toContain('custom title of t is "<TAB>"')
     })
 
     it('tells the user to close Warp tabs by hand', () => {

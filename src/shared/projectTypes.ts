@@ -651,7 +651,7 @@ const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
     listTabs: `osascript -e 'tell application "Ghostty" to get name of every tab of every window'`,
     closeTab: [
       `osascript -e 'tell application "Ghostty"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
-      `-e 'if name of t starts with "#<N> " then' -e 'close tab t' -e 'return' -e 'end if'`,
+      `-e 'if name of t is "<TAB>" then' -e 'close tab t' -e 'return' -e 'end if'`,
       `-e 'end repeat' -e 'end repeat' -e 'end tell'`
     ].join(' ')
   },
@@ -659,7 +659,7 @@ const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
     listTabs: `osascript -e 'tell application "iTerm" to get name of every session of every tab of every window'`,
     closeTab: [
       `osascript -e 'tell application "iTerm"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
-      `-e 'repeat with s in sessions of t' -e 'if name of s starts with "#<N> " then' -e 'close s' -e 'return' -e 'end if'`,
+      `-e 'repeat with s in sessions of t' -e 'if name of s is "<TAB>" then' -e 'close s' -e 'return' -e 'end if'`,
       `-e 'end repeat' -e 'end repeat' -e 'end repeat' -e 'end tell'`
     ].join(' ')
   },
@@ -668,7 +668,7 @@ const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
     listTabs: `osascript -e 'tell application "Terminal" to get custom title of every tab of every window'`,
     closeTab: [
       `osascript -e 'tell application "Terminal"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
-      `-e 'if custom title of t starts with "#<N> " then' -e 'set selected of t to true' -e 'set index of w to 1' -e 'activate'`,
+      `-e 'if custom title of t is "<TAB>" then' -e 'set selected of t to true' -e 'set index of w to 1' -e 'activate'`,
       `-e 'tell application "System Events" to keystroke "w" using command down' -e 'return' -e 'end if'`,
       `-e 'end repeat' -e 'end repeat' -e 'end tell'`
     ].join(' ')
@@ -696,10 +696,10 @@ const tabSection = (context: OrchestratorPromptContext): string => {
   return [
     `Open tab titles in ${context.terminalLabel}:`,
     recipes.listTabs,
-    'A ticket\'s agent is running while a tab whose title starts with "#<N> " exists. Full auto handoffs open',
-    'new tabs for later lanes with the same "#<N> " prefix, so match on the prefix, not the whole title.',
+    'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
+    'open new tabs for later lanes under the same title. Match the whole title: other projects reuse ticket numbers.',
     '',
-    'Close a done ticket\'s tab (replace <N>; rerun until the listing shows no "#<N> " tab):',
+    'Close a done ticket\'s tab (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
   ].join('\n')
 }
@@ -720,11 +720,13 @@ export const orchestratorPrompt = (
     (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
   )
   const ticketNumbers = launches.map((launch) => launch.number).join(', ')
-  const ticketQuery = [
-    `sqlite3 -readonly "${TRACKER_DATABASE_PATH}"`,
-    `"SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets`,
-    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});"`
+  const ticketSql = [
+    'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
   ].join(' ')
+  // Double quotes only around the DB path, which needs $HOME expanded; the SQL
+  // carries the project path, so it gets literal single quotes.
+  const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
 
   return [
     `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
