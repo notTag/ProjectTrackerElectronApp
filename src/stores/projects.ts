@@ -354,10 +354,15 @@ export const useProjectsStore = defineStore('projects', {
         .then(async () => {
           const freshState = await projectTrackerApi.refreshProjectState()
           if (!freshState) return
-          const { state: settledState, moved } = withCompletionMoves(this.state, freshState)
-          const hasCompletionMoves = settledState !== freshState
-          const savedState = hasCompletionMoves ? await projectTrackerApi.saveProjectState(settledState) : freshState
-          handoffs = handoffsBetween(this.state, savedState)
+          const previousState = this.state
+          const { state: settledState, moved } = withCompletionMoves(previousState, freshState)
+          // Take the fresh read first: main already diffs against it, so a
+          // failed completion-move write must not leave this window behind.
+          handoffs = handoffsBetween(previousState, freshState)
+          this.state = freshState
+          if (settledState === freshState) return
+          const savedState = await projectTrackerApi.saveProjectState(settledState)
+          handoffs = handoffsBetween(previousState, savedState)
           this.state = savedState
           this.notice = completionMovesNotice(moved) ?? this.notice
         })
@@ -421,20 +426,25 @@ export const useProjectsStore = defineStore('projects', {
         .catch(() => undefined)
         .then(async () => {
           const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
+          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          let savedState: ProjectTrackerState
           try {
-            const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
-            let savedState = await projectTrackerApi.saveProjectState(ownMoves.state)
-            const outsideMoves = withCompletionMoves(ownMoves.state, savedState)
-            if (outsideMoves.state !== savedState) {
-              savedState = await projectTrackerApi.saveProjectState(outsideMoves.state)
-            }
-            handoffs = handoffsBetween(candidate, savedState)
-            this.state = savedState
-            this.notice = completionMovesNotice([...ownMoves.moved, ...outsideMoves.moved]) ?? this.notice
+            savedState = await projectTrackerApi.saveProjectState(ownMoves.state)
           } catch (error) {
             if (undo) this.state = undo(this.state)
             throw error
           }
+          handoffs = handoffsBetween(candidate, savedState)
+          this.state = savedState
+          this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
+
+          // The edit is in the DB now, so a failed follow-up write must not undo it.
+          const outsideMoves = withCompletionMoves(ownMoves.state, savedState)
+          if (outsideMoves.state === savedState) return
+          const settledState = await projectTrackerApi.saveProjectState(outsideMoves.state)
+          handoffs = handoffsBetween(candidate, settledState)
+          this.state = settledState
+          this.notice = completionMovesNotice([...ownMoves.moved, ...outsideMoves.moved]) ?? this.notice
         })
       await saveQueue
       return handoffs
@@ -680,12 +690,16 @@ export const useProjectsStore = defineStore('projects', {
           output: result.output,
           succeeded: result.succeeded
         }
-        const noticeWhileRunning = this.notice
+        const storedTicket = () => this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
+        const laneBeforeSave = storedTicket()?.laneId
         await this.updateTicket(projectPath, ticket.id, { agentRun }, result.succeeded)
+        if (!result.succeeded) {
+          this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
+          return
+        }
         // A Move to notice from that save is newer news than "finished".
-        const movedOnCompletion = this.notice !== noticeWhileRunning
-        if (result.succeeded && !movedOnCompletion) this.notice = `Agent finished #${ticket.number}.`
-        else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
+        const movedOnCompletion = storedTicket()?.laneId !== laneBeforeSave
+        if (!movedOnCompletion) this.notice = `Agent finished #${ticket.number}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {

@@ -548,7 +548,7 @@ const formatDateTime = (value: string) => {
 }
 
 const laneName = (laneId: string) => {
-  if (laneId === UNASSIGNED_LANE_ID) return UNASSIGNED_LANE_NAME
+  if (laneId === UNASSIGNED_LANE_ID) return unassignedLane.value.name
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 

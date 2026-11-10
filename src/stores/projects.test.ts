@@ -220,6 +220,7 @@ describe('Move to on completion', () => {
     expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: 'dev', moveOnComplete: false })
     expect(saveProjectState).toHaveBeenCalledTimes(1)
     expect(store.notice).toBe('Moved #7 to In Development.')
+    expect(store.error).toBeNull()
   })
 
   it('leaves the ticket where it is when ▶ Run fails', async () => {
