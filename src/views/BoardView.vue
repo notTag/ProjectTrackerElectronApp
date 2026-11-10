@@ -14,6 +14,7 @@ import {
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
   agentForTicket,
+  agentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -30,6 +31,7 @@ import {
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
@@ -602,12 +604,34 @@ const confirmAutoRunLane = () => {
 const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 
-// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
-const agentFinishedInCurrentLane = (ticket: Ticket) => {
-  const lastRun = ticket.agentRun
-  return lastRun?.succeeded === true && lastRun.laneId === ticket.laneId
+// Glyphs, not just colour, tell success from failure.
+const AGENT_BADGES = {
+  running: { className: 'agent-status-running', label: 'Agent running', glyph: '' },
+  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
+  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' }
+} as const
+
+const cardAgentBadge = (ticket: Ticket) => {
+  const running = Boolean(store.agentRunning[ticket.id])
+  const badge = agentRunBadge(ticket, running)
+  return badge ? AGENT_BADGES[badge] : null
 }
+
+const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(hasUnseenAgentResult).length
+
+// Watching the open ticket (not the card click) also covers opening from the
+// graph view, and a run that finishes while its modal is already open.
+// Only unseen runs are written, so reopening a ticket doesn't touch it.
+watch(
+  () => openTicket.value?.agentRun,
+  (agentRun) => {
+    const ticket = openTicket.value
+    if (!ticket || !agentRun || agentRun.seenAt !== undefined) return
+    const seenRun = { ...agentRun, seenAt: new Date().toISOString() }
+    void store.updateTicket(projectPath.value, ticket.id, { agentRun: seenRun })
+  },
+  { immediate: true }
+)
 
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
@@ -758,6 +782,13 @@ const runTicketAgent = (ticket: Ticket) => {
         >
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span
+            v-if="unseenAgentResultCount(lane.id) > 0"
+            class="lane-unseen-count"
+            role="img"
+            :aria-label="`${unseenAgentResultCount(lane.id)} unseen agent results`"
+            title="Agent results you haven't opened yet"
+          >{{ unseenAgentResultCount(lane.id) }}</span>
           <button
             class="icon-button auto-run-button"
             :title="autoRunTooltip(lane)"
@@ -800,19 +831,12 @@ const runTicketAgent = (ticket: Ticket) => {
             />
             <h3>
               <span
-                v-if="store.agentRunning[ticket.id]"
-                class="agent-status agent-status-running"
+                v-if="cardAgentBadge(ticket)"
+                :class="['agent-status', cardAgentBadge(ticket)?.className]"
                 role="img"
-                aria-label="Agent running"
-                title="Agent running"
-              />
-              <span
-                v-else-if="agentFinishedInCurrentLane(ticket)"
-                class="agent-status agent-status-done"
-                role="img"
-                aria-label="Agent finished"
-                title="Agent finished"
-              >✓</span>
+                :aria-label="cardAgentBadge(ticket)?.label"
+                :title="cardAgentBadge(ticket)?.label"
+              >{{ cardAgentBadge(ticket)?.glyph }}</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span

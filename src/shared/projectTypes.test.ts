@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  agentRunBadge,
+  hasUnseenAgentResult,
   buildAutoRunLaunch,
   fullAutoHandoffs,
   isFullAuto,
@@ -717,5 +719,51 @@ describe('agentMarkdownFileName', () => {
   it('falls back when a part sanitizes to nothing', () => {
     expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
     expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
+  })
+})
+
+describe('agentRunBadge', () => {
+  const ticket = (agentRun?: Ticket['agentRun']): Ticket => ({
+    id: 'ticket-1',
+    number: 17,
+    laneId: 'dev',
+    title: 'Show the run result',
+    description: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    agentRun
+  })
+  const run = (overrides: Partial<NonNullable<Ticket['agentRun']>> = {}) => ({
+    at: '2026-01-02T00:00:00.000Z',
+    laneId: 'dev',
+    output: 'done',
+    succeeded: true,
+    ...overrides
+  })
+
+  it('shows running whatever run is saved', () => {
+    expect(agentRunBadge(ticket(), true)).toBe('running')
+    expect(agentRunBadge(ticket(run({ succeeded: false })), true)).toBe('running')
+    expect(agentRunBadge(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })), true)).toBe('running')
+  })
+
+  it('shows nothing without a recorded result', () => {
+    expect(agentRunBadge(ticket(), false)).toBeNull()
+    expect(agentRunBadge(ticket(run({ succeeded: undefined })), false)).toBeNull()
+  })
+
+  it('shows nothing once seen or after the ticket left the lane', () => {
+    expect(agentRunBadge(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })), false)).toBeNull()
+    expect(agentRunBadge(ticket(run({ laneId: 'prd' })), false)).toBeNull()
+  })
+
+  it('shows the unseen result from this lane', () => {
+    expect(agentRunBadge(ticket(run()), false)).toBe('succeeded')
+    expect(agentRunBadge(ticket(run({ succeeded: false })), false)).toBe('failed')
+  })
+
+  it('counts only unseen finished runs as unseen results', () => {
+    expect(hasUnseenAgentResult(ticket(run({ succeeded: false })))).toBe(true)
+    expect(hasUnseenAgentResult(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })))).toBe(false)
+    expect(hasUnseenAgentResult(ticket())).toBe(false)
   })
 })
