@@ -491,6 +491,9 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async openIn(path: string, targetId: string, command?: string) {
+      // Clear before awaiting so a repeat of the same text still restarts
+      // MessageBanners' auto-dismiss timer (its watch skips same-value writes).
+      this.notice = null
       try {
         const result = await projectTrackerApi.openProjectIn(path, targetId, command)
         if (result.fallbackCommand) {
@@ -522,6 +525,7 @@ export const useProjectsStore = defineStore('projects', {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
+      this.notice = null
       try {
         const ticketLaunches = launches.map((entry) => entry.launch)
         const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)

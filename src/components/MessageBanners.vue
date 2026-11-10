@@ -7,6 +7,10 @@ const NOTICE_LIFETIME_MS = 10_000
 
 const store = useProjectsStore()
 
+const dismissNotice = () => {
+  store.notice = null
+}
+
 // Errors never get a timer: they stay until ×.
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -16,7 +20,8 @@ watch(
   () => store.notice,
   (notice) => {
     clearTimeout(noticeTimer)
-    if (notice) noticeTimer = setTimeout(() => (store.notice = null), NOTICE_LIFETIME_MS)
+    if (!notice) return
+    noticeTimer = setTimeout(dismissNotice, NOTICE_LIFETIME_MS)
   },
   { immediate: true },
 )
@@ -27,15 +32,15 @@ onUnmounted(() => clearTimeout(noticeTimer))
 <template>
   <section class="message-row">
     <Transition name="fade">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
+      <div v-if="store.error" class="message error" role="alert">
+        <span class="message-text">{{ store.error }}</span>
         <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
       </div>
     </Transition>
     <Transition name="fade">
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
+      <div v-if="store.notice" class="message notice" role="status">
+        <span class="message-text">{{ store.notice }}</span>
+        <button class="icon-button message-dismiss" title="Dismiss" @click="dismissNotice">×</button>
       </div>
     </Transition>
   </section>

@@ -817,10 +817,15 @@ code {
   gap: 8px;
   border-radius: 8px;
   padding: 10px 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   pointer-events: auto;
+}
+
+/* pre-wrap lives on the span, not .message: the template's indentation
+   whitespace around the text would otherwise render as a leading space. */
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-dismiss {
