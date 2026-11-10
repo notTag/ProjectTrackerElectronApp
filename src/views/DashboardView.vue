@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import MetricsPanel from '@/components/MetricsPanel.vue'
+import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
 import ThemePicker from '@/components/ThemePicker.vue'
@@ -390,16 +391,7 @@ const renderMarkdown = (markdown: string | null) => {
       <p v-else>No scan directories selected.</p>
     </section>
 
-    <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
-      </div>
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
-      </div>
-    </section>
+    <MessageBanners />
 
     <section class="metrics">
       <button class="metric" :class="{ selected: activeMetric === 'total' }" @click="setMetricFilter('total')">

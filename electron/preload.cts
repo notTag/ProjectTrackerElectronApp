@@ -2,7 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 import type { AutoRunTicketLaunch, ProjectTrackerState } from '../src/shared/projectTypes.js'
 
-const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+// Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
+const toPlainJson = <T,>(value: T): T => {
+  const serialized = JSON.stringify(value)
+  return serialized === undefined ? (undefined as T) : (JSON.parse(serialized) as T)
+}
 
 const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
   const result =
@@ -46,5 +50,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
+  fetchTicketPullRequest: (githubUrl: string, branchName: string, pullRequestUrl?: string) =>
+    invokePlain('ticket:fetch-pull-request', { githubUrl, branchName, pullRequestUrl }),
   setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
 })

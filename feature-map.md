@@ -69,9 +69,11 @@ Shown in both title strips.
 
 ### 1.7 Notices and errors
 
-Shown below the title strip in both views.
+Overlay toasts in the top-right corner, just below the title strip, in both views (`src/components/MessageBanners.vue`). They float over the content, so showing one never pushes the board down.
 
-- A red **error** banner and a neutral **notice** banner, each closed with ×.
+- A red **error** banner and a neutral **notice** banner, each closed with ×. Both fade in and out.
+- Notices close on their own 10 seconds after they appear. A new notice restarts the 10 seconds. Errors stay until you close them.
+- Banners are at most 360px wide; long text and line breaks wrap.
 - Every store action reports here: scans, saves, GitHub calls, Open In, Auto Run and agent runs.
 
 ### 1.8 Picking up outside changes
@@ -326,6 +328,14 @@ In graph view this opens as a side panel instead of a centered modal.
 | Worktree | Absolute path to a worktree. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
 
+**External Links**
+
+- Any number of extra links per ticket (design docs, Figma, Slack threads, related issues). Stored as `external_links_json` on the ticket row.
+- Type a URL and press **Add** or Enter. The link joins the list above, and the input clears and keeps focus for the next one.
+- Only http(s) URLs are added. Anything else keeps its text and shows "Use an http(s) URL". Duplicates are skipped.
+- Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
+- Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
+
 **Checklist**
 
 - The heading shows done/total.
@@ -334,14 +344,15 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Agent completion**
 
-- **Agent** select: Claude Code (the default), Codex, Hermes, and any custom agents saved in state.
+- **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
-  - The run can write files but can't run shell commands.
+  - Claude Code and Codex runs can write files but can't run shell commands.
+  - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
   - It keeps showing as running if you leave the board and come back.
 - **⌁ Run in <Open In app>**:
-  - Terminals open a new window in the project folder and run the command there, so you can watch and approve each step.
+  - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
   - Editors open the folder and put the command on the clipboard.
   - The command is copied to the clipboard in both cases.
 
@@ -440,9 +451,10 @@ In graph view this opens as a side panel instead of a centered modal.
 | Claude Code (default) | `claude` | `-p --permission-mode acceptEdits` | — |
 | Codex | `codex` | `exec --sandbox workspace-write` | — |
 | Hermes | `hermes` | `-z` | `chat -q` |
+| opencode | `opencode` | `run` | `--prompt` |
 | Custom | from `state.agents` | as configured | as configured |
 
-- A saved agent with the same id as Codex or Hermes replaces it. Claude Code can't be replaced.
+- A saved agent with the same id as Codex, Hermes or opencode replaces it. Claude Code can't be replaced.
 - Packaged apps don't get your shell PATH, so the app looks for agent CLIs in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin` and `/usr/local/bin`.
 - A missing CLI produces "X CLI (`cmd`) was not found. Install it or add it to your PATH."
 

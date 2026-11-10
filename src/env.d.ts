@@ -6,6 +6,7 @@ import type {
   ProjectGithubData,
   ProjectMetrics,
   ProjectTrackerState,
+  PullRequestStatus,
   ScanResult
 } from './shared/projectTypes'
 
@@ -53,6 +54,7 @@ interface ProjectTrackerElectronApi {
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>
+  fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string): Promise<PullRequestStatus | null>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>
 }
 

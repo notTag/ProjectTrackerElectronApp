@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
+import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
@@ -14,7 +15,10 @@ import {
   TICKET_CARD_FIELDS,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
+  addExternalLink,
   agentForTicket,
+  agentRunBadge,
+  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -27,10 +31,13 @@ import {
   moveLaneInBoard,
   parseLabels,
   pullRequestLabel,
+  pullRequestStatusLabel,
   removeChecklistItem,
+  removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
@@ -81,6 +88,9 @@ const boardSettingsOpen = ref(false)
 const ticketDraft = ref<{ title: string; description: string; laneId: string } | null>(null)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
+const linkDraft = ref('')
+const linkDraftInvalid = ref(false)
+const linkInput = ref<HTMLInputElement | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -402,6 +412,52 @@ const confirmDeleteTicket = async () => {
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
 
+const pullRequestRefreshing = ref(false)
+const pullRequestError = ref<string | null>(null)
+
+const refreshOpenTicketPullRequest = async () => {
+  const ticket = openTicket.value
+  if (!ticket) return
+  pullRequestRefreshing.value = true
+  pullRequestError.value = null
+  try {
+    await store.refreshPullRequest(projectPath.value, ticket)
+  } catch (error) {
+    pullRequestError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    pullRequestRefreshing.value = false
+  }
+}
+
+watch(openTicketId, (ticketId) => {
+  pullRequestError.value = null
+  if (ticketId) void refreshOpenTicketPullRequest()
+})
+
+// A new URL points at a different PR, so the cached state is dropped rather
+// than shown against it until the refresh lands.
+const overridePullRequestUrl = async (ticket: Ticket, rawUrl: string) => {
+  await store.updateTicket(projectPath.value, ticket.id, {
+    pullRequestUrl: rawUrl.trim() || undefined,
+    pullRequestState: undefined,
+    pullRequestMergedAt: undefined
+  })
+  await refreshOpenTicketPullRequest()
+}
+
+// Once per board per visit; githubUrl is in the source so a board opened before
+// state finished loading still gets its refresh when the project arrives.
+const boardsWithRefreshedPullRequests = new Set<string>()
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (!url || boardsWithRefreshedPullRequests.has(path)) return
+    boardsWithRefreshedPullRequests.add(path)
+    void store.refreshBoardPullRequests(path)
+  },
+  { immediate: true }
+)
+
 // Keyed on githubUrl too: on a deep link the project isn't loaded yet, so the
 // pull waits for the url to show up instead of seeing "no repo" and skipping.
 // The board route is reused across projects, hence a watch, not onMounted.
@@ -422,6 +478,8 @@ const closeModals = () => {
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   checklistDraft.value = ''
+  linkDraft.value = ''
+  linkDraftInvalid.value = false
 }
 
 const focusTicketFilter = () => {
@@ -531,6 +589,39 @@ const toggleChecklistItem = (ticket: Ticket, index: number, done: boolean) =>
 
 const dropChecklistItem = (ticket: Ticket, index: number) =>
   editTicket(ticket, { checklist: removeChecklistItem(ticket.checklist, index) })
+
+// Invalid input keeps its text so it can be fixed; a duplicate clears, since
+// that link is already listed above.
+const addLinkDraft = (ticket: Ticket) => {
+  const url = linkDraft.value.trim()
+  if (!url) return
+  linkInput.value?.focus()
+  if (!isWebUrl(url)) {
+    linkDraftInvalid.value = true
+    return
+  }
+  linkDraft.value = ''
+  const isAlreadyListed = ticket.externalLinks?.includes(url)
+  if (!isAlreadyListed) editTicketLinks(ticket, (links) => addExternalLink(links, url))
+}
+
+const dropExternalLink = (ticket: Ticket, link: string) =>
+  editTicketLinks(ticket, (links = []) => removeExternalLink(links, links.indexOf(link)))
+
+// Store state only refreshes after the IPC save returns, so the new list is
+// computed inside the queued mutate from the latest saved links: two quick
+// adds or removes in a row would otherwise overwrite each other.
+const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  void store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const links = change(current.externalLinks)
+      return { ...current, externalLinks: links.length ? links : undefined, updatedAt }
+    })
+  }))
+}
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
@@ -670,12 +761,36 @@ const openTicketInShell = (ticket: Ticket) => {
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 
-// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
-const agentFinishedInCurrentLane = (ticket: Ticket) => {
-  const lastRun = ticket.agentRun
-  return lastRun?.succeeded === true && lastRun.laneId === ticket.laneId
+// Glyphs, not just colour, tell success from failure.
+const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
+  running: { className: 'agent-status-running', label: 'Agent running' },
+  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
+  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' }
 }
+
+const cardAgentBadge = (ticket: Ticket) => {
+  const running = Boolean(store.agentRunning[ticket.id])
+  const badge = agentRunBadge(ticket, running)
+  return badge ? AGENT_BADGES[badge] : null
+}
+
+// A re-running ticket shows the running dot, not its old result, so the lane
+// count leaves it out too.
+const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
+const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
+
+// Watching the open ticket (not the card click) also covers opening from the
+// graph view, and a run that finishes while its modal is already open.
+// Only unseen runs are written, so reopening a ticket doesn't touch it.
+watch(
+  () => openTicket.value?.agentRun,
+  (agentRun) => {
+    const ticket = openTicket.value
+    if (!ticket || !agentRun || agentRun.seenAt !== undefined) return
+    void store.markAgentRunSeen(projectPath.value, ticket.id, agentRun.at)
+  },
+  { immediate: true }
+)
 
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
@@ -725,16 +840,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </header>
 
   <main class="app-shell board-shell">
-    <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
-      </div>
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
-      </div>
-    </section>
+    <MessageBanners />
 
     <section class="board-filters">
       <input
@@ -827,6 +933,13 @@ const runTicketAgent = (ticket: Ticket) => {
         >
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span
+            v-if="unseenAgentResultCount(lane.id) > 0"
+            class="lane-unseen-count"
+            role="img"
+            :aria-label="`${unseenAgentResultCount(lane.id)} unseen agent results`"
+            title="Agent results you haven't opened yet"
+          >{{ unseenAgentResultCount(lane.id) }}</span>
           <button
             class="icon-button auto-run-button"
             :title="autoRunTooltip(lane)"
@@ -869,19 +982,12 @@ const runTicketAgent = (ticket: Ticket) => {
             />
             <h3>
               <span
-                v-if="store.agentRunning[ticket.id]"
-                class="agent-status agent-status-running"
+                v-if="cardAgentBadge(ticket)"
+                :class="['agent-status', cardAgentBadge(ticket)?.className]"
                 role="img"
-                aria-label="Agent running"
-                title="Agent running"
-              />
-              <span
-                v-else-if="agentFinishedInCurrentLane(ticket)"
-                class="agent-status agent-status-done"
-                role="img"
-                aria-label="Agent finished"
-                title="Agent finished"
-              >✓</span>
+                :aria-label="cardAgentBadge(ticket)?.label"
+                :title="cardAgentBadge(ticket)?.label"
+              >{{ cardAgentBadge(ticket)?.glyph }}</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span
@@ -929,6 +1035,12 @@ const runTicketAgent = (ticket: Ticket) => {
                 draggable="false"
                 @click.stop
               >
+                <span
+                  v-if="ticket.pullRequestState"
+                  class="pull-request-dot"
+                  :data-state="ticket.pullRequestState"
+                  :title="pullRequestStatusLabel(ticket.pullRequestState)"
+                ></span>
                 {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
               </a>
             </p>
@@ -1103,21 +1215,62 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
-        GitHub PR
-        <input
-          type="url"
-          class="agent-file-path"
-          :value="openTicket.pullRequestUrl ?? ''"
-          placeholder="https://github.com/owner/repo/pull/123"
-          @change="
-            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
-          "
-        />
-        <a v-if="isWebUrl(openTicket.pullRequestUrl)" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
-          Open pull request ↗
-        </a>
-      </label>
+      <section class="ticket-pull-request">
+        <p class="eyebrow">Merge Request</p>
+        <p class="pull-request-status">
+          <span class="pull-request-pill" :data-state="openTicket.pullRequestState ?? 'none'">
+            {{ pullRequestStatusLabel(openTicket.pullRequestState) }}
+          </span>
+          <span v-if="openTicket.pullRequestState === 'merged' && openTicket.pullRequestMergedAt" class="field-hint">
+            Merged {{ formatDateTime(openTicket.pullRequestMergedAt) }}
+          </span>
+          <a v-if="isWebUrl(openTicket.pullRequestUrl)" :href="openTicket.pullRequestUrl" target="_blank">
+            {{ pullRequestLabel(openTicket.pullRequestUrl) }} ↗
+          </a>
+          <button
+            class="icon-button"
+            title="Refresh from GitHub"
+            :disabled="pullRequestRefreshing || !githubUrl"
+            @click="refreshOpenTicketPullRequest"
+          >
+            ↻
+          </button>
+        </p>
+        <span v-if="pullRequestError" class="field-hint field-error">{{ pullRequestError }}</span>
+        <label>
+          PR URL override
+          <input
+            type="url"
+            class="agent-file-path"
+            :value="openTicket.pullRequestUrl ?? ''"
+            placeholder="Found from the branch; paste https://github.com/owner/repo/pull/123 to override"
+            @change="overridePullRequestUrl(openTicket, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+      </section>
+
+      <section class="ticket-checklist ticket-links">
+        <p class="eyebrow">External Links</p>
+        <ul v-if="openTicket.externalLinks?.length">
+          <li v-for="(link, index) in openTicket.externalLinks" :key="index">
+            <a v-if="isWebUrl(link)" :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
+            <span v-else :title="link">{{ link }}</span>
+            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, link)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-links-add">
+          <input
+            ref="linkInput"
+            v-model="linkDraft"
+            type="url"
+            placeholder="https://…"
+            @input="linkDraftInvalid = false"
+            @keyup.enter="addLinkDraft(openTicket)"
+          />
+          <button type="button" @click="addLinkDraft(openTicket)">Add</button>
+        </div>
+        <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
 
       <section class="ticket-checklist">
         <p class="eyebrow">

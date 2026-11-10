@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { toPlainJson } from '@/shared/plainJson'
 import { createSeedState, getBoard, type ProjectRecord, type ProjectTrackerState, type Ticket } from '@/shared/projectTypes'
 
 const api = vi.hoisted(() => ({
@@ -33,6 +34,7 @@ const stateWithTicketIn = (laneId: string): ProjectTrackerState => {
     boards: {
       [PROJECT_PATH]: {
         lanes: [
+          { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '', fullAuto: true },
           { id: 'prd', name: 'PRD', agentPrompt: 'Write a PRD.', agentFilePath: '', fullAuto: true },
           { id: 'dev', name: 'In Development', agentPrompt: 'Build it.', agentFilePath: '', autoRunTerminalId: 'iterm2' }
         ],
@@ -43,6 +45,43 @@ const stateWithTicketIn = (laneId: string): ProjectTrackerState => {
 }
 
 const flushLaunches = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+describe('markAgentRunSeen', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  const withRun = (at: string): ProjectTrackerState => {
+    const state = stateWithTicketIn('dev')
+    const [ticket] = getBoard(state, PROJECT_PATH).tickets
+    ticket.agentRun = { at, laneId: 'dev', output: `run at ${at}`, succeeded: false }
+    return state
+  }
+  const savedTicket = (store: ReturnType<typeof useProjectsStore>) => getBoard(store.state, PROJECT_PATH).tickets[0]
+
+  it('marks the run seen without stamping updatedAt', async () => {
+    const store = useProjectsStore()
+    store.state = withRun('2026-01-02T00:00:00.000Z')
+
+    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+
+    expect(savedTicket(store).agentRun?.seenAt).toBeDefined()
+    expect(savedTicket(store).updatedAt).toBeUndefined()
+  })
+
+  it('leaves a newer run unseen and intact', async () => {
+    const store = useProjectsStore()
+    store.state = withRun('2026-01-03T00:00:00.000Z')
+    const newerRun = savedTicket(store).agentRun
+
+    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+
+    expect(savedTicket(store).agentRun).toEqual(newerRun)
+    expect(savedTicket(store).agentRun?.seenAt).toBeUndefined()
+  })
+})
 
 describe('full auto handoff', () => {
   beforeEach(() => {
@@ -67,6 +106,22 @@ describe('full auto handoff', () => {
     expect(useWorktrees).toBe(true)
     expect(launches[0].command).toContain('Build it.')
     expect(store.notice).toBe('Full auto: #7 → In Development')
+  })
+
+  it('launches In Development from ticket data when a ticket skips PRD with no agent run', async () => {
+    // Same round trip the preload applies to every IPC result.
+    api.refreshProjectState.mockImplementation(async () => toPlainJson(stateWithTicketIn('dev')))
+    api.autoRunLane.mockImplementation(async () => toPlainJson({ worktreePaths: [] }))
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+
+    await store.refresh()
+    await flushLaunches()
+
+    expect(store.error).toBeNull()
+    expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    const [, , launches] = api.autoRunLane.mock.calls[0]
+    expect(launches[0].command).toContain('Add the thing')
   })
 
   it('launches nothing for a move made in this window', async () => {
