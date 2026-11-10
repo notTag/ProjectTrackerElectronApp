@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import MetricsPanel from '@/components/MetricsPanel.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
@@ -82,6 +83,8 @@ const getProjectDisplayName = (project: ProjectRecord) => {
   const relativePath = project.path.slice(scanDirectory.length).replace(/^\//, '')
   return relativePath.includes('/') ? relativePath : project.name
 }
+
+const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
 
 const filteredProjects = computed(() =>
   store.projects.filter((project) => {
@@ -353,6 +356,7 @@ const renderMarkdown = (markdown: string | null) => {
   <header class="titlebar">
     <span class="titlebar-title">Project Tracker</span>
     <div class="titlebar-actions">
+      <MetricsPanel :project-paths="metricsProjectPaths" scope="dashboard" />
       <OpenInPicker />
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>

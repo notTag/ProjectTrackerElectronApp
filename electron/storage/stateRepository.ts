@@ -6,8 +6,11 @@ import {
   createSeedState,
   DEFAULT_USER_ID,
   DEFAULT_USER_NAME,
+  SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
   type BoardPreferences,
+  type MetricWindowCounts,
+  type MetricWindows,
   type ProjectBoard,
   type ProjectRecord,
   type ProjectTrackerState,
@@ -18,6 +21,8 @@ import {
 } from '../../src/shared/projectTypes.js'
 import {
   ADDED_COLUMNS,
+  CLOSED_AT_TRIGGERS_SQL,
+  CLOSING_LANES_SCHEMA_VERSION,
   PATH_KIND_HIDDEN,
   PATH_KIND_SCAN,
   PATH_KIND_THIRD_PARTY,
@@ -37,6 +42,14 @@ export const LEGACY_BACKUP_FILE_NAME = 'project-tracker.pre-wal-backup.sqlite'
 
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
+
+export interface ClosedTicketMetrics {
+  projectPath: string
+  name: string
+  githubUrl?: string
+  hasClosingLanes: boolean
+  closed: MetricWindowCounts
+}
 
 // SQLite stores whatever type it is given, so an outside writer can leave a
 // BLOB in a TEXT column (sqlite3's readfile() does). node:sqlite returns it as
@@ -192,6 +205,8 @@ export class StateRepository {
     this.transaction(() => {
       this.db.exec(SCHEMA_SQL)
       this.addMissingColumns()
+      this.db.exec(CLOSED_AT_TRIGGERS_SQL)
+      this.seedClosingLanesOnce()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
@@ -246,6 +261,16 @@ export class StateRepository {
       const columnExists = existingColumns.some((row) => row.name === column)
       if (!columnExists) this.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
     }
+  }
+
+  // Runs before recordSchemaVersion bumps the stored version. Flagging a lane
+  // fires swim_lanes_closed_at_on_flag, which backfills closed_at for the
+  // tickets already in it — approximate, since updated_at moves on every edit.
+  private seedClosingLanesOnce() {
+    const storedVersion = Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
+    if (storedVersion >= CLOSING_LANES_SCHEMA_VERSION) return
+    const placeholders = SEEDED_CLOSING_LANE_IDS.map(() => '?').join(', ')
+    this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
   }
 
   private recordSchemaVersion() {
@@ -370,14 +395,14 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, closes_ticket, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
-         position = excluded.position, is_unassigned = excluded.is_unassigned`,
+         closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
         projectPath,
@@ -389,6 +414,7 @@ export class StateRepository {
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
         lane.fullAuto ? 1 : 0,
+        lane.closesTicket ? 1 : 0,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
       ]
@@ -405,6 +431,36 @@ export class StateRepository {
        ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
       [this.userId, key, value]
     )
+  }
+
+  // Only projects this user can see and hasn't archived come back, so the
+  // renderer can't widen what is counted by naming other paths.
+  closedTicketMetrics(projectPaths: string[], windows: MetricWindows): ClosedTicketMetrics[] {
+    if (projectPaths.length === 0) return []
+    const placeholders = projectPaths.map(() => '?').join(', ')
+    const rows = this.select(
+      `SELECT projects.path, projects.name, projects.github_url,
+         EXISTS (SELECT 1 FROM swim_lanes
+                 WHERE swim_lanes.project_path = projects.path AND swim_lanes.closes_ticket = 1) AS has_closing_lanes,
+         COALESCE(SUM(CASE WHEN tickets.closed_at >= ? THEN 1 ELSE 0 END), 0) AS today,
+         COALESCE(SUM(CASE WHEN tickets.closed_at >= ? THEN 1 ELSE 0 END), 0) AS week,
+         COALESCE(SUM(CASE WHEN tickets.closed_at >= ? THEN 1 ELSE 0 END), 0) AS month,
+         COALESCE(SUM(CASE WHEN tickets.closed_at >= ? THEN 1 ELSE 0 END), 0) AS year
+       FROM projects
+       JOIN project_members ON project_members.project_path = projects.path AND project_members.user_id = ?
+       LEFT JOIN tickets ON tickets.project_path = projects.path AND tickets.closed_at IS NOT NULL
+       WHERE projects.archived = 0 AND projects.path IN (${placeholders})
+       GROUP BY projects.path
+       ORDER BY projects.name`,
+      [windows.today, windows.week, windows.month, windows.year, this.userId, ...projectPaths]
+    )
+    return rows.map((row) => ({
+      projectPath: String(row.path),
+      name: String(row.name),
+      githubUrl: asText(row.github_url),
+      hasClosingLanes: asBool(row.has_closing_lanes),
+      closed: { today: Number(row.today), week: Number(row.week), month: Number(row.month), year: Number(row.year) }
+    }))
   }
 
   upsertProject(project: ProjectRecord) {
@@ -482,7 +538,8 @@ export class StateRepository {
         autoRunAgentId: asText(row.auto_run_agent_id),
         autoRunTerminalId: asText(row.auto_run_terminal_id),
         autoRunWorktrees: asBool(row.auto_run_worktrees),
-        fullAuto: asBool(row.full_auto)
+        fullAuto: asBool(row.full_auto),
+        closesTicket: asBool(row.closes_ticket)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } fro
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
+import MetricsPanel from '@/components/MetricsPanel.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
@@ -810,6 +811,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <span class="titlebar-title">{{ projectTitle }}</span>
     <div class="titlebar-actions">
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
+      <MetricsPanel :project-paths="[projectPath]" scope="board" />
       <OpenInPicker />
       <button
         class="secondary"
@@ -1535,6 +1537,14 @@ const runTicketAgent = (ticket: Ticket) => {
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.closesTicket)"
+            @change="editLane(openLane, { closesTicket: ($event.target as HTMLInputElement).checked })"
+          />
+          Counts as closed: tickets entering this lane count as closed in Metrics
         </label>
         <span class="field-hint">
           The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it

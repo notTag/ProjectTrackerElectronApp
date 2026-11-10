@@ -4,6 +4,7 @@ import type {
   AutoRunTicketLaunch,
   GithubIssue,
   ProjectGithubData,
+  ProjectMetrics,
   ProjectTrackerState,
   PullRequestStatus,
   ScanResult
@@ -52,6 +53,7 @@ interface ProjectTrackerElectronApi {
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
+  getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>
   fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string): Promise<PullRequestStatus | null>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>
 }

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadless } from './agentRun.js'
+import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
@@ -155,15 +156,20 @@ const parseGithubRepo = (githubUrl: string) => {
 
 // Single door to the GitHub REST API so auth, headers and the status-to-message
 // mapping stay identical for every caller.
-const requestGithub = async <T>(apiPath: string): Promise<T> => {
+// A body makes it a JSON POST (the GraphQL endpoint); otherwise a GET.
+const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => {
   const token = await resolveGithubToken()
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'User-Agent': APP_NAME
   }
   if (token) headers.Authorization = `Bearer ${token}`
+  const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
 
-  const response = await fetch(`https://api.github.com${apiPath}`, { headers })
+  const response = await fetch(`https://api.github.com${apiPath}`, init)
+  if (response.status === 401 && !token) {
+    throw new Error('GitHub needs a sign-in for this. Run gh auth login or set GITHUB_TOKEN.')
+  }
   if (response.status === 404) {
     throw new Error(
       token
@@ -517,6 +523,39 @@ const registerIpc = () => {
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
     return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
+  })
+
+  // Computed live on every call: nothing is cached or stored, so an open of the
+  // panel always shows current numbers. One repo failing only blanks its own row.
+  ipcMain.handle('metrics:get', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const requestedPaths = (payload as { projectPaths?: unknown } | null)?.projectPaths
+    const pathsAreStrings = Array.isArray(requestedPaths) && requestedPaths.every((entry) => typeof entry === 'string')
+    if (!pathsAreStrings) throw new Error('Invalid project paths.')
+
+    const windows = metricWindows(new Date())
+    const normalizedPaths = requestedPaths.map(normalizePath)
+    const projects = stateRepository.closedTicketMetrics(normalizedPaths, windows)
+    const projectPaths = projects.map((project) => project.projectPath)
+
+    const prsFor = async (githubUrl: string | undefined) => {
+      if (!githubUrl) return undefined
+      try {
+        const { owner, repo } = parseGithubRepo(githubUrl)
+        return await prCounts(owner, repo, windows, requestGithub)
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+    const agentCountsRequest = runningAgentsByProject(projectPaths).catch(() => undefined)
+    const prRequests = Promise.all(projects.map((project) => prsFor(project.githubUrl)))
+    const [agentCounts, prs] = await Promise.all([agentCountsRequest, prRequests])
+
+    return projects.map(({ githubUrl: _githubUrl, ...project }, index) => ({
+      ...project,
+      prs: prs[index],
+      agentsRunning: agentCounts ? agentCounts[project.projectPath] : null
+    }))
   })
 
   ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {
