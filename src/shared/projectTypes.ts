@@ -245,6 +245,8 @@ export interface Ticket {
   fullAuto?: boolean
 }
 
+export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
+
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
 // can act on. Discarded on save when left untouched, so an unused template never
 // persists as noise.
