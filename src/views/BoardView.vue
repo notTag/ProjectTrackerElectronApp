@@ -15,6 +15,7 @@ import {
   addChecklistItem,
   agentForTicket,
   agentRunBadge,
+  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -605,11 +606,11 @@ const openTicketInShell = (ticket: Ticket) =>
   store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
 
 // Glyphs, not just colour, tell success from failure.
-const AGENT_BADGES = {
-  running: { className: 'agent-status-running', label: 'Agent running', glyph: '' },
+const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
+  running: { className: 'agent-status-running', label: 'Agent running' },
   succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
   failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' }
-} as const
+}
 
 const cardAgentBadge = (ticket: Ticket) => {
   const running = Boolean(store.agentRunning[ticket.id])
@@ -617,7 +618,10 @@ const cardAgentBadge = (ticket: Ticket) => {
   return badge ? AGENT_BADGES[badge] : null
 }
 
-const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(hasUnseenAgentResult).length
+// A re-running ticket shows the running dot, not its old result, so the lane
+// count leaves it out too.
+const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
+const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
 
 // Watching the open ticket (not the card click) also covers opening from the
 // graph view, and a run that finishes while its modal is already open.
@@ -627,8 +631,7 @@ watch(
   (agentRun) => {
     const ticket = openTicket.value
     if (!ticket || !agentRun || agentRun.seenAt !== undefined) return
-    const seenRun = { ...agentRun, seenAt: new Date().toISOString() }
-    void store.updateTicket(projectPath.value, ticket.id, { agentRun: seenRun })
+    void store.markAgentRunSeen(projectPath.value, ticket.id, agentRun.at)
   },
   { immediate: true }
 )

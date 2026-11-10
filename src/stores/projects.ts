@@ -225,6 +225,19 @@ export const useProjectsStore = defineStore('projects', {
       }))
     },
 
+    // Matched against the run saved at write time, not the one the caller saw:
+    // a run that finished in between keeps its result and stays unseen.
+    // Skips the updatedAt stamp, because looking at a ticket is not editing it.
+    async markAgentRunSeen(projectPath: string, ticketId: string, runAt: string) {
+      const seenAt = new Date().toISOString()
+      const markSeen = (ticket: Ticket): Ticket => {
+        const savedRun = ticket.agentRun
+        const isUnseenRun = ticket.id === ticketId && savedRun?.at === runAt && savedRun.seenAt === undefined
+        return isUnseenRun ? { ...ticket, agentRun: { ...savedRun, seenAt } } : ticket
+      }
+      await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(markSeen) }))
+    },
+
     // Imports open GitHub issues into the board's dedicated import lane, which
     // is created on first pull. Already-imported issues are left untouched, so
     // this is safe to re-run.
