@@ -46,6 +46,43 @@ const stateWithTicketIn = (laneId: string): ProjectTrackerState => {
 
 const flushLaunches = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+describe('markAgentRunSeen', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  const withRun = (at: string): ProjectTrackerState => {
+    const state = stateWithTicketIn('dev')
+    const [ticket] = getBoard(state, PROJECT_PATH).tickets
+    ticket.agentRun = { at, laneId: 'dev', output: `run at ${at}`, succeeded: false }
+    return state
+  }
+  const savedTicket = (store: ReturnType<typeof useProjectsStore>) => getBoard(store.state, PROJECT_PATH).tickets[0]
+
+  it('marks the run seen without stamping updatedAt', async () => {
+    const store = useProjectsStore()
+    store.state = withRun('2026-01-02T00:00:00.000Z')
+
+    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+
+    expect(savedTicket(store).agentRun?.seenAt).toBeDefined()
+    expect(savedTicket(store).updatedAt).toBeUndefined()
+  })
+
+  it('leaves a newer run unseen and intact', async () => {
+    const store = useProjectsStore()
+    store.state = withRun('2026-01-03T00:00:00.000Z')
+    const newerRun = savedTicket(store).agentRun
+
+    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+
+    expect(savedTicket(store).agentRun).toEqual(newerRun)
+    expect(savedTicket(store).agentRun?.seenAt).toBeUndefined()
+  })
+})
+
 describe('full auto handoff', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

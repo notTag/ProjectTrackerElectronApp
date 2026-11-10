@@ -1157,6 +1157,7 @@ code {
    means "success". */
 .agent-status {
   --agent-status-green: #22c55e;
+  --agent-status-red: #ef4444;
   display: inline-block;
   margin-right: 6px;
 }
@@ -1175,6 +1176,24 @@ code {
   color: var(--agent-status-green);
   font-weight: 700;
   text-shadow: 0 0 6px var(--agent-status-green);
+}
+
+.agent-status-failed {
+  color: var(--agent-status-red);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--agent-status-red);
+}
+
+.lane-unseen-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-accent);
+  color: var(--color-surface);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 
 @keyframes agent-status-pulse {
@@ -1359,6 +1378,23 @@ code {
 }
 
 .ticket-checklist li span {
+  flex: 1;
+}
+
+.ticket-links li a {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-links-add {
+  display: flex;
+  gap: 8px;
+}
+
+.ticket-links-add input {
   flex: 1;
 }
 

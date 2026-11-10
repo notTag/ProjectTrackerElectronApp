@@ -326,6 +326,14 @@ In graph view this opens as a side panel instead of a centered modal.
 | Worktree | Absolute path to a worktree. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
 
+**External Links**
+
+- Any number of extra links per ticket (design docs, Figma, Slack threads, related issues). Stored as `external_links_json` on the ticket row.
+- Type a URL and press **Add** or Enter. The link joins the list above, and the input clears and keeps focus for the next one.
+- Only http(s) URLs are added. Anything else keeps its text and shows "Use an http(s) URL". Duplicates are skipped.
+- Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
+- Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
+
 **Checklist**
 
 - The heading shows done/total.
