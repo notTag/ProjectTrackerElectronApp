@@ -213,7 +213,26 @@ export interface TicketAgentRun {
   // Absent on runs saved before it existed; those show no completed badge
   // rather than claiming a success nobody recorded.
   succeeded?: boolean
+  // When someone opened the ticket after this run finished. Absent = unseen, so
+  // runs saved before it existed still surface their result once.
+  seenAt?: string
 }
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed'
+
+// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
+// lane says nothing about the work in this one.
+export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
+  if (running) return 'running'
+  const lastRun = ticket.agentRun
+  if (!lastRun || lastRun.succeeded === undefined) return null
+  const alreadySeen = lastRun.seenAt !== undefined
+  const fromOtherLane = lastRun.laneId !== ticket.laneId
+  if (alreadySeen || fromOtherLane) return null
+  return lastRun.succeeded ? 'succeeded' : 'failed'
+}
+
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => agentRunBadge(ticket, false) !== null
 
 export interface Ticket {
   id: string
@@ -247,7 +266,11 @@ export interface Ticket {
   externalUrl?: string
   // Full auto for this ticket in every lane, whatever the lane's own toggle says.
   fullAuto?: boolean
+  // Any further http(s) links: design docs, threads, related issues. Absent means none.
+  externalLinks?: string[]
 }
+
+export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
 
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
 // can act on. Discarded on save when left untouched, so an unused template never
@@ -284,6 +307,16 @@ export const setChecklistItemDone = (
 
 export const removeChecklistItem = (checklist: ChecklistItem[] = [], index: number): ChecklistItem[] =>
   checklist.filter((_, itemIndex) => itemIndex !== index)
+
+// Returns the same array for a non-web or duplicate URL.
+export const addExternalLink = (links: string[] = [], url: string): string[] => {
+  const trimmedUrl = url.trim()
+  const isNewWebUrl = isWebUrl(trimmedUrl) && !links.includes(trimmedUrl)
+  return isNewWebUrl ? [...links, trimmedUrl] : links
+}
+
+export const removeExternalLink = (links: string[] = [], index: number): string[] =>
+  links.filter((_, linkIndex) => linkIndex !== index)
 
 export const checklistProgress = (checklist: ChecklistItem[] = []) => {
   const doneItems = checklist.filter((item) => item.done)
@@ -338,7 +371,20 @@ const HERMES_AGENT: Agent = {
   promptArgs: ['chat', '-q']
 }
 
-const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
+// `opencode run` is the non-interactive mode. The TUI reads its first positional
+// as a project directory (the Hermes trap again), so the prompt rides on --prompt.
+// No --dangerously-skip-permissions: opencode.json's `permission` config decides
+// what a headless run may do. To opt in, save an `opencode` agent with the flag —
+// and keep promptArgs ['--prompt'], since a saved agent replaces this one whole.
+const OPENCODE_AGENT: Agent = {
+  id: 'opencode',
+  name: 'opencode',
+  command: 'opencode',
+  headlessArgs: ['run'],
+  promptArgs: ['--prompt']
+}
+
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
 
 // Agents saved in state are offered alongside the built-ins, so adding another
 // CLI is one entry, not a code change. A saved agent with a built-in's id wins
@@ -366,6 +412,7 @@ export interface TicketPromptContext {
 // prompt instead of a column of "none"s.
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
+  const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -375,6 +422,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
+    linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')

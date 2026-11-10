@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   external_id TEXT,
   external_url TEXT,
   full_auto INTEGER NOT NULL DEFAULT 0,
+  external_links_json TEXT,
   UNIQUE (project_path, number)
 );
 
@@ -134,6 +135,7 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' },
   { table: 'tickets', column: 'pull_request_state', definition: 'TEXT' },
   { table: 'tickets', column: 'pull_request_merged_at', definition: 'TEXT' },
+  { table: 'tickets', column: 'external_links_json', definition: 'TEXT' },
   { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ]
 

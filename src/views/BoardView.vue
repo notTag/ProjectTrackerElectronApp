@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -13,7 +13,10 @@ import {
   TICKET_CARD_FIELDS,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
+  addExternalLink,
   agentForTicket,
+  agentRunBadge,
+  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -28,9 +31,11 @@ import {
   pullRequestLabel,
   pullRequestStatusLabel,
   removeChecklistItem,
+  removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
@@ -45,7 +50,8 @@ import {
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
   type SwimLane,
-  type Ticket
+  type Ticket,
+  type TicketPatch
 } from '@/shared/projectTypes'
 
 const route = useRoute()
@@ -80,6 +86,9 @@ const boardSettingsOpen = ref(false)
 const ticketDraft = ref<{ title: string; description: string; laneId: string } | null>(null)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
+const linkDraft = ref('')
+const linkDraftInvalid = ref(false)
+const linkInput = ref<HTMLInputElement | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -90,7 +99,8 @@ const anyModalOpen = computed(
         openLaneId.value ||
         ticketDraft.value ||
         laneDraftName.value !== null ||
-        autoRunConfirmLaneId.value
+        autoRunConfirmLaneId.value ||
+        ticketPendingDeletion.value
     ) || boardSettingsOpen.value
 )
 
@@ -352,9 +362,50 @@ const clearFilters = () => {
   showOnlyMine.value = false
 }
 
-const assignToMe = (ticket: Ticket) => {
-  const nextAssigneeId = ticket.assigneeId === store.state.userId ? undefined : store.state.userId
-  editTicket(ticket, { assigneeId: nextAssigneeId })
+// Fields save on change, so Cancel can't just drop a draft. Instead each field
+// keeps the value it held just before its first edit this session. Captured at
+// edit time, not on open, so a write that lands from elsewhere (a background
+// run, an agent, a drag) before the user touches that field is never undone.
+// A field that was unset keeps its key as undefined, which clears it on restore.
+const valuesBeforeEdit = new Map<keyof TicketPatch, unknown>()
+
+watch(openTicketId, () => valuesBeforeEdit.clear())
+
+const rememberValuesBeforeEdit = (ticket: Ticket, patch: TicketPatch) => {
+  const editedFields = Object.keys(patch) as (keyof TicketPatch)[]
+  for (const field of editedFields) {
+    if (valuesBeforeEdit.has(field)) continue
+    const currentValue = toRaw(ticket[field])
+    valuesBeforeEdit.set(field, structuredClone(currentValue))
+  }
+}
+
+const cancelTicketEdits = () => {
+  const ticketId = openTicketId.value
+  const restorePatch: TicketPatch = Object.fromEntries(valuesBeforeEdit)
+  closeModals()
+  if (ticketId && valuesBeforeEdit.size > 0) void store.updateTicket(projectPath.value, ticketId, restorePatch)
+}
+
+const ticketPendingDeletion = ref<Ticket | null>(null)
+const deleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
+
+// The ticket can vanish underneath the confirm (agent, poll); drop the stale question.
+watch(openTicket, (ticket) => {
+  if (!ticket) ticketPendingDeletion.value = null
+})
+
+// Focus lands on Cancel so a stray Enter can't delete the ticket.
+const askToDeleteTicket = async (ticket: Ticket) => {
+  ticketPendingDeletion.value = ticket
+  await nextTick()
+  deleteConfirmCancelButton.value?.focus()
+}
+
+const confirmDeleteTicket = async () => {
+  const ticket = ticketPendingDeletion.value
+  ticketPendingDeletion.value = null
+  if (ticket) await deleteTicket(ticket)
 }
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
@@ -405,6 +456,17 @@ watch(
   { immediate: true }
 )
 
+// Keyed on githubUrl too: on a deep link the project isn't loaded yet, so the
+// pull waits for the url to show up instead of seeing "no repo" and skipping.
+// The board route is reused across projects, hence a watch, not onMounted.
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (url) void store.autoPullGithubIssues(path)
+  },
+  { immediate: true }
+)
+
 const closeModals = () => {
   openTicketId.value = null
   openLaneId.value = null
@@ -412,7 +474,10 @@ const closeModals = () => {
   laneDraftName.value = null
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
+  ticketPendingDeletion.value = null
   checklistDraft.value = ''
+  linkDraft.value = ''
+  linkDraftInvalid.value = false
 }
 
 const focusTicketFilter = () => {
@@ -435,6 +500,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   // Claimed before anything else: an unhandled Escape leaves the board.
   if (laneDrag.value?.active) {
     cancelLaneDrag()
+    event.preventDefault()
+    return
+  }
+  // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
+  if (ticketPendingDeletion.value) {
+    ticketPendingDeletion.value = null
     event.preventDefault()
     return
   }
@@ -496,7 +567,9 @@ const deleteTicket = async (ticket: Ticket) => {
   await store.removeTicket(projectPath.value, ticket.id)
 }
 
-const editTicket = (ticket: Ticket, patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>) => {
+const editTicket = (ticket: Ticket, patch: TicketPatch) => {
+  const editsOpenTicket = ticket.id === openTicketId.value
+  if (editsOpenTicket) rememberValuesBeforeEdit(ticket, patch)
   void store.updateTicket(projectPath.value, ticket.id, patch)
 }
 
@@ -514,6 +587,39 @@ const toggleChecklistItem = (ticket: Ticket, index: number, done: boolean) =>
 
 const dropChecklistItem = (ticket: Ticket, index: number) =>
   editTicket(ticket, { checklist: removeChecklistItem(ticket.checklist, index) })
+
+// Invalid input keeps its text so it can be fixed; a duplicate clears, since
+// that link is already listed above.
+const addLinkDraft = (ticket: Ticket) => {
+  const url = linkDraft.value.trim()
+  if (!url) return
+  linkInput.value?.focus()
+  if (!isWebUrl(url)) {
+    linkDraftInvalid.value = true
+    return
+  }
+  linkDraft.value = ''
+  const isAlreadyListed = ticket.externalLinks?.includes(url)
+  if (!isAlreadyListed) editTicketLinks(ticket, (links) => addExternalLink(links, url))
+}
+
+const dropExternalLink = (ticket: Ticket, link: string) =>
+  editTicketLinks(ticket, (links = []) => removeExternalLink(links, links.indexOf(link)))
+
+// Store state only refreshes after the IPC save returns, so the new list is
+// computed inside the queued mutate from the latest saved links: two quick
+// adds or removes in a row would otherwise overwrite each other.
+const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  void store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const links = change(current.externalLinks)
+      return { ...current, externalLinks: links.length ? links : undefined, updatedAt }
+    })
+  }))
+}
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
@@ -653,12 +759,36 @@ const openTicketInShell = (ticket: Ticket) => {
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 
-// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
-const agentFinishedInCurrentLane = (ticket: Ticket) => {
-  const lastRun = ticket.agentRun
-  return lastRun?.succeeded === true && lastRun.laneId === ticket.laneId
+// Glyphs, not just colour, tell success from failure.
+const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
+  running: { className: 'agent-status-running', label: 'Agent running' },
+  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
+  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' }
 }
+
+const cardAgentBadge = (ticket: Ticket) => {
+  const running = Boolean(store.agentRunning[ticket.id])
+  const badge = agentRunBadge(ticket, running)
+  return badge ? AGENT_BADGES[badge] : null
+}
+
+// A re-running ticket shows the running dot, not its old result, so the lane
+// count leaves it out too.
+const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
+const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
+
+// Watching the open ticket (not the card click) also covers opening from the
+// graph view, and a run that finishes while its modal is already open.
+// Only unseen runs are written, so reopening a ticket doesn't touch it.
+watch(
+  () => openTicket.value?.agentRun,
+  (agentRun) => {
+    const ticket = openTicket.value
+    if (!ticket || !agentRun || agentRun.seenAt !== undefined) return
+    void store.markAgentRunSeen(projectPath.value, ticket.id, agentRun.at)
+  },
+  { immediate: true }
+)
 
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
@@ -809,6 +939,13 @@ const runTicketAgent = (ticket: Ticket) => {
         >
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span
+            v-if="unseenAgentResultCount(lane.id) > 0"
+            class="lane-unseen-count"
+            role="img"
+            :aria-label="`${unseenAgentResultCount(lane.id)} unseen agent results`"
+            title="Agent results you haven't opened yet"
+          >{{ unseenAgentResultCount(lane.id) }}</span>
           <button
             class="icon-button auto-run-button"
             :title="autoRunTooltip(lane)"
@@ -851,19 +988,12 @@ const runTicketAgent = (ticket: Ticket) => {
             />
             <h3>
               <span
-                v-if="store.agentRunning[ticket.id]"
-                class="agent-status agent-status-running"
+                v-if="cardAgentBadge(ticket)"
+                :class="['agent-status', cardAgentBadge(ticket)?.className]"
                 role="img"
-                aria-label="Agent running"
-                title="Agent running"
-              />
-              <span
-                v-else-if="agentFinishedInCurrentLane(ticket)"
-                class="agent-status agent-status-done"
-                role="img"
-                aria-label="Agent finished"
-                title="Agent finished"
-              >✓</span>
+                :aria-label="cardAgentBadge(ticket)?.label"
+                :title="cardAgentBadge(ticket)?.label"
+              >{{ cardAgentBadge(ticket)?.glyph }}</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span
@@ -1125,6 +1255,29 @@ const runTicketAgent = (ticket: Ticket) => {
         </label>
       </section>
 
+      <section class="ticket-checklist ticket-links">
+        <p class="eyebrow">External Links</p>
+        <ul v-if="openTicket.externalLinks?.length">
+          <li v-for="(link, index) in openTicket.externalLinks" :key="index">
+            <a v-if="isWebUrl(link)" :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
+            <span v-else :title="link">{{ link }}</span>
+            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, link)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-links-add">
+          <input
+            ref="linkInput"
+            v-model="linkDraft"
+            type="url"
+            placeholder="https://…"
+            @input="linkDraftInvalid = false"
+            @keyup.enter="addLinkDraft(openTicket)"
+          />
+          <button type="button" @click="addLinkDraft(openTicket)">Add</button>
+        </div>
+        <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
+
       <section class="ticket-checklist">
         <p class="eyebrow">
           Checklist
@@ -1209,11 +1362,29 @@ const runTicketAgent = (ticket: Ticket) => {
       </a>
 
       <div class="modal-actions">
-        <button class="secondary danger" @click="deleteTicket(openTicket)">Delete</button>
-        <button class="secondary" @click="assignToMe(openTicket)">
-          {{ openTicket.assigneeId === store.state.userId ? 'Unassign me' : 'Assign to me' }}
+        <button
+          class="secondary danger ticket-delete"
+          title="Delete ticket"
+          aria-label="Delete ticket"
+          @click="askToDeleteTicket(openTicket)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
         </button>
+        <button class="secondary" @click="cancelTicketEdits">Cancel</button>
         <button @click="closeModals">Done</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="ticketPendingDeletion" class="modal-backdrop" @click.self="ticketPendingDeletion = null">
+    <section class="modal" role="alertdialog" aria-labelledby="delete-ticket-question">
+      <p class="eyebrow">Delete ticket</p>
+      <p id="delete-ticket-question">
+        Are you sure you want to delete ticket #{{ ticketPendingDeletion.number }}?
+      </p>
+      <div class="modal-actions">
+        <button ref="deleteConfirmCancelButton" class="secondary" @click="ticketPendingDeletion = null">Cancel</button>
+        <button class="secondary danger" @click="confirmDeleteTicket">Delete</button>
       </div>
     </section>
   </div>
