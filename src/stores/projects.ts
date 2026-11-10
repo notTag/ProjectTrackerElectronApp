@@ -24,6 +24,7 @@ import {
   ticketBranchName,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
+  type TerminalTab,
   type CompletionMove,
   type FullAutoHandoff,
   type BoardPreferences,
@@ -676,7 +677,8 @@ export const useProjectsStore = defineStore('projects', {
       targetId: string,
       terminalLabel: string,
       launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
-      useWorktrees: boolean
+      useWorktrees: boolean,
+      orchestrator?: TerminalTab
     ): Promise<boolean> {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
@@ -684,10 +686,17 @@ export const useProjectsStore = defineStore('projects', {
       this.notice = null
       try {
         const ticketLaunches = launches.map((entry) => entry.launch)
-        const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)
+        const { worktreePaths } = await projectTrackerApi.autoRunLane(
+          path,
+          targetId,
+          ticketLaunches,
+          useWorktrees,
+          orchestrator
+        )
         const tabWord = launches.length === 1 ? 'tab' : 'tabs'
         const worktreeNote = useWorktrees ? ', one worktree each' : ''
-        this.notice = `Auto Run opened ${launches.length} ${tabWord} in ${terminalLabel}${worktreeNote}.`
+        const orchestratorNote = orchestrator ? ' plus an orchestrator tab' : ''
+        this.notice = `Auto Run opened ${launches.length} ${tabWord}${orchestratorNote} in ${terminalLabel}${worktreeNote}.`
         if (worktreePaths.length === 0) return true
         const updatedAt = new Date().toISOString()
         const placementByTicketId = new Map(

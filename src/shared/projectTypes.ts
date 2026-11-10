@@ -541,6 +541,10 @@ export const ticketShellCommand = (
   context: TicketPromptContext = {}
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
+  return agentShellCommand(agent, prompt)
+}
+
+export const agentShellCommand = (agent: Agent, prompt: string): string => {
   const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
 }
@@ -618,6 +622,145 @@ export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =
 
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
+
+const ORCHESTRATOR_TAB_TITLE_PREFIX = 'AUTORUN-ORCHESTRATOR-'
+// main drops titles over 200 UTF-16 units; 100 code points stays under that
+// even when every one is a surrogate pair.
+const ORCHESTRATOR_TAB_TITLE_MAX_CODE_POINTS = 100
+
+export const orchestratorTabTitle = (lane: Pick<SwimLane, 'name'>): string => {
+  const singleLineName = lane.name.replace(/\p{Cc}/gu, ' ').trim()
+  const laneSlug = singleLineName.toUpperCase().replace(/\s+/g, '-') || 'LANE'
+  const codePoints = Array.from(`${ORCHESTRATOR_TAB_TITLE_PREFIX}${laneSlug}`)
+  return codePoints.slice(0, ORCHESTRATOR_TAB_TITLE_MAX_CODE_POINTS).join('')
+}
+
+// Fixed in dev and packaged builds alike: main sets the app name before
+// Electron resolves userData.
+export const TRACKER_DATABASE_PATH = '$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite'
+
+interface TerminalTabRecipes {
+  listTabs: string
+  closeTab: string
+}
+
+// <N> is the ticket number. Each listing prints every tab title in one line.
+// Verified against each app's scripting dictionary; Warp has none, so it gets no recipes.
+const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
+  ghostty: {
+    listTabs: `osascript -e 'tell application "Ghostty" to get name of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "Ghostty"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'if name of t starts with "#<N> " then' -e 'close tab t' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  },
+  iterm2: {
+    listTabs: `osascript -e 'tell application "iTerm" to get name of every session of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "iTerm"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'repeat with s in sessions of t' -e 'if name of s starts with "#<N> " then' -e 'close s' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  },
+  // Terminal has no close verb for a tab: it is selected and closed with ⌘W.
+  terminal: {
+    listTabs: `osascript -e 'tell application "Terminal" to get custom title of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "Terminal"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'if custom title of t starts with "#<N> " then' -e 'set selected of t to true' -e 'set index of w to 1' -e 'activate'`,
+      `-e 'tell application "System Events" to keystroke "w" using command down' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  }
+}
+
+export interface OrchestratorPromptContext {
+  projectPath: string
+  // Every lane a ticket can reach, the unassigned one included.
+  lanes: SwimLane[]
+  terminalId: string
+  terminalLabel: string
+}
+
+const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
+
+const tabSection = (context: OrchestratorPromptContext): string => {
+  const recipes = TERMINAL_TAB_RECIPES[context.terminalId]
+  if (!recipes) {
+    return [
+      `${context.terminalLabel} cannot be queried or scripted: report every agent as "unknown",`,
+      'and when a ticket is done tell the user to close its tab by hand.'
+    ].join('\n')
+  }
+  return [
+    `Open tab titles in ${context.terminalLabel}:`,
+    recipes.listTabs,
+    'A ticket\'s agent is running while a tab whose title starts with "#<N> " exists. Full auto handoffs open',
+    'new tabs for later lanes with the same "#<N> " prefix, so match on the prefix, not the whole title.',
+    '',
+    'Close a done ticket\'s tab (replace <N>; rerun until the listing shows no "#<N> " tab):',
+    recipes.closeTab
+  ].join('\n')
+}
+
+// The orchestrator only reports: it shares the DB with the app and the ticket
+// agents, so it is told never to write, and never to steer the other agents.
+export const orchestratorPrompt = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): string => {
+  const launches = entries.map((entry) => entry.launch)
+  const ticketLines = entries.map(({ ticket, launch }) => {
+    const tabTitle = launch.title ?? `#${launch.number}`
+    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+  })
+  const laneLines = context.lanes.map(
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+  )
+  const ticketNumbers = launches.map((launch) => launch.number).join(', ')
+  const ticketQuery = [
+    `sqlite3 -readonly "${TRACKER_DATABASE_PATH}"`,
+    `"SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets`,
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});"`
+  ].join(' ')
+
+  return [
+    `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
+    'You report only. Never write to the database, never move tickets, never edit files, never answer or message the ticket agents.',
+    ['Watch these tickets until each one is done:', ...ticketLines].join('\n'),
+    ['Board lanes (id — name — agent work):', ...laneLines].join('\n'),
+    ['Ticket state (read-only):', ticketQuery].join('\n'),
+    [
+      'PR state per ticket (use the branch_name from the database when it differs from the one above):',
+      'gh pr list --head <branch> --state all --json number,url,state'
+    ].join('\n'),
+    tabSection(context),
+    [
+      'Loop:',
+      '1. On start, then every 60 seconds (sleep 60), gather the state above.',
+      '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
+      '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
+      '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
+      `   or its tab is gone while it is still in the ${lane.id} lane.`,
+      '4. Done = it is in a lane with agent work: no, or its PR is merged. When a ticket becomes done, close its tab and say so.',
+      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
+    ].join('\n')
+  ].join('\n\n')
+}
+
+// One ticket needs no watcher: its own tab already says everything.
+export const buildOrchestratorLaunch = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  agent: Agent,
+  context: OrchestratorPromptContext
+): TerminalTab | undefined => {
+  if (entries.length < 2) return undefined
+  const prompt = orchestratorPrompt(lane, entries, context)
+  return { command: agentShellCommand(agent, prompt), title: orchestratorTabTitle(lane) }
+}
 
 export interface FullAutoHandoff {
   ticket: Ticket

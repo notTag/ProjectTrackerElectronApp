@@ -16,6 +16,30 @@ import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
 
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 
+// Formatting is ticketTabTitle's job; this only refuses garbage, and an
+// oversized title is dropped rather than failing the run over a nicety.
+const TAB_TITLE_MAX_LENGTH = 200
+// Control characters could smuggle terminal escape sequences into the title.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
+export const usableTabTitle = (title: unknown): string | undefined => {
+  if (typeof title !== 'string' || !title) return undefined
+  if (title.length > TAB_TITLE_MAX_LENGTH || CONTROL_CHARACTERS.test(title)) return undefined
+  return title
+}
+
+// The orchestrator tab is only told apart from ticket tabs by its title, so
+// unlike a ticket title a bad one fails the run instead of being dropped.
+export const orchestratorTab = (value: unknown): TerminalTab | undefined => {
+  if (value === undefined) return undefined
+  const candidate = value as Partial<TerminalTab> | null
+  const isObject = typeof candidate === 'object' && candidate !== null
+  const title = isObject ? usableTabTitle(candidate.title) : undefined
+  if (!isObject || typeof candidate.command !== 'string' || !candidate.command || !title) {
+    throw new Error('Invalid Auto Run orchestrator.')
+  }
+  return { command: candidate.command, title }
+}
+
 // JSON's string syntax is a subset of a YAML double-quoted scalar, so this
 // carries the newlines and quotes of a ticket prompt through intact without
 // pulling in a YAML serializer for two fields.

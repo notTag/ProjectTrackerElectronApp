@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { AutoRunTicketLaunch, ProjectTrackerState } from '../src/shared/projectTypes.js'
+import type { AutoRunTicketLaunch, ProjectTrackerState, TerminalTab } from '../src/shared/projectTypes.js'
 
 // Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
 const toPlainJson = <T,>(value: T): T => {
@@ -40,8 +40,13 @@ contextBridge.exposeInMainWorld('projectTracker', {
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),
-  autoRunLane: (projectPath: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) =>
-    invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees }),
+  autoRunLane: (
+    projectPath: string,
+    targetId: string,
+    tickets: AutoRunTicketLaunch[],
+    useWorktrees: boolean,
+    orchestrator?: TerminalTab
+  ) => invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees, orchestrator }),
   runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>
     invokePlain('ticket:run-agent', { projectPath, agentId, prompt }),
   readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),

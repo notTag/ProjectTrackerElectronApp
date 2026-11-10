@@ -1,5 +1,5 @@
 import { toPlainJson } from '@/shared/plainJson'
-import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult } from '@/shared/projectTypes'
+import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult, TerminalTab } from '@/shared/projectTypes'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
@@ -69,8 +69,14 @@ export const projectTrackerApi = {
     return requireElectron().openProjectIn(path, targetId, command, title)
   },
 
-  autoRunLane(path: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) {
-    return requireElectron().autoRunLane(path, targetId, tickets, useWorktrees)
+  autoRunLane(
+    path: string,
+    targetId: string,
+    tickets: AutoRunTicketLaunch[],
+    useWorktrees: boolean,
+    orchestrator?: TerminalTab
+  ) {
+    return requireElectron().autoRunLane(path, targetId, tickets, useWorktrees, orchestrator)
   },
 
   runTicketAgent(path: string, agentId: string, prompt: string) {

@@ -22,6 +22,7 @@ import {
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -759,7 +760,14 @@ const confirmAutoRunLane = () => {
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
+  const orchestratorContext = {
+    projectPath: projectPath.value,
+    lanes: [...board.value.lanes, getUnassignedLane(board.value)],
+    terminalId: terminal.id,
+    terminalLabel: terminal.label
+  }
+  const orchestrator = buildOrchestratorLaunch(lane, launches, agent, orchestratorContext)
+  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees, orchestrator)
 }
 
 const openTicketInShell = (ticket: Ticket) => {
