@@ -34,8 +34,8 @@ contextBridge.exposeInMainWorld('projectTracker', {
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
-  openProjectIn: (projectPath: string, targetId: string, command?: string) =>
-    invokePlain('project:open-in', { projectPath, targetId, command }),
+  openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
+    invokePlain('project:open-in', { projectPath, targetId, command, title }),
   autoRunLane: (projectPath: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) =>
     invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees }),
   runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>

@@ -27,7 +27,8 @@ interface ProjectTrackerElectronApi {
   openProjectIn(
     path: string,
     targetId: string,
-    command?: string
+    command?: string,
+    title?: string
   ): Promise<{
     ok: true
     appLabel: string
