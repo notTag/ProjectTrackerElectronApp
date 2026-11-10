@@ -181,6 +181,10 @@ const setMetricFilter = (metric: Exclude<MetricFilter, null>) => {
   selectedStatuses.value = [activeMetric.value]
 }
 
+// Called at setup (not onMounted) so the first render is already filtered.
+// The view remounts on every return from a board, so this also resets to Active then.
+setMetricFilter('active')
+
 const clearFilters = () => {
   query.value = ''
   selectedStatuses.value = []
@@ -213,7 +217,10 @@ const pickOnboardingPath = async () => {
 const startFirstScan = async () => {
   if (!onboardingPath.value) return
   const ok = await store.scan(onboardingPath.value, { requireProjects: true })
-  if (ok) onboardingSkipped.value = true
+  if (!ok) return
+  onboardingSkipped.value = true
+  // Freshly scanned projects are all 'unknown', so the Active default would show an empty list.
+  clearFilters()
 }
 
 const removePendingDirectory = async () => {
