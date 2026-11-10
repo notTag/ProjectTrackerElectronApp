@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -32,6 +32,7 @@ import {
   getUnassignedLane,
   ticketAgentPrompt,
   ticketSearchText,
+  ticketRestorePatch,
   ticketShellCommand,
   ticketsToRun,
   toggleCardField,
@@ -43,7 +44,8 @@ import {
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
   type SwimLane,
-  type Ticket
+  type Ticket,
+  type TicketPatch
 } from '@/shared/projectTypes'
 
 const route = useRoute()
@@ -88,7 +90,8 @@ const anyModalOpen = computed(
         openLaneId.value ||
         ticketDraft.value ||
         laneDraftName.value !== null ||
-        autoRunConfirmLaneId.value
+        autoRunConfirmLaneId.value ||
+        ticketPendingDeletion.value
     ) || boardSettingsOpen.value
 )
 
@@ -350,9 +353,38 @@ const clearFilters = () => {
   showOnlyMine.value = false
 }
 
-const assignToMe = (ticket: Ticket) => {
-  const nextAssigneeId = ticket.assigneeId === store.state.userId ? undefined : store.state.userId
-  editTicket(ticket, { assigneeId: nextAssigneeId })
+// Fields save on change, so Cancel can't just drop a draft: it puts back what
+// the ticket held when the modal opened, for the fields this session edited.
+let openTicketSnapshot: Ticket | null = null
+const editedTicketFields = new Set<keyof TicketPatch>()
+
+watch(openTicketId, () => {
+  openTicketSnapshot = openTicket.value ? toRaw(openTicket.value) : null
+  editedTicketFields.clear()
+})
+
+const cancelTicketEdits = () => {
+  const snapshot = openTicketSnapshot
+  const restorePatch = snapshot ? ticketRestorePatch(snapshot, editedTicketFields) : {}
+  closeModals()
+  const nothingToRestore = Object.keys(restorePatch).length === 0
+  if (snapshot && !nothingToRestore) void store.updateTicket(projectPath.value, snapshot.id, restorePatch)
+}
+
+const ticketPendingDeletion = ref<Ticket | null>(null)
+const deleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
+
+// Focus lands on Cancel so a stray Enter can't delete the ticket.
+const askToDeleteTicket = async (ticket: Ticket) => {
+  ticketPendingDeletion.value = ticket
+  await nextTick()
+  deleteConfirmCancelButton.value?.focus()
+}
+
+const confirmDeleteTicket = async () => {
+  const ticket = ticketPendingDeletion.value
+  ticketPendingDeletion.value = null
+  if (ticket) await deleteTicket(ticket)
 }
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
@@ -364,6 +396,7 @@ const closeModals = () => {
   laneDraftName.value = null
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
+  ticketPendingDeletion.value = null
   checklistDraft.value = ''
 }
 
@@ -387,6 +420,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   // Claimed before anything else: an unhandled Escape leaves the board.
   if (laneDrag.value?.active) {
     cancelLaneDrag()
+    event.preventDefault()
+    return
+  }
+  // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
+  if (ticketPendingDeletion.value) {
+    ticketPendingDeletion.value = null
     event.preventDefault()
     return
   }
@@ -448,7 +487,9 @@ const deleteTicket = async (ticket: Ticket) => {
   await store.removeTicket(projectPath.value, ticket.id)
 }
 
-const editTicket = (ticket: Ticket, patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>) => {
+const editTicket = (ticket: Ticket, patch: TicketPatch) => {
+  const editsOpenTicket = ticket.id === openTicketId.value
+  if (editsOpenTicket) for (const field of Object.keys(patch)) editedTicketFields.add(field as keyof TicketPatch)
   void store.updateTicket(projectPath.value, ticket.id, patch)
 }
 
@@ -1134,11 +1175,29 @@ const runTicketAgent = (ticket: Ticket) => {
       </a>
 
       <div class="modal-actions">
-        <button class="secondary danger" @click="deleteTicket(openTicket)">Delete</button>
-        <button class="secondary" @click="assignToMe(openTicket)">
-          {{ openTicket.assigneeId === store.state.userId ? 'Unassign me' : 'Assign to me' }}
+        <button
+          class="secondary danger ticket-delete"
+          title="Delete ticket"
+          aria-label="Delete ticket"
+          @click="askToDeleteTicket(openTicket)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
         </button>
+        <button class="secondary" @click="cancelTicketEdits">Cancel</button>
         <button @click="closeModals">Done</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="ticketPendingDeletion" class="modal-backdrop" @click.self="ticketPendingDeletion = null">
+    <section class="modal" role="alertdialog" aria-labelledby="delete-ticket-question">
+      <p class="eyebrow">Delete ticket</p>
+      <p id="delete-ticket-question">
+        Are you sure you want to delete ticket #{{ ticketPendingDeletion.number }}?
+      </p>
+      <div class="modal-actions">
+        <button ref="deleteConfirmCancelButton" class="secondary" @click="ticketPendingDeletion = null">Cancel</button>
+        <button class="secondary danger" @click="confirmDeleteTicket">Delete</button>
       </div>
     </section>
   </div>
