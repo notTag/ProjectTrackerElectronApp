@@ -486,14 +486,26 @@ const addLinkDraft = (ticket: Ticket) => {
     return
   }
   linkDraft.value = ''
-  const links = addExternalLink(ticket.externalLinks, url)
-  const isAdded = links !== ticket.externalLinks
-  if (isAdded) editTicket(ticket, { externalLinks: links })
+  const isAlreadyListed = ticket.externalLinks?.includes(url)
+  if (!isAlreadyListed) editTicketLinks(ticket, (links) => addExternalLink(links, url))
 }
 
-const dropExternalLink = (ticket: Ticket, index: number) => {
-  const links = removeExternalLink(ticket.externalLinks, index)
-  editTicket(ticket, { externalLinks: links.length ? links : undefined })
+const dropExternalLink = (ticket: Ticket, link: string) =>
+  editTicketLinks(ticket, (links = []) => removeExternalLink(links, links.indexOf(link)))
+
+// Store state only refreshes after the IPC save returns, so the new list is
+// computed inside the queued mutate from the latest saved links: two quick
+// adds or removes in a row would otherwise overwrite each other.
+const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  void store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const links = change(current.externalLinks)
+      return { ...current, externalLinks: links.length ? links : undefined, updatedAt }
+    })
+  }))
 }
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
@@ -1085,9 +1097,10 @@ const runTicketAgent = (ticket: Ticket) => {
       <section class="ticket-checklist ticket-links">
         <p class="eyebrow">External Links</p>
         <ul v-if="openTicket.externalLinks?.length">
-          <li v-for="(link, index) in openTicket.externalLinks" :key="link">
-            <a :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
-            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, index)">×</button>
+          <li v-for="(link, index) in openTicket.externalLinks" :key="index">
+            <a v-if="isWebUrl(link)" :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
+            <span v-else :title="link">{{ link }}</span>
+            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, link)">×</button>
           </li>
         </ul>
         <div class="ticket-links-add">

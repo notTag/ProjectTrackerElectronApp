@@ -283,8 +283,7 @@ export const setChecklistItemDone = (
 export const removeChecklistItem = (checklist: ChecklistItem[] = [], index: number): ChecklistItem[] =>
   checklist.filter((_, itemIndex) => itemIndex !== index)
 
-// Returns the list unchanged for a non-web or duplicate URL, so callers tell
-// "rejected" from "added" by comparing lengths.
+// Returns the same array for a non-web or duplicate URL.
 export const addExternalLink = (links: string[] = [], url: string): string[] => {
   const trimmedUrl = url.trim()
   const isNewWebUrl = isWebUrl(trimmedUrl) && !links.includes(trimmedUrl)
@@ -294,7 +293,7 @@ export const addExternalLink = (links: string[] = [], url: string): string[] => 
 export const removeExternalLink = (links: string[] = [], index: number): string[] =>
   links.filter((_, linkIndex) => linkIndex !== index)
 
-export const checklistProgress =(checklist: ChecklistItem[] = []) => {
+export const checklistProgress = (checklist: ChecklistItem[] = []) => {
   const doneItems = checklist.filter((item) => item.done)
   return { done: doneItems.length, total: checklist.length }
 }
