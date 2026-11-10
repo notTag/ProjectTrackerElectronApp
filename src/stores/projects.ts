@@ -102,6 +102,9 @@ const takeDeferredHandoffs = (runKey: string): ProjectHandoffs | undefined => {
   return deferred
 }
 
+// Outside Pinia state so it is never persisted: a fresh app launch pulls again.
+const autoPulledProjects = new Set<string>()
+
 type StateUpdate = (currentState: ProjectTrackerState) => ProjectTrackerState
 
 const boardUpdate =
@@ -228,30 +231,54 @@ export const useProjectsStore = defineStore('projects', {
     // Imports open GitHub issues into the board's dedicated import lane, which
     // is created on first pull. Already-imported issues are left untouched, so
     // this is safe to re-run.
-    async pullGithubIssues(projectPath: string) {
+    // Quiet is the automatic pull on board open: no banner for a project without
+    // a repo, and no notice when nothing new arrived. Errors still show.
+    async pullGithubIssues(projectPath: string, { quiet = false } = {}) {
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) {
-        this.error = 'This project has no linked GitHub repository.'
+        if (!quiet) this.error = 'This project has no linked GitHub repository.'
         return
       }
       this.githubLoading[projectPath] = true
-      this.error = null
-      this.notice = null
+      if (!quiet) {
+        this.error = null
+        this.notice = null
+      }
       try {
         const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl)
-        let added = 0
-        await this.updateBoard(projectPath, (board) => {
-          const result = addGithubIssuesToBoard(board, issues)
-          added = result.added
-          return result.board
-        })
+        // Nothing new → no write: saving would still add an empty import lane
+        // and clear whatever banner is showing.
+        const boardBeforeImport = getBoard(this.state, projectPath)
+        const preview = addGithubIssuesToBoard(boardBeforeImport, issues)
+        let added = preview.added
+        if (added > 0) {
+          const saved = await this.updateBoard(projectPath, (board) => {
+            const result = addGithubIssuesToBoard(board, issues)
+            added = result.added
+            return result.board
+          })
+          if (!saved) return
+        }
         const skipped = issues.length - added
+        if (quiet && added === 0) return
         this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
       }
+    },
+
+    // At most once per project per app launch. Marked before the await so two
+    // overlapping calls can't both fetch, and a failure isn't retried: the
+    // manual button is the retry. A project without a repo isn't marked, so it
+    // still pulls if its data was just not loaded yet.
+    async autoPullGithubIssues(projectPath: string) {
+      if (autoPulledProjects.has(projectPath)) return
+      const project = this.projects.find((entry) => entry.path === projectPath)
+      if (!project?.githubUrl) return
+      autoPulledProjects.add(projectPath)
+      await this.pullGithubIssues(projectPath, { quiet: true })
     },
 
     async removeTicket(projectPath: string, ticketId: string) {
