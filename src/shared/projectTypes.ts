@@ -221,6 +221,8 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
+  // Extra instructions appended to this lane's Auto Run orchestrator prompt.
+  orchestratorPrompt?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
@@ -704,6 +706,13 @@ const tabSection = (context: OrchestratorPromptContext): string => {
   ].join('\n')
 }
 
+// User text goes after the generated rules so it can steer but not replace them.
+const laneInstructionsSection = (lane: SwimLane): string => {
+  const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
+  if (!laneInstructions) return ''
+  return ['Lane instructions', 'Follow these unless they conflict with the rules above.', laneInstructions].join('\n')
+}
+
 // The orchestrator only reports: it shares the DB with the app and the ticket
 // agents, so it is told never to write, and never to steer the other agents.
 export const orchestratorPrompt = (
@@ -748,8 +757,11 @@ export const orchestratorPrompt = (
       `   or its tab is gone while it is still in the ${lane.id} lane.`,
       '4. Done = it is in a lane with agent work: no, or its PR is merged. When a ticket becomes done, close its tab and say so.',
       '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
-    ].join('\n')
-  ].join('\n\n')
+    ].join('\n'),
+    laneInstructionsSection(lane)
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 // One ticket needs no watcher: its own tab already says everything.

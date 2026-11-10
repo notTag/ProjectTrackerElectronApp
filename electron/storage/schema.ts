@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   agent_prompt TEXT NOT NULL,
   agent_file_path TEXT NOT NULL,
   output_target TEXT NOT NULL DEFAULT '',
+  orchestrator_prompt TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
@@ -148,6 +149,7 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_on_complete', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'closes_ticket', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'swim_lanes', column: 'orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'tickets', column: 'closed_at', definition: 'TEXT' }
 ]
 

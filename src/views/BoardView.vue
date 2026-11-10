@@ -1508,6 +1508,17 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
+      <label>
+        Orchestrator prompt
+        <textarea
+          class="agent-prompt"
+          :value="openLane.orchestratorPrompt ?? ''"
+          placeholder="e.g. Poll every 2 minutes. Flag PRs with failing checks."
+          @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
+        />
+        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)</span>
+      </label>
+
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>
         <label>
