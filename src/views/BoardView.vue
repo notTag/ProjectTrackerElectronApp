@@ -32,7 +32,6 @@ import {
   getUnassignedLane,
   ticketAgentPrompt,
   ticketSearchText,
-  ticketRestorePatch,
   ticketShellCommand,
   ticketsToRun,
   toggleCardField,
@@ -353,26 +352,38 @@ const clearFilters = () => {
   showOnlyMine.value = false
 }
 
-// Fields save on change, so Cancel can't just drop a draft: it puts back what
-// the ticket held when the modal opened, for the fields this session edited.
-let openTicketSnapshot: Ticket | null = null
-const editedTicketFields = new Set<keyof TicketPatch>()
+// Fields save on change, so Cancel can't just drop a draft. Instead each field
+// keeps the value it held just before its first edit this session. Captured at
+// edit time, not on open, so a write that lands from elsewhere (a background
+// run, an agent, a drag) before the user touches that field is never undone.
+// A field that was unset keeps its key as undefined, which clears it on restore.
+const valuesBeforeEdit = new Map<keyof TicketPatch, unknown>()
 
-watch(openTicketId, () => {
-  openTicketSnapshot = openTicket.value ? toRaw(openTicket.value) : null
-  editedTicketFields.clear()
-})
+watch(openTicketId, () => valuesBeforeEdit.clear())
+
+const rememberValuesBeforeEdit = (ticket: Ticket, patch: TicketPatch) => {
+  const editedFields = Object.keys(patch) as (keyof TicketPatch)[]
+  for (const field of editedFields) {
+    if (valuesBeforeEdit.has(field)) continue
+    const currentValue = toRaw(ticket[field])
+    valuesBeforeEdit.set(field, structuredClone(currentValue))
+  }
+}
 
 const cancelTicketEdits = () => {
-  const snapshot = openTicketSnapshot
-  const restorePatch = snapshot ? ticketRestorePatch(snapshot, editedTicketFields) : {}
+  const ticketId = openTicketId.value
+  const restorePatch: TicketPatch = Object.fromEntries(valuesBeforeEdit)
   closeModals()
-  const nothingToRestore = Object.keys(restorePatch).length === 0
-  if (snapshot && !nothingToRestore) void store.updateTicket(projectPath.value, snapshot.id, restorePatch)
+  if (ticketId && valuesBeforeEdit.size > 0) void store.updateTicket(projectPath.value, ticketId, restorePatch)
 }
 
 const ticketPendingDeletion = ref<Ticket | null>(null)
 const deleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
+
+// The ticket can vanish underneath the confirm (agent, poll); drop the stale question.
+watch(openTicket, (ticket) => {
+  if (!ticket) ticketPendingDeletion.value = null
+})
 
 // Focus lands on Cancel so a stray Enter can't delete the ticket.
 const askToDeleteTicket = async (ticket: Ticket) => {
@@ -489,7 +500,7 @@ const deleteTicket = async (ticket: Ticket) => {
 
 const editTicket = (ticket: Ticket, patch: TicketPatch) => {
   const editsOpenTicket = ticket.id === openTicketId.value
-  if (editsOpenTicket) for (const field of Object.keys(patch)) editedTicketFields.add(field as keyof TicketPatch)
+  if (editsOpenTicket) rememberValuesBeforeEdit(ticket, patch)
   void store.updateTicket(projectPath.value, ticket.id, patch)
 }
 

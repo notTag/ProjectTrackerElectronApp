@@ -247,14 +247,6 @@ export interface Ticket {
 
 export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
 
-// Only the fields this session edited go back, so a Cancel never undoes a write
-// that landed meanwhile from elsewhere (a background run, an agent, a drag).
-// An edited field that was unset keeps its key as undefined, which clears it.
-export const ticketRestorePatch = (snapshot: Ticket, editedFields: Iterable<keyof TicketPatch>): TicketPatch => {
-  const restoredEntries = [...editedFields].map((field) => [field, structuredClone(snapshot[field])])
-  return Object.fromEntries(restoredEntries) as TicketPatch
-}
-
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
 // can act on. Discarded on save when left untouched, so an unused template never
 // persists as noise.

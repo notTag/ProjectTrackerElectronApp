@@ -8,7 +8,6 @@ import {
   addGithubIssuesToBoard,
   agentMarkdownFileName,
   addScanDirectory,
-  ticketRestorePatch,
   addTicketToBoard,
   mergeScannedProjects,
   removeScanDirectory,
@@ -718,37 +717,5 @@ describe('agentMarkdownFileName', () => {
   it('falls back when a part sanitizes to nothing', () => {
     expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
     expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
-  })
-})
-
-describe('ticketRestorePatch', () => {
-  const snapshot: Ticket = {
-    id: 'ticket-1',
-    number: 7,
-    laneId: 'todo',
-    title: 'Original',
-    description: 'Before',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    checklist: [{ text: 'step', done: false }]
-  }
-
-  it('restores nothing when nothing was edited', () => {
-    expect(ticketRestorePatch(snapshot, [])).toEqual({})
-  })
-
-  it('restores only the edited fields', () => {
-    expect(ticketRestorePatch(snapshot, ['title', 'laneId'])).toEqual({ title: 'Original', laneId: 'todo' })
-  })
-
-  it('keeps an edited field that was unset as an explicit undefined so it clears', () => {
-    const patch = ticketRestorePatch(snapshot, ['assigneeId'])
-    expect(Object.keys(patch)).toEqual(['assigneeId'])
-    expect(patch.assigneeId).toBeUndefined()
-  })
-
-  it('restores the checklist as a copy', () => {
-    const patch = ticketRestorePatch(snapshot, ['checklist'])
-    expect(patch.checklist).toEqual(snapshot.checklist)
-    expect(patch.checklist).not.toBe(snapshot.checklist)
   })
 })
