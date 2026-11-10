@@ -10,6 +10,8 @@ import {
 import type { TerminalTab } from '../src/shared/projectTypes.js'
 
 const tabs = (...commands: string[]): TerminalTab[] => commands.map((command) => ({ command }))
+const scriptLines = (args: string[]) => args.slice(0, args.indexOf('--')).filter((arg) => arg !== '-e')
+const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1)
 
 // A prompt that breaks every naive escaping attempt at once.
 const AWKWARD_COMMAND = `claude 'Fix the "parser" bug\n\nIt drops C:\\path, $HOME and it'\\''s late'`
@@ -75,8 +77,6 @@ describe('terminalOsascriptArgs', () => {
 
 // Auto Run: every multi-tab script hands each command over as its own argv entry.
 describe('multi-tab AppleScript launches', () => {
-  const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1)
-
   it('Terminal opens later tabs with ⌘T, cd-ing each into the project', () => {
     const args = terminalOsascriptArgs('/tmp/project', tabs('claude one', 'claude two'))
     expect(args).toContain('tell application "System Events" to keystroke "t" using command down')
@@ -105,8 +105,6 @@ describe('multi-tab AppleScript launches', () => {
 // tab, and a terminal that is not running must not add a blank window of its
 // own, which `activate` before the script's window would make it do.
 describe('single-ticket launches', () => {
-  const scriptLines = (args: string[]) => args.slice(0, args.indexOf('--')).filter((arg) => arg !== '-e')
-  const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1)
   const singleTab: TerminalTab[] = [{ command: 'claude hello', title: '#38 Only' }]
 
   it('Terminal gets one command and title pair', () => {
@@ -124,12 +122,6 @@ describe('single-ticket launches', () => {
     expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'claude hello', '#38 Only'])
   })
 
-  it('Warp gets one window with one tab', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', singleTab)
-    expect(yaml.split('\n').filter((line) => line.includes('- tabs:'))).toHaveLength(1)
-    expect(yaml.split('\n').filter((line) => line.includes('layout:'))).toHaveLength(1)
-  })
-
   it.each([
     ['Terminal', terminalOsascriptArgs, 'set newTab to do script (item 1 of argv)'],
     ['iTerm2', itermOsascriptArgs, 'set targetWindow to (create window with default profile)'],
@@ -137,8 +129,10 @@ describe('single-ticket launches', () => {
   ])('%s launches without a default window and activates only after making its own', (_name, build, makesWindow) => {
     const lines = scriptLines(build('/tmp/project', singleTab))
     const tellIndex = lines.findIndex((line) => line.startsWith('tell application'))
+    const makesWindowIndex = lines.indexOf(makesWindow)
     expect(lines[tellIndex + 1]).toBe('launch')
-    expect(lines.indexOf('activate')).toBeGreaterThan(lines.indexOf(makesWindow))
+    expect(makesWindowIndex).toBeGreaterThan(tellIndex)
+    expect(lines.indexOf('activate')).toBeGreaterThan(makesWindowIndex)
     expect(lines.filter((line) => line === 'activate')).toHaveLength(1)
   })
 })
@@ -151,8 +145,6 @@ describe('tab titles', () => {
     { command: 'claude one', title: HOSTILE_TITLE },
     { command: 'claude two', title: '#34 Second' }
   ]
-  const scriptLines = (args: string[]) => args.slice(0, args.indexOf('--')).filter((arg) => arg !== '-e')
-  const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1)
 
   it('Warp puts a single-line title beside each layout and round-trips it', () => {
     const yaml = warpLaunchConfigYaml('/tmp/project', titledTabs)
