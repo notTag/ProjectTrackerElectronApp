@@ -490,9 +490,9 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openIn(path: string, targetId: string, command?: string) {
+    async openIn(path: string, targetId: string, command?: string, title?: string) {
       try {
-        const result = await projectTrackerApi.openProjectIn(path, targetId, command)
+        const result = await projectTrackerApi.openProjectIn(path, targetId, command, title)
         if (result.fallbackCommand) {
           this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
           return

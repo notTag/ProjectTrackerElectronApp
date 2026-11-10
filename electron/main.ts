@@ -409,10 +409,11 @@ const registerIpc = () => {
 
   ipcMain.handle('project:open-in', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId, command } = (payload ?? {}) as {
+    const { projectPath, targetId, command, title } = (payload ?? {}) as {
       projectPath?: unknown
       targetId?: unknown
       command?: unknown
+      title?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (typeof targetId !== 'string') throw new Error('Invalid open-in target.')
@@ -431,7 +432,9 @@ const registerIpc = () => {
 
     try {
       if (ticketCommand && runCommand) {
-        await runCommand(normalized, [{ command: ticketCommand }])
+        // A bad title is dropped, never rejected: it must not block the command.
+        const tabTitle = usableTabTitle(typeof title === 'string' ? title : undefined)
+        await runCommand(normalized, [{ command: ticketCommand, title: tabTitle }])
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
       if (process.platform === 'darwin') {
