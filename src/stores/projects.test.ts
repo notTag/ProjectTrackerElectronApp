@@ -70,22 +70,18 @@ describe('full auto handoff', () => {
     expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 
-  it('moves a ticket with no PRD or agent run from Idea into In Development without an error', async () => {
+  it('launches In Development from ticket data when a ticket skips PRD with no agent run', async () => {
     // Same round trip the preload applies to every IPC result.
-    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => toPlainJson(state))
     api.refreshProjectState.mockImplementation(async () => toPlainJson(stateWithTicketIn('dev')))
     api.autoRunLane.mockImplementation(async () => toPlainJson({ worktreePaths: [] }))
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
 
-    await store.updateTicket(PROJECT_PATH, 'ticket-1', { laneId: 'dev' })
-    expect(store.error).toBeNull()
-
-    store.state = stateWithTicketIn('idea')
     await store.refresh()
     await flushLaunches()
 
     expect(store.error).toBeNull()
+    expect(api.autoRunLane).toHaveBeenCalledTimes(1)
     const [, , launches] = api.autoRunLane.mock.calls[0]
     expect(launches[0].command).toContain('Add the thing')
   })

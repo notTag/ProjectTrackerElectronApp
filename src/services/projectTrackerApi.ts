@@ -3,7 +3,6 @@ import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult } from '@/sha
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
-
 const requireElectron = () => {
   if (!window.projectTracker) {
     throw new Error('Project Tracker desktop APIs are unavailable in this environment.')
