@@ -30,6 +30,7 @@ import {
   moveLaneInBoard,
   parseLabels,
   pullRequestLabel,
+  pullRequestStatusLabel,
   removeChecklistItem,
   removeExternalLink,
   setChecklistItemDone,
@@ -409,6 +410,52 @@ const confirmDeleteTicket = async () => {
 }
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
+
+const pullRequestRefreshing = ref(false)
+const pullRequestError = ref<string | null>(null)
+
+const refreshOpenTicketPullRequest = async () => {
+  const ticket = openTicket.value
+  if (!ticket) return
+  pullRequestRefreshing.value = true
+  pullRequestError.value = null
+  try {
+    await store.refreshPullRequest(projectPath.value, ticket)
+  } catch (error) {
+    pullRequestError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    pullRequestRefreshing.value = false
+  }
+}
+
+watch(openTicketId, (ticketId) => {
+  pullRequestError.value = null
+  if (ticketId) void refreshOpenTicketPullRequest()
+})
+
+// A new URL points at a different PR, so the cached state is dropped rather
+// than shown against it until the refresh lands.
+const overridePullRequestUrl = async (ticket: Ticket, rawUrl: string) => {
+  await store.updateTicket(projectPath.value, ticket.id, {
+    pullRequestUrl: rawUrl.trim() || undefined,
+    pullRequestState: undefined,
+    pullRequestMergedAt: undefined
+  })
+  await refreshOpenTicketPullRequest()
+}
+
+// Once per board per visit; githubUrl is in the source so a board opened before
+// state finished loading still gets its refresh when the project arrives.
+const boardsWithRefreshedPullRequests = new Set<string>()
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (!url || boardsWithRefreshedPullRequests.has(path)) return
+    boardsWithRefreshedPullRequests.add(path)
+    void store.refreshBoardPullRequests(path)
+  },
+  { immediate: true }
+)
 
 // Keyed on githubUrl too: on a deep link the project isn't loaded yet, so the
 // pull waits for the url to show up instead of seeing "no repo" and skipping.
@@ -986,6 +1033,12 @@ const runTicketAgent = (ticket: Ticket) => {
                 draggable="false"
                 @click.stop
               >
+                <span
+                  v-if="ticket.pullRequestState"
+                  class="pull-request-dot"
+                  :data-state="ticket.pullRequestState"
+                  :title="pullRequestStatusLabel(ticket.pullRequestState)"
+                ></span>
                 {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
               </a>
             </p>
@@ -1160,21 +1213,39 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
-        GitHub PR
-        <input
-          type="url"
-          class="agent-file-path"
-          :value="openTicket.pullRequestUrl ?? ''"
-          placeholder="https://github.com/owner/repo/pull/123"
-          @change="
-            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
-          "
-        />
-        <a v-if="isWebUrl(openTicket.pullRequestUrl)" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
-          Open pull request ↗
-        </a>
-      </label>
+      <section class="ticket-pull-request">
+        <p class="eyebrow">Merge Request</p>
+        <p class="pull-request-status">
+          <span class="pull-request-pill" :data-state="openTicket.pullRequestState ?? 'none'">
+            {{ pullRequestStatusLabel(openTicket.pullRequestState) }}
+          </span>
+          <span v-if="openTicket.pullRequestState === 'merged' && openTicket.pullRequestMergedAt" class="field-hint">
+            Merged {{ formatDateTime(openTicket.pullRequestMergedAt) }}
+          </span>
+          <a v-if="isWebUrl(openTicket.pullRequestUrl)" :href="openTicket.pullRequestUrl" target="_blank">
+            {{ pullRequestLabel(openTicket.pullRequestUrl) }} ↗
+          </a>
+          <button
+            class="icon-button"
+            title="Refresh from GitHub"
+            :disabled="pullRequestRefreshing || !githubUrl"
+            @click="refreshOpenTicketPullRequest"
+          >
+            ↻
+          </button>
+        </p>
+        <span v-if="pullRequestError" class="field-hint field-error">{{ pullRequestError }}</span>
+        <label>
+          PR URL override
+          <input
+            type="url"
+            class="agent-file-path"
+            :value="openTicket.pullRequestUrl ?? ''"
+            placeholder="Found from the branch; paste https://github.com/owner/repo/pull/123 to override"
+            @change="overridePullRequestUrl(openTicket, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+      </section>
 
       <section class="ticket-checklist ticket-links">
         <p class="eyebrow">External Links</p>

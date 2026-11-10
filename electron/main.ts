@@ -25,8 +25,11 @@ import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
   isWebUrl,
+  pullRequestNumber,
   shellQuote,
+  toPullRequestStatus,
   type AutoRunTicketLaunch,
+  type GithubPullRequest,
   type TerminalTab,
   type ProjectTrackerState
 } from '../src/shared/projectTypes.js'
@@ -540,6 +543,44 @@ const registerIpc = () => {
       fetchedAt: new Date().toISOString()
     })
   })
+
+  // A pasted PR URL wins and is read against its own repo; otherwise the newest
+  // PR opened from the ticket's branch. Assumes that branch lives in the same
+  // repo — PRs from forks are not found. A saved URL is also what an earlier
+  // branch lookup leaves behind, so a closed PR from the ticket's own branch
+  // falls through to the lookup to pick up a newer PR reopened on that branch.
+  ipcMain.handle(
+    'ticket:fetch-pull-request',
+    async (event, { githubUrl, branchName, pullRequestUrl }: Record<string, unknown> = {}) => {
+      assertTrustedSender(event)
+      if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
+      if (typeof branchName !== 'string') throw new Error('Invalid branch name.')
+      if (pullRequestUrl !== undefined && typeof pullRequestUrl !== 'string') {
+        throw new Error('Invalid pull request URL.')
+      }
+
+      if (pullRequestUrl) {
+        const pastedNumber = pullRequestNumber(pullRequestUrl)
+        // ponytail: only github.com is looked up; GitLab or Enterprise URLs stay plain links.
+        const isGithubDotCom = pullRequestUrl.trim().startsWith('https://github.com/')
+        if (!pastedNumber || !isGithubDotCom) return null
+        const pastedRepo = parseGithubRepo(pullRequestUrl)
+        const pullRequest = await requestGithub<GithubPullRequest>(
+          `/repos/${pastedRepo.owner}/${pastedRepo.repo}/pulls/${pastedNumber}`
+        )
+        const pastedStatus = toPullRequestStatus(pullRequest)
+        const isFromTicketBranch = pullRequest.head?.ref === branchName
+        const mayHaveSuccessor = pastedStatus.state === 'closed' && isFromTicketBranch
+        if (!mayHaveSuccessor) return toPlainJson(pastedStatus)
+      }
+
+      const { owner, repo } = parseGithubRepo(githubUrl)
+      const head = encodeURIComponent(`${owner}:${branchName}`)
+      const query = `head=${head}&state=all&sort=created&direction=desc&per_page=1`
+      const [newestPullRequest] = await requestGithub<GithubPullRequest[]>(`/repos/${owner}/${repo}/pulls?${query}`)
+      return newestPullRequest ? toPlainJson(toPullRequestStatus(newestPullRequest)) : null
+    }
+  )
 
   ipcMain.handle('project:fetch-github-issues', async (event, githubUrl: unknown) => {
     assertTrustedSender(event)

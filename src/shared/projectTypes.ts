@@ -249,6 +249,10 @@ export interface Ticket {
   branchName?: string
   worktreePath?: string
   pullRequestUrl?: string
+  // Last state GitHub reported for that PR, cached so the board renders
+  // without the network. Refreshed by the store, never typed in by hand.
+  pullRequestState?: PullRequestState
+  pullRequestMergedAt?: string
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
@@ -814,10 +818,63 @@ export const isWebUrl = (url: string | undefined): url is string => /^https?:\/\
 
 // GitHub PR URLs end in /pull/<number>; anything else still gets a link, just
 // without the number.
-export const pullRequestLabel = (pullRequestUrl: string) => {
+export const pullRequestNumber = (pullRequestUrl: string): number | undefined => {
   const pullNumber = pullRequestUrl.match(/\/pull\/(\d+)/)?.[1]
+  return pullNumber ? Number(pullNumber) : undefined
+}
+
+export const pullRequestLabel = (pullRequestUrl: string) => {
+  const pullNumber = pullRequestNumber(pullRequestUrl)
   return pullNumber ? `PR #${pullNumber}` : 'PR'
 }
+
+export type PullRequestState = 'open' | 'draft' | 'merged' | 'closed'
+
+export interface PullRequestStatus {
+  url: string
+  number: number
+  state: PullRequestState
+  mergedAt?: string
+}
+
+// The slice of GitHub's pull request payload the status is read from.
+export interface GithubPullRequest {
+  html_url: string
+  number: number
+  state: 'open' | 'closed'
+  draft?: boolean
+  merged_at?: string | null
+  head?: { ref: string }
+}
+
+// GitHub reports a merged PR as state "closed"; merged_at is what tells the two
+// apart. Draft only means something while the PR is still open.
+const pullRequestStateOf = (pullRequest: GithubPullRequest): PullRequestState => {
+  if (pullRequest.merged_at) return 'merged'
+  if (pullRequest.state === 'closed') return 'closed'
+  return pullRequest.draft ? 'draft' : 'open'
+}
+
+export const toPullRequestStatus = (pullRequest: GithubPullRequest): PullRequestStatus => ({
+  url: pullRequest.html_url,
+  number: pullRequest.number,
+  state: pullRequestStateOf(pullRequest),
+  mergedAt: pullRequest.merged_at ?? undefined
+})
+
+const PULL_REQUEST_STATE_LABELS: Record<PullRequestState, string> = {
+  open: 'Open',
+  draft: 'Draft',
+  merged: 'Merged',
+  closed: 'Closed'
+}
+
+export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
+  state ? PULL_REQUEST_STATE_LABELS[state] : 'No merge request'
+
+// Only a merge is final: a closed PR can be reopened, or replaced by a new PR
+// from the same branch.
+export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200

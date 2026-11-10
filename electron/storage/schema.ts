@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   branch_name TEXT,
   worktree_path TEXT,
   pull_request_url TEXT,
+  pull_request_state TEXT,
+  pull_request_merged_at TEXT,
   labels_json TEXT,
   checklist_json TEXT,
   agent_run_json TEXT,
@@ -131,6 +133,8 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'full_auto', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'tickets', column: 'worktree_path', definition: 'TEXT' },
   { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' },
+  { table: 'tickets', column: 'pull_request_state', definition: 'TEXT' },
+  { table: 'tickets', column: 'pull_request_merged_at', definition: 'TEXT' },
   { table: 'tickets', column: 'external_links_json', definition: 'TEXT' },
   { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ]
