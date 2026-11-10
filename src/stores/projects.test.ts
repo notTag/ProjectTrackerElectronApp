@@ -1,12 +1,13 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createSeedState, getBoard, type ProjectTrackerState, type Ticket } from '@/shared/projectTypes'
+import { createSeedState, getBoard, type ProjectRecord, type ProjectTrackerState, type Ticket } from '@/shared/projectTypes'
 
 const api = vi.hoisted(() => ({
   refreshProjectState: vi.fn(),
   saveProjectState: vi.fn(),
-  autoRunLane: vi.fn()
+  autoRunLane: vi.fn(),
+  fetchProjectGithubIssues: vi.fn()
 }))
 vi.mock('@/services/projectTrackerApi', () => ({ projectTrackerApi: api }))
 
@@ -187,5 +188,79 @@ describe('moveLane', () => {
     const persistedOrder = getBoard(persistedState, PROJECT).lanes.map((entry) => entry.id)
     expect(persistedOrder).toEqual(['a', 'b', 'c'])
     expect(laneOrder(store)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('autoPullGithubIssues', () => {
+  // The pulled-once set lives for the module's lifetime (one app launch), so
+  // each test uses its own project path.
+  const storeWithProject = (path: string, githubUrl?: string) => {
+    const store = useProjectsStore()
+    const project: ProjectRecord = {
+      path,
+      name: 'app',
+      status: 'active',
+      priority: 'none',
+      notes: '',
+      source: 'first-party',
+      githubUrl,
+      hasGit: true,
+      hasPackageJson: true,
+      hasReadme: false,
+      lastScannedAt: '2026-01-01T00:00:00.000Z'
+    }
+    store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
+    return store
+  }
+
+  const issue = { number: 3, title: 'Crash on save', body: '', htmlUrl: 'https://github.com/o/r/issues/3' }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  it('pulls once per project, however often the board is opened', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue([issue])
+    const store = storeWithProject('/code/pull-once', 'https://github.com/o/r')
+
+    await Promise.all([store.autoPullGithubIssues('/code/pull-once'), store.autoPullGithubIssues('/code/pull-once')])
+    await store.autoPullGithubIssues('/code/pull-once')
+
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
+    const importedTitles = getBoard(store.state, '/code/pull-once').tickets.map((ticket) => ticket.title)
+    expect(importedTitles).toEqual(['Crash on save'])
+    expect(store.notice).toBe('Imported 1 issue.')
+  })
+
+  it('skips a project without a repo, with no error banner', async () => {
+    const store = storeWithProject('/code/no-repo')
+
+    await store.autoPullGithubIssues('/code/no-repo')
+
+    expect(api.fetchProjectGithubIssues).not.toHaveBeenCalled()
+    expect(store.error).toBeNull()
+  })
+
+  it('stays silent when nothing new arrived', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue([])
+    const store = storeWithProject('/code/nothing-new', 'https://github.com/o/r')
+
+    await store.autoPullGithubIssues('/code/nothing-new')
+
+    expect(store.notice).toBeNull()
+  })
+
+  it('shows a failed pull as an error and does not retry it', async () => {
+    api.fetchProjectGithubIssues.mockRejectedValue(new Error('GitHub rate limit exceeded'))
+    const store = storeWithProject('/code/offline', 'https://github.com/o/r')
+
+    await store.autoPullGithubIssues('/code/offline')
+    await store.autoPullGithubIssues('/code/offline')
+
+    expect(store.error).toBe('GitHub rate limit exceeded')
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
+    expect(store.githubLoading['/code/offline']).toBe(false)
   })
 })
