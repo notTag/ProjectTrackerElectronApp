@@ -336,7 +336,20 @@ const HERMES_AGENT: Agent = {
   promptArgs: ['chat', '-q']
 }
 
-const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
+// `opencode run` is the non-interactive mode. The TUI reads its first positional
+// as a project directory (the Hermes trap again), so the prompt rides on --prompt.
+// No --dangerously-skip-permissions: opencode.json's `permission` config decides
+// what a headless run may do. To opt in, save an `opencode` agent with the flag —
+// and keep promptArgs ['--prompt'], since a saved agent replaces this one whole.
+const OPENCODE_AGENT: Agent = {
+  id: 'opencode',
+  name: 'opencode',
+  command: 'opencode',
+  headlessArgs: ['run'],
+  promptArgs: ['--prompt']
+}
+
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
 
 // Agents saved in state are offered alongside the built-ins, so adding another
 // CLI is one entry, not a code change. A saved agent with a built-in's id wins
