@@ -123,6 +123,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   branchName: asText(row.branch_name),
   worktreePath: asText(row.worktree_path),
   pullRequestUrl: asText(row.pull_request_url),
+  pullRequestState: asText(row.pull_request_state) as Ticket['pullRequestState'],
+  pullRequestMergedAt: asText(row.pull_request_merged_at),
   assigneeId: asText(row.assignee_id),
   labels: parseJson<string[] | undefined>(row.labels_json, undefined),
   checklist: parseJson<Ticket['checklist']>(row.checklist_json, undefined),
@@ -150,6 +152,8 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   ticket.externalUrl ?? null,
   ticket.worktreePath ?? null,
   ticket.pullRequestUrl ?? null,
+  ticket.pullRequestState ?? null,
+  ticket.pullRequestMergedAt ?? null,
   ticket.fullAuto ? 1 : 0
 ]
 
@@ -595,8 +599,8 @@ export class StateRepository {
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
-         worktree_path, pull_request_url, full_auto, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -608,7 +612,7 @@ export class StateRepository {
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
-         full_auto = ?
+         pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )

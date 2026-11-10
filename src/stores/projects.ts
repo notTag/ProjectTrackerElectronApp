@@ -15,10 +15,12 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  isPullRequestSettled,
   mergeScannedProjects,
   moveLaneInBoard,
   removeLaneFromBoard,
   removeScanDirectory,
+  ticketBranchName,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
   type FullAutoHandoff,
@@ -251,6 +253,47 @@ export const useProjectsStore = defineStore('projects', {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
+      }
+    },
+
+    // Errors propagate so the ticket modal can show them; a project with no
+    // linked repo has nothing to ask GitHub, so that is a quiet no-op.
+    async refreshPullRequest(projectPath: string, ticket: Ticket) {
+      const githubUrl = this.projects.find((entry) => entry.path === projectPath)?.githubUrl
+      if (!githubUrl) return
+      const status = await projectTrackerApi.fetchTicketPullRequest(
+        githubUrl,
+        ticketBranchName(ticket),
+        ticket.pullRequestUrl
+      )
+      if (!status) return
+      const unchanged =
+        status.url === ticket.pullRequestUrl &&
+        status.state === ticket.pullRequestState &&
+        status.mergedAt === ticket.pullRequestMergedAt
+      // Skipped so a refresh that learns nothing does not bump updatedAt.
+      if (unchanged) return
+      await this.updateTicket(projectPath, ticket.id, {
+        pullRequestUrl: status.url,
+        pullRequestState: status.state,
+        pullRequestMergedAt: status.mergedAt
+      })
+    },
+
+    // ponytail: sequential, one request per ticket. Fine for a board's worth of
+    // in-flight tickets against the 5000/h authed limit; batch via GraphQL if
+    // boards grow into the hundreds.
+    async refreshBoardPullRequests(projectPath: string) {
+      const ticketsToCheck = this.board(projectPath).tickets.filter(
+        (ticket) => (ticket.branchName || ticket.pullRequestUrl) && !isPullRequestSettled(ticket.pullRequestState)
+      )
+      for (const ticket of ticketsToCheck) {
+        try {
+          await this.refreshPullRequest(projectPath, ticket)
+        } catch {
+          // A board load never surfaces GitHub errors; the modal does, on open.
+          return
+        }
       }
     },
 

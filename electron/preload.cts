@@ -45,5 +45,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
     invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
+  fetchTicketPullRequest: (githubUrl: string, branchName: string, pullRequestUrl?: string) =>
+    invokePlain('ticket:fetch-pull-request', { githubUrl, branchName, pullRequestUrl }),
   setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
 })

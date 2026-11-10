@@ -63,6 +63,8 @@ const stateWithBoard = (): ProjectTrackerState => {
             branchName: 'feat/a',
             worktreePath: '/code/app-a',
             pullRequestUrl: 'https://github.com/o/r/pull/8',
+            pullRequestState: 'merged',
+            pullRequestMergedAt: '2026-01-04T00:00:00Z',
             fullAuto: true
           },
           {
@@ -124,6 +126,9 @@ describe('StateRepository', () => {
     expect(board?.tickets[0].branchName).toBe('feat/a')
     expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
     expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(board?.tickets[0].pullRequestState).toBe('merged')
+    expect(board?.tickets[0].pullRequestMergedAt).toBe('2026-01-04T00:00:00Z')
+    expect(board?.tickets[1].pullRequestState).toBeUndefined()
     expect(board?.tickets[1].worktreePath).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
@@ -139,6 +144,8 @@ describe('StateRepository', () => {
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN worktree_path')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_state')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_merged_at')
     olderDatabase.close()
 
     const repository = new StateRepository(userDataPath)
@@ -146,11 +153,15 @@ describe('StateRepository', () => {
     const migratedTicket = state.boards![projectPath].tickets[0]
     migratedTicket.worktreePath = '/code/app-a'
     migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
+    migratedTicket.pullRequestState = 'open'
+    migratedTicket.pullRequestMergedAt = undefined
     repository.saveState(state)
 
     const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
     expect(reopenedTicket.worktreePath).toBe('/code/app-a')
     expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(reopenedTicket.pullRequestState).toBe('open')
+    expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {

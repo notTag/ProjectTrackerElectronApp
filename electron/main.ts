@@ -24,8 +24,11 @@ import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import {
   availableAgents,
   isWebUrl,
+  pullRequestNumber,
   shellQuote,
+  toPullRequestStatus,
   type AutoRunTicketLaunch,
+  type GithubPullRequest,
   type TerminalTab,
   type ProjectTrackerState
 } from '../src/shared/projectTypes.js'
@@ -532,6 +535,38 @@ const registerIpc = () => {
       fetchedAt: new Date().toISOString()
     })
   })
+
+  // A pasted PR URL wins and is read against its own repo; otherwise the newest
+  // PR opened from the ticket's branch. Assumes that branch lives in the same
+  // repo — PRs from forks are not found.
+  ipcMain.handle(
+    'ticket:fetch-pull-request',
+    async (event, { githubUrl, branchName, pullRequestUrl }: Record<string, unknown> = {}) => {
+      assertTrustedSender(event)
+      if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
+      if (typeof branchName !== 'string') throw new Error('Invalid branch name.')
+      if (pullRequestUrl !== undefined && typeof pullRequestUrl !== 'string') {
+        throw new Error('Invalid pull request URL.')
+      }
+
+      if (pullRequestUrl) {
+        const pastedNumber = pullRequestNumber(pullRequestUrl)
+        // ponytail: a non-GitHub URL (GitLab, say) has nothing to look up.
+        if (!pastedNumber || !isWebUrl(pullRequestUrl)) return null
+        const pastedRepo = parseGithubRepo(pullRequestUrl)
+        const pullRequest = await requestGithub<GithubPullRequest>(
+          `/repos/${pastedRepo.owner}/${pastedRepo.repo}/pulls/${pastedNumber}`
+        )
+        return toPlainJson(toPullRequestStatus(pullRequest))
+      }
+
+      const { owner, repo } = parseGithubRepo(githubUrl)
+      const head = encodeURIComponent(`${owner}:${branchName}`)
+      const query = `head=${head}&state=all&sort=created&direction=desc&per_page=1`
+      const [newestPullRequest] = await requestGithub<GithubPullRequest[]>(`/repos/${owner}/${repo}/pulls?${query}`)
+      return newestPullRequest ? toPlainJson(toPullRequestStatus(newestPullRequest)) : null
+    }
+  )
 
   ipcMain.handle('project:fetch-github-issues', async (event, githubUrl: unknown) => {
     assertTrustedSender(event)

@@ -49,6 +49,8 @@ import {
   TICKET_CARD_FIELDS,
   isWebUrl,
   pullRequestLabel,
+  pullRequestStatusLabel,
+  toPullRequestStatus,
   worktreeFolderName,
   type BoardPreferences,
   type ProjectTrackerState,
@@ -543,6 +545,30 @@ describe('ticket card labels', () => {
     expect(pullRequestLabel('https://github.com/o/r/pull/35')).toBe('PR #35')
     expect(pullRequestLabel('https://github.com/o/r/pull/35/files')).toBe('PR #35')
     expect(pullRequestLabel('https://gitlab.com/o/r/-/merge_requests/9')).toBe('PR')
+  })
+
+  it('labels each merge request state, and a ticket with none', () => {
+    expect(pullRequestStatusLabel('open')).toBe('Open')
+    expect(pullRequestStatusLabel('draft')).toBe('Draft')
+    expect(pullRequestStatusLabel('merged')).toBe('Merged')
+    expect(pullRequestStatusLabel('closed')).toBe('Closed')
+    expect(pullRequestStatusLabel(undefined)).toBe('No merge request')
+  })
+
+  it('reads a merge request state from the GitHub payload', () => {
+    const githubPullRequest = { html_url: 'https://github.com/o/r/pull/5', number: 5 }
+    const stateOf = (fields: { state: 'open' | 'closed'; draft?: boolean; merged_at?: string | null }) =>
+      toPullRequestStatus({ ...githubPullRequest, ...fields }).state
+
+    expect(stateOf({ state: 'open', draft: false, merged_at: null })).toBe('open')
+    expect(stateOf({ state: 'open', draft: true, merged_at: null })).toBe('draft')
+    expect(pullRequestStatusLabel(stateOf({ state: 'open', draft: true }))).toBe('Draft')
+    expect(stateOf({ state: 'closed', draft: false, merged_at: null })).toBe('closed')
+    // A merged PR that was a draft once is still just merged.
+    expect(stateOf({ state: 'closed', draft: true, merged_at: '2026-01-04T00:00:00Z' })).toBe('merged')
+    expect(
+      toPullRequestStatus({ ...githubPullRequest, state: 'closed', merged_at: '2026-01-04T00:00:00Z' })
+    ).toEqual({ url: 'https://github.com/o/r/pull/5', number: 5, state: 'merged', mergedAt: '2026-01-04T00:00:00Z' })
   })
 
   it('links only absolute http(s) URLs', () => {

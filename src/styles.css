@@ -1329,6 +1329,47 @@ code {
   font-size: 0.75rem;
 }
 
+.pull-request-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0;
+}
+
+/* One hue per state, shared by the modal pill and the card dot. */
+:is(.pull-request-pill, .pull-request-dot)[data-state='open'] {
+  --pull-request-color: #2da44e;
+}
+:is(.pull-request-pill, .pull-request-dot)[data-state='draft'] {
+  --pull-request-color: #8c959f;
+}
+:is(.pull-request-pill, .pull-request-dot)[data-state='merged'] {
+  --pull-request-color: #8250df;
+}
+:is(.pull-request-pill, .pull-request-dot):is([data-state='closed'], [data-state='none']) {
+  --pull-request-color: #6e7781;
+}
+
+.pull-request-pill {
+  padding: 1px 8px;
+  border: 1px solid var(--pull-request-color);
+  border-radius: 999px;
+  color: var(--pull-request-color);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.pull-request-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--pull-request-color);
+  vertical-align: middle;
+}
+
 .ticket-branch {
   max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, monospace;
