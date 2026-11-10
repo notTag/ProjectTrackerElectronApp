@@ -1357,6 +1357,23 @@ code {
   flex: 1;
 }
 
+.ticket-links li a {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-links-add {
+  display: flex;
+  gap: 8px;
+}
+
+.ticket-links-add input {
+  flex: 1;
+}
+
 .checklist-done {
   color: var(--color-text-muted);
   text-decoration: line-through;

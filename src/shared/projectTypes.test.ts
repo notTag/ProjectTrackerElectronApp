@@ -36,6 +36,8 @@ import {
   checklistProgress,
   parseLabels,
   removeChecklistItem,
+  addExternalLink,
+  removeExternalLink,
   setChecklistItemDone,
   ticketSearchText,
   GITHUB_IMPORT_LANE_ID,
@@ -274,6 +276,25 @@ describe('checklist helpers', () => {
   })
 })
 
+describe('external link helpers', () => {
+  it('appends a trimmed http(s) link, treating no links as empty', () => {
+    const first = addExternalLink(undefined, '  https://figma.com/file/1  ')
+    expect(first).toEqual(['https://figma.com/file/1'])
+    expect(addExternalLink(first, 'http://example.com')).toEqual(['https://figma.com/file/1', 'http://example.com'])
+  })
+
+  it('returns the same list for invalid or duplicate links', () => {
+    const links = ['https://a.dev']
+    for (const rejected of ['ftp://a.dev', 'javascript:alert(1)', 'a.dev', '   ', ' https://a.dev ']) {
+      expect(addExternalLink(links, rejected)).toBe(links)
+    }
+  })
+
+  it('removes by index and keeps the rest in order', () => {
+    expect(removeExternalLink(['https://a', 'https://b', 'https://c'], 1)).toEqual(['https://a', 'https://c'])
+  })
+})
+
 describe('ticketSearchText', () => {
   it('matches on number, labels, and branch as well as prose', () => {
     const ticket = {
@@ -430,6 +451,13 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Pull request: https://github.com/o/r/pull/4')
     expect(prompt).toContain('Source: https://github.com/o/r/issues/3')
     expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
+  })
+
+  it('lists external links only when the ticket has some', () => {
+    const linkedTicket = ticket({ externalLinks: ['https://figma.com/f', 'https://slack.com/t'] })
+    expect(ticketAgentPrompt(linkedTicket, lane())).toContain('Links:\n- https://figma.com/f\n- https://slack.com/t')
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Links:')
+    expect(ticketAgentPrompt(ticket({ externalLinks: [] }), lane())).not.toContain('Links:')
   })
 
   it('ends with the lane output target and permission to reuse an existing location', () => {

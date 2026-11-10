@@ -13,6 +13,7 @@ import {
   TICKET_CARD_FIELDS,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
+  addExternalLink,
   agentForTicket,
   autoRunUsesWorktrees,
   availableAgents,
@@ -27,6 +28,7 @@ import {
   parseLabels,
   pullRequestLabel,
   removeChecklistItem,
+  removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
@@ -78,6 +80,9 @@ const boardSettingsOpen = ref(false)
 const ticketDraft = ref<{ title: string; description: string; laneId: string } | null>(null)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
+const linkDraft = ref('')
+const linkDraftInvalid = ref(false)
+const linkInput = ref<HTMLInputElement | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -365,6 +370,8 @@ const closeModals = () => {
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
   checklistDraft.value = ''
+  linkDraft.value = ''
+  linkDraftInvalid.value = false
 }
 
 const focusTicketFilter = () => {
@@ -466,6 +473,27 @@ const toggleChecklistItem = (ticket: Ticket, index: number, done: boolean) =>
 
 const dropChecklistItem = (ticket: Ticket, index: number) =>
   editTicket(ticket, { checklist: removeChecklistItem(ticket.checklist, index) })
+
+// Invalid input keeps its text so it can be fixed; a duplicate clears, since
+// that link is already listed above.
+const addLinkDraft = (ticket: Ticket) => {
+  const url = linkDraft.value.trim()
+  if (!url) return
+  linkInput.value?.focus()
+  if (!isWebUrl(url)) {
+    linkDraftInvalid.value = true
+    return
+  }
+  linkDraft.value = ''
+  const links = addExternalLink(ticket.externalLinks, url)
+  const isAdded = links !== ticket.externalLinks
+  if (isAdded) editTicket(ticket, { externalLinks: links })
+}
+
+const dropExternalLink = (ticket: Ticket, index: number) => {
+  const links = removeExternalLink(ticket.externalLinks, index)
+  editTicket(ticket, { externalLinks: links.length ? links : undefined })
+}
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
@@ -1049,6 +1077,28 @@ const runTicketAgent = (ticket: Ticket) => {
           Open pull request ↗
         </a>
       </label>
+
+      <section class="ticket-checklist ticket-links">
+        <p class="eyebrow">External Links</p>
+        <ul v-if="openTicket.externalLinks?.length">
+          <li v-for="(link, index) in openTicket.externalLinks" :key="link">
+            <a :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
+            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, index)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-links-add">
+          <input
+            ref="linkInput"
+            v-model="linkDraft"
+            type="url"
+            placeholder="https://…"
+            @input="linkDraftInvalid = false"
+            @keyup.enter="addLinkDraft(openTicket)"
+          />
+          <button type="button" @click="addLinkDraft(openTicket)">Add</button>
+        </div>
+        <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
 
       <section class="ticket-checklist">
         <p class="eyebrow">

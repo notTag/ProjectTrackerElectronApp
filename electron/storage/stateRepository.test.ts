@@ -63,7 +63,8 @@ const stateWithBoard = (): ProjectTrackerState => {
             branchName: 'feat/a',
             worktreePath: '/code/app-a',
             pullRequestUrl: 'https://github.com/o/r/pull/8',
-            fullAuto: true
+            fullAuto: true,
+            externalLinks: ['https://figma.com/f', 'https://slack.com/t']
           },
           {
             id: 'ticket-b',
@@ -125,6 +126,8 @@ describe('StateRepository', () => {
     expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
     expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
     expect(board?.tickets[1].worktreePath).toBeUndefined()
+    expect(board?.tickets[0].externalLinks).toEqual(['https://figma.com/f', 'https://slack.com/t'])
+    expect(board?.tickets[1].externalLinks).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
@@ -151,6 +154,22 @@ describe('StateRepository', () => {
     const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
     expect(reopenedTicket.worktreePath).toBe('/code/app-a')
     expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+  })
+
+  it('loads tickets with no links from a database created before external links existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN external_links_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket.externalLinks).toBeUndefined()
+    migratedTicket.externalLinks = ['https://a.dev']
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].externalLinks).toEqual(['https://a.dev'])
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {

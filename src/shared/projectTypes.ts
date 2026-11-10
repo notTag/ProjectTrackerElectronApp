@@ -243,6 +243,8 @@ export interface Ticket {
   externalUrl?: string
   // Full auto for this ticket in every lane, whatever the lane's own toggle says.
   fullAuto?: boolean
+  // Any further http(s) links: design docs, threads, related issues. Absent means none.
+  externalLinks?: string[]
 }
 
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
@@ -281,7 +283,18 @@ export const setChecklistItemDone = (
 export const removeChecklistItem = (checklist: ChecklistItem[] = [], index: number): ChecklistItem[] =>
   checklist.filter((_, itemIndex) => itemIndex !== index)
 
-export const checklistProgress = (checklist: ChecklistItem[] = []) => {
+// Returns the list unchanged for a non-web or duplicate URL, so callers tell
+// "rejected" from "added" by comparing lengths.
+export const addExternalLink = (links: string[] = [], url: string): string[] => {
+  const trimmedUrl = url.trim()
+  const isNewWebUrl = isWebUrl(trimmedUrl) && !links.includes(trimmedUrl)
+  return isNewWebUrl ? [...links, trimmedUrl] : links
+}
+
+export const removeExternalLink = (links: string[] = [], index: number): string[] =>
+  links.filter((_, linkIndex) => linkIndex !== index)
+
+export const checklistProgress =(checklist: ChecklistItem[] = []) => {
   const doneItems = checklist.filter((item) => item.done)
   return { done: doneItems.length, total: checklist.length }
 }
@@ -362,6 +375,7 @@ export interface TicketPromptContext {
 // prompt instead of a column of "none"s.
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
+  const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -371,6 +385,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
+    linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')
