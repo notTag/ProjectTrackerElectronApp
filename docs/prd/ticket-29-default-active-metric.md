@@ -1,22 +1,20 @@
 # PRD — Ticket #29: Dashboard opens with "Active" selected
 
-Branch: `t29-when-initially-loading`
-Worktree: `.worktrees/t29`
-
 ## Problem
-The Dashboard (`src/views/DashboardView.vue`) opens with no metric tile selected (`activeMetric = ref<MetricFilter>(null)`, line 27), so every project shows. The user mostly cares about active work, so the first view should be the "Active" tile with the list filtered to `status === 'active'`.
+The Dashboard (`src/views/DashboardView.vue`) opens with no metric tile selected (`activeMetric = ref<MetricFilter>(null)`), so every project shows. The user mostly cares about active work, so the first view should be the "Active" tile with the list filtered to `status === 'active'`.
 
 ## Goal
 Opening the Dashboard shows the "Active" tile selected and the list filtered to active projects, using the same state a click on that tile produces.
 
 ## Current behaviour (verified in code)
-- `setMetricFilter(metric)` (line 160) toggles `activeMetric` and syncs filters. For `'active'` it sets `selectedPriorities = []` and `selectedStatuses = ['active']`.
-- `clearFilters()` (line 184) resets query, statuses, priorities and `activeMetric` to empty/null.
+- `setMetricFilter(metric)` toggles `activeMetric` and syncs filters. For `'active'` it sets `selectedPriorities = []` and `selectedStatuses = ['active']`.
+- `clearFilters()` resets query, statuses, priorities and `activeMetric` to empty/null.
 - `App.vue` renders a bare `<RouterView />` with no `<KeepAlive>`. DashboardView is destroyed when you open a board and rebuilt when you come back, so all its local filter state (query, statuses, priorities, metric) is already lost on every return trip.
 
 ## Decisions (open questions resolved)
 1. **On every mount, not only the first launch.** The view remounts and loses all its filter state anyway, so "reset to Active" fits how the view already behaves. Keeping a selection across navigation would mean moving the filter state into the Pinia store. That is a separate change, and the ticket only asks for a better default.
 2. **No active projects: keep Active selected and show the empty list.** No fallback to all projects. The rule stays the same whatever the data says, and the tile count shows `0`, so the empty list is easy to understand. Not falling back also avoids a flash from Active to All while `store.load()` is still in flight.
+   - Exception: after the onboarding first scan, `startFirstScan` calls `clearFilters()`. The scanner gives every new project the status `'unknown'`, so a new user would otherwise see an empty list.
 
 ## Requirements
 - R1: When DashboardView mounts, `activeMetric === 'active'`, `selectedStatuses` equals `['active']` and `selectedPriorities` equals `[]`.
@@ -26,7 +24,7 @@ Opening the Dashboard shows the "Active" tile selected and the list filtered to 
 - R5: Going to a board and back resets the Dashboard to Active (from decision 1).
 
 ## Implementation
-One line in `DashboardView.vue`, placed after the `setMetricFilter` declaration (it is a `const` arrow function, so a call above line 160 would hit the TDZ):
+One line in `DashboardView.vue`, placed after the `setMetricFilter` declaration (it is a `const` arrow function, so a call above its declaration would hit the TDZ):
 
 ```ts
 setMetricFilter('active')
