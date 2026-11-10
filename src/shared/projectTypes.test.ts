@@ -390,6 +390,12 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("hermes chat -q 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('hands opencode its TUI prompt on --prompt, not as the project-dir positional', () => {
+    const opencode = availableAgents({}).find((agent) => agent.id === 'opencode')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), opencode)
+    expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
@@ -445,11 +451,21 @@ describe('ticketShellCommand', () => {
     expect(agentForTicket(ticket({ agentId: 'aider' }), agents)).toBe(aider)
     expect(agentForTicket(ticket(), agents)).toBe(DEFAULT_AGENT)
     expect(ticketShellCommand(ticket(), lane(), aider)).toMatch(/^aider '/)
-    expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'aider'])
+    expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'opencode', 'aider'])
 
     const savedCodex = { id: 'codex', name: 'My Codex', command: '/opt/bin/codex', headlessArgs: [] }
     const withSavedCodex = availableAgents({ agents: [savedCodex] })
     expect(withSavedCodex.filter((agent) => agent.id === 'codex')).toEqual([savedCodex])
+
+    const savedOpencode = {
+      id: 'opencode',
+      name: 'opencode (yolo)',
+      command: 'opencode',
+      headlessArgs: ['run', '--dangerously-skip-permissions'],
+      promptArgs: ['--prompt']
+    }
+    const withSavedOpencode = availableAgents({ agents: [savedOpencode] })
+    expect(withSavedOpencode.filter((agent) => agent.id === 'opencode')).toEqual([savedOpencode])
   })
 
   it('names the lane markdown file when the lane has one', () => {
