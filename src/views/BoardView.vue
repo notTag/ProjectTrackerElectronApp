@@ -35,6 +35,7 @@ import {
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
+  ticketTabTitle,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -627,8 +628,11 @@ const confirmAutoRunLane = () => {
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
 }
 
-const openTicketInShell = (ticket: Ticket) =>
-  store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
+const openTicketInShell = (ticket: Ticket) => {
+  const command = ticketCommand(ticket)
+  const tabTitle = ticketTabTitle(ticket)
+  return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
+}
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
 // lane says nothing about the work in this one.

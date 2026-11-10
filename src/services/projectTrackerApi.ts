@@ -66,8 +66,8 @@ export const projectTrackerApi = {
     return requireElectron().pickScanDirectory()
   },
 
-  openProjectIn(path: string, targetId: string, command?: string) {
-    return requireElectron().openProjectIn(path, targetId, command)
+  openProjectIn(path: string, targetId: string, command?: string, title?: string) {
+    return requireElectron().openProjectIn(path, targetId, command, title)
   },
 
   autoRunLane(path: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) {
