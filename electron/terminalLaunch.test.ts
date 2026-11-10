@@ -4,6 +4,7 @@ import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
+  orchestratorTab,
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
@@ -198,5 +199,30 @@ describe('tab titles', () => {
     expect(lines.some((line) => line.includes('pwn') || line.includes('Second'))).toBe(false)
     const setterIndex = lines.findIndex((line) => line.includes('to tabTitle'))
     expect(lines[setterIndex - 1]).toBe('try')
+  })
+})
+
+describe('orchestratorTab', () => {
+  const valid = { command: "claude 'watch'", title: 'AUTORUN-ORCHESTRATOR-IN-DEV' }
+
+  it('passes a run without an orchestrator', () => {
+    expect(orchestratorTab(undefined)).toBeUndefined()
+  })
+
+  it('keeps a well-formed orchestrator', () => {
+    expect(orchestratorTab(valid)).toEqual(valid)
+  })
+
+  it.each([
+    ['null', null],
+    ['a string', 'claude'],
+    ['a missing command', { title: valid.title }],
+    ['an empty command', { ...valid, command: '' }],
+    ['a non-string command', { ...valid, command: 7 }],
+    ['a missing title', { command: valid.command }],
+    ['a title with an escape sequence', { ...valid, title: 'AUTORUN\u001b]0;pwn\u0007' }],
+    ['an oversized title', { ...valid, title: 'A'.repeat(201) }]
+  ])('rejects %s', (_label, payload) => {
+    expect(() => orchestratorTab(payload)).toThrow('Invalid Auto Run orchestrator.')
   })
 })

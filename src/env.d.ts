@@ -7,7 +7,8 @@ import type {
   ProjectMetrics,
   ProjectTrackerState,
   PullRequestStatus,
-  ScanResult
+  ScanResult,
+  TerminalTab
 } from './shared/projectTypes'
 
 interface ProjectTrackerElectronApi {
@@ -41,7 +42,8 @@ interface ProjectTrackerElectronApi {
     path: string,
     targetId: string,
     tickets: AutoRunTicketLaunch[],
-    useWorktrees: boolean
+    useWorktrees: boolean,
+    orchestrator?: TerminalTab
   ): Promise<{ worktreePaths: string[] }>
   runTicketAgent(path: string, agentId: string, prompt: string): Promise<{ succeeded: boolean; output: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>

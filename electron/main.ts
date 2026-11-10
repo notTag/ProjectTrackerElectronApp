@@ -17,7 +17,9 @@ import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
+  orchestratorTab,
   terminalOsascriptArgs,
+  usableTabTitle,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
@@ -213,17 +215,6 @@ const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => 
     typeof candidate.command === 'string' &&
     (candidate.title === undefined || typeof candidate.title === 'string')
   )
-}
-
-// Formatting is ticketTabTitle's job; this only refuses garbage, and an
-// oversized title is dropped rather than failing the run over a nicety.
-const TAB_TITLE_MAX_LENGTH = 200
-// Control characters could smuggle terminal escape sequences into the title.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
-const usableTabTitle = (title: unknown): string | undefined => {
-  if (typeof title !== 'string' || !title) return undefined
-  if (title.length > TAB_TITLE_MAX_LENGTH || CONTROL_CHARACTERS.test(title)) return undefined
-  return title
 }
 
 const isStringArray = (value: unknown): value is string[] =>
@@ -469,24 +460,29 @@ const registerIpc = () => {
   // resolved against the runner table, so only a known terminal is launched.
   ipcMain.handle('lane:auto-run', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId, tickets, useWorktrees } = (payload ?? {}) as {
+    const { projectPath, targetId, tickets, useWorktrees, orchestrator } = (payload ?? {}) as {
       projectPath?: unknown
       targetId?: unknown
       tickets?: unknown
       useWorktrees?: unknown
+      orchestrator?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (!Array.isArray(tickets) || tickets.length === 0) throw new Error('No tickets to run.')
     if (!tickets.every(isAutoRunTicketLaunch)) throw new Error('Invalid Auto Run ticket.')
+    const orchestratorLaunch = orchestratorTab(orchestrator)
     // hasOwn, not a bare index: 'constructor' would otherwise resolve to Object.
     const isKnownTerminal = typeof targetId === 'string' && Object.hasOwn(COMMAND_RUNNERS, targetId)
     const runCommands = isKnownTerminal ? COMMAND_RUNNERS[targetId] : undefined
     if (!runCommands || process.platform !== 'darwin') throw new Error(`Auto Run cannot use terminal: ${targetId}`)
     const normalized = assertScannedProjectPath(projectPath)
+    // Last tab, left in the project root (where every runner starts a tab) even
+    // with worktrees on: it watches every ticket rather than working on one.
+    const orchestratorTabs = orchestratorLaunch ? [orchestratorLaunch] : []
 
     if (useWorktrees !== true) {
-      const tabs = tickets.map((ticket) => ({ command: ticket.command, title: usableTabTitle(ticket.title) }))
-      await runCommands(normalized, tabs)
+      const ticketTabs = tickets.map((ticket) => ({ command: ticket.command, title: usableTabTitle(ticket.title) }))
+      await runCommands(normalized, [...ticketTabs, ...orchestratorTabs])
       return { worktreePaths: [] }
     }
 
@@ -503,7 +499,7 @@ const registerIpc = () => {
       command: `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`,
       title: usableTabTitle(ticket.title)
     }))
-    await runCommands(normalized, tabsInWorktrees)
+    await runCommands(normalized, [...tabsInWorktrees, ...orchestratorTabs])
     return { worktreePaths }
   })
 

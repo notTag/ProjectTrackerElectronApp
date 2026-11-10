@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
+  orchestratorPrompt,
+  orchestratorTabTitle,
+  TRACKER_DATABASE_PATH,
   completionMoves,
   fullAutoHandoffs,
   isFullAuto,
@@ -941,5 +946,103 @@ describe('agentRunBadge', () => {
     expect(hasUnseenAgentResult(ticket(run({ succeeded: false })))).toBe(true)
     expect(hasUnseenAgentResult(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })))).toBe(false)
     expect(hasUnseenAgentResult(ticket())).toBe(false)
+  })
+})
+
+describe('Auto Run orchestrator', () => {
+  const lane = (id: string, name: string, agentPrompt = ''): SwimLane => ({ id, name, agentPrompt, agentFilePath: '' })
+  const inDev = lane('in-dev', 'In Development', 'Build it.')
+  const boardLanes = [inDev, lane('in-pr', 'Merge Request', 'Review it.'), lane('done', 'Done'), getUnassignedLane(createDefaultBoard())]
+
+  const ticket = (number: number, title: string): Ticket => ({
+    id: `ticket-${number}`,
+    number,
+    laneId: 'in-dev',
+    title,
+    description: '',
+    createdAt: '2026-01-01T00:00:00.000Z'
+  })
+  const entries = [ticket(12, 'First thing'), ticket(13, 'Second thing')].map((entry) =>
+    buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
+  )
+  const context = (terminalId: string, terminalLabel = terminalId) => ({
+    projectPath: "/Users/me/Code/it's-mine",
+    lanes: boardLanes,
+    terminalId,
+    terminalLabel
+  })
+
+  describe('orchestratorTabTitle', () => {
+    it('upper-cases the lane name and joins whitespace runs with one hyphen', () => {
+      expect(orchestratorTabTitle({ name: 'In Development' })).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(orchestratorTabTitle({ name: '  merge \t request\n' })).toBe('AUTORUN-ORCHESTRATOR-MERGE-REQUEST')
+    })
+
+    it('stays within what main accepts for a long lane name', () => {
+      const title = orchestratorTabTitle({ name: '🚀'.repeat(300) })
+      expect(title.length).toBeLessThanOrEqual(200)
+      expect(title.startsWith('AUTORUN-ORCHESTRATOR-🚀')).toBe(true)
+      expect(title).not.toMatch(/\p{Cc}/u)
+    })
+
+    it('never ends on a bare prefix', () => {
+      expect(orchestratorTabTitle({ name: '   ' })).toBe('AUTORUN-ORCHESTRATOR-LANE')
+    })
+  })
+
+  describe('orchestratorPrompt', () => {
+    const prompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
+
+    it('lists every ticket with its title, tab title and branch', () => {
+      expect(prompt).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
+      expect(prompt).toContain('- #13 Second thing — tab "#13 Second thing" — branch t13-second-thing')
+    })
+
+    it('gives a read-only DB query scoped to the project, and forbids writes', () => {
+      expect(prompt).toContain(`sqlite3 -readonly "${TRACKER_DATABASE_PATH}" '`)
+      const scopedSql = "WHERE project_path = '/Users/me/Code/it''s-mine' AND number IN (12, 13);"
+      expect(prompt).toContain(shellQuote(scopedSql).slice(1))
+      expect(prompt).toContain('Never write to the database')
+    })
+
+    it('flags which lanes still have agent work, the unassigned one included', () => {
+      expect(prompt).toContain('- in-pr — Merge Request — agent work: yes')
+      expect(prompt).toContain('- done — Done — agent work: no')
+      expect(prompt).toContain(`- ${UNASSIGNED_LANE_ID} — No status — agent work: no`)
+    })
+
+    it('asks gh for each branch\'s PRs in every state', () => {
+      expect(prompt).toContain('gh pr list --head <branch> --state all')
+    })
+
+    it("carries the chosen terminal's list and close recipes", () => {
+      expect(prompt).toContain('tell application "Ghostty" to get name of every tab of every window')
+      expect(prompt).toContain("'close tab t'")
+      const iterm = orchestratorPrompt(inDev, entries, context('iterm2'))
+      expect(iterm).toContain('tell application "iTerm"')
+      expect(iterm).toContain("'close s'")
+      const terminal = orchestratorPrompt(inDev, entries, context('terminal'))
+      expect(terminal).toContain('custom title of t is "<TAB>"')
+    })
+
+    it('tells the user to close Warp tabs by hand', () => {
+      const warp = orchestratorPrompt(inDev, entries, context('warp', 'Warp'))
+      expect(warp).toContain('Warp cannot be queried')
+      expect(warp).toContain('close its tab by hand')
+      expect(warp).not.toContain('osascript')
+    })
+  })
+
+  describe('buildOrchestratorLaunch', () => {
+    it('sends no orchestrator for a one-ticket run', () => {
+      expect(buildOrchestratorLaunch(inDev, entries.slice(0, 1), DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    })
+
+    it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
+      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
+      expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
+      expect(launch?.command).toContain("it'\\''s-mine")
+    })
   })
 })
