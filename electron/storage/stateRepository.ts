@@ -129,7 +129,9 @@ const ticketFromRow = (row: Row): Ticket => ({
   agentRun: parseJson<Ticket['agentRun']>(row.agent_run_json, undefined),
   externalId: asText(row.external_id),
   externalUrl: asText(row.external_url),
-  fullAuto: asBool(row.full_auto)
+  fullAuto: asBool(row.full_auto),
+  moveToLaneId: asText(row.move_to_lane_id),
+  moveOnComplete: asBool(row.move_on_complete)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -150,7 +152,9 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   ticket.externalUrl ?? null,
   ticket.worktreePath ?? null,
   ticket.pullRequestUrl ?? null,
-  ticket.fullAuto ? 1 : 0
+  ticket.fullAuto ? 1 : 0,
+  ticket.moveToLaneId ?? null,
+  ticket.moveOnComplete ? 1 : 0
 ]
 
 export class StateRepository {
@@ -595,8 +599,8 @@ export class StateRepository {
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
-         worktree_path, pull_request_url, full_auto, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         worktree_path, pull_request_url, full_auto, move_to_lane_id, move_on_complete, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -608,7 +612,7 @@ export class StateRepository {
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
-         full_auto = ?
+         full_auto = ?, move_to_lane_id = ?, move_on_complete = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )

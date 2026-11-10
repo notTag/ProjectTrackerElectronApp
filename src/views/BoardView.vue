@@ -535,7 +535,14 @@ const formatDateTime = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
+const laneName = (laneId: string) => {
+  if (laneId === UNASSIGNED_LANE_ID) return UNASSIGNED_LANE_NAME
+  return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
+}
+
+// Picking a target arms it — the checkbox starts ticked; None clears both.
+const setMoveToLane = (ticket: Ticket, laneId: string) =>
+  editTicket(ticket, { moveToLaneId: laneId || undefined, moveOnComplete: Boolean(laneId) })
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
 // different instruction once it moves column.
@@ -979,6 +986,19 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <label>
+        Move to
+        <select
+          :value="openTicket.moveToLaneId ?? ''"
+          @change="setMoveToLane(openTicket, ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">None</option>
+          <option :value="UNASSIGNED_LANE_ID">{{ UNASSIGNED_LANE_NAME }}</option>
+          <option v-for="lane in board.lanes" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
+        </select>
+        <span class="field-hint">Where this ticket goes when its checklist is done or ▶ Run succeeds.</span>
+      </label>
+
+      <label>
         Assignee
         <select
           :value="openTicket.assigneeId ?? ''"
@@ -1132,6 +1152,15 @@ const runTicketAgent = (ticket: Ticket) => {
       <a v-if="openTicket.externalUrl" class="ticket-external" :href="openTicket.externalUrl" target="_blank">
         View on GitHub ({{ openTicket.externalId?.replace('github:', '#') }})
       </a>
+
+      <label v-if="openTicket.moveToLaneId" class="checkbox-label">
+        <input
+          type="checkbox"
+          :checked="Boolean(openTicket.moveOnComplete)"
+          @change="editTicket(openTicket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
+        />
+        Move to {{ laneName(openTicket.moveToLaneId) }} swimlane
+      </label>
 
       <div class="modal-actions">
         <button class="secondary danger" @click="deleteTicket(openTicket)">Delete</button>

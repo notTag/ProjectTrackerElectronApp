@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildAutoRunLaunch,
+  completionMoves,
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
@@ -675,6 +676,68 @@ describe('full auto', () => {
     expect(handoffTicketNumbers(before, boardWith([ticket({ fullAuto: true, title: 'Renamed' })]))).toEqual([])
     const newTicket = ticket({ id: 'new', number: 8, fullAuto: true, laneId: 'dev' })
     expect(handoffTicketNumbers(before, boardWith([ticket({ fullAuto: true }), newTicket]))).toEqual([])
+  })
+
+  describe('completionMoves', () => {
+    const steps = (...done: boolean[]) => done.map((isDone, index) => ({ text: `step ${index}`, done: isDone }))
+    const armed = (overrides: Partial<Ticket> = {}) =>
+      ticket({ moveToLaneId: 'dev', moveOnComplete: true, checklist: steps(true, false), ...overrides })
+    const completed = (overrides: Partial<Ticket> = {}) => armed({ checklist: steps(true, true), ...overrides })
+    const movesBetween = (before: Ticket, after: Ticket, alsoCompletedIds: string[] = [], at?: string) =>
+      completionMoves(boardWith([before]), boardWith([after]), alsoCompletedIds, at)
+
+    it('moves a ticket whose checklist just went all-done and disarms it, keeping the target', () => {
+      const { board, moves } = movesBetween(armed(), completed(), [], '2026-02-02T00:00:00.000Z')
+      expect(moves.map((move) => `${move.ticket.number}->${move.toLane.name}`)).toEqual(['7->DEV'])
+      expect(board.tickets[0]).toMatchObject({
+        laneId: 'dev',
+        moveToLaneId: 'dev',
+        moveOnComplete: false,
+        updatedAt: '2026-02-02T00:00:00.000Z'
+      })
+    })
+
+    it('moves on a completion the caller reports, with no checklist at all', () => {
+      const noChecklist = armed({ checklist: undefined })
+      expect(movesBetween(noChecklist, noChecklist, ['ticket-1']).moves).toHaveLength(1)
+      expect(movesBetween(noChecklist, noChecklist).moves).toEqual([])
+    })
+
+    it('does not move a ticket already all-done before, or one with the checkbox off', () => {
+      const alreadyDone = movesBetween(completed(), completed({ title: 'Renamed' }))
+      expect(alreadyDone.moves).toEqual([])
+      expect(alreadyDone.board.tickets[0].laneId).toBe('prd')
+
+      const unchecked = movesBetween(armed({ moveOnComplete: false }), completed({ moveOnComplete: false }))
+      expect(unchecked.moves).toEqual([])
+      expect(unchecked.board.tickets[0].laneId).toBe('prd')
+    })
+
+    it('does not move when the target lane is gone or is the current lane, but still disarms', () => {
+      const deletedTarget = movesBetween(armed({ moveToLaneId: 'gone' }), completed({ moveToLaneId: 'gone' }))
+      expect(deletedTarget.moves).toEqual([])
+      expect(deletedTarget.board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: false })
+
+      const sameLane = movesBetween(armed({ moveToLaneId: 'prd' }), completed({ moveToLaneId: 'prd' }))
+      expect(sameLane.moves).toEqual([])
+      expect(sameLane.board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: false })
+    })
+
+    it('returns the next board itself when nothing completed', () => {
+      const after = boardWith([armed({ title: 'Renamed' })])
+      expect(completionMoves(boardWith([armed()]), after).board).toBe(after)
+    })
+
+    it('can move to the No status column', () => {
+      const toUnassigned = { moveToLaneId: UNASSIGNED_LANE_ID }
+      const { moves } = movesBetween(armed(toUnassigned), completed(toUnassigned))
+      expect(moves[0].toLane.id).toBe(UNASSIGNED_LANE_ID)
+    })
+
+    it('clears Move to on tickets targeting a deleted lane', () => {
+      const board = removeLaneFromBoard(boardWith([armed()]), 'dev')
+      expect(board.tickets[0]).toMatchObject({ moveToLaneId: undefined, moveOnComplete: false, laneId: 'prd' })
+    })
   })
 
   it('keeps a ticket on its existing branch and drops its worktree path from the prompt when worktrees are on', () => {
