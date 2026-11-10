@@ -1,8 +1,8 @@
+import { toPlainJson } from '@/shared/plainJson'
 import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult } from '@/shared/projectTypes'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
-const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const requireElectron = () => {
   if (!window.projectTracker) {

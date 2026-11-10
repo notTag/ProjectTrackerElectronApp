@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { toPlainJson } from '@/shared/plainJson'
 import { createSeedState, getBoard, type ProjectTrackerState, type Ticket } from '@/shared/projectTypes'
 
 const api = vi.hoisted(() => ({
@@ -32,6 +33,7 @@ const stateWithTicketIn = (laneId: string): ProjectTrackerState => {
     boards: {
       [PROJECT_PATH]: {
         lanes: [
+          { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '', fullAuto: true },
           { id: 'prd', name: 'PRD', agentPrompt: 'Write a PRD.', agentFilePath: '', fullAuto: true },
           { id: 'dev', name: 'In Development', agentPrompt: 'Build it.', agentFilePath: '', autoRunTerminalId: 'iterm2' }
         ],
@@ -66,6 +68,26 @@ describe('full auto handoff', () => {
     expect(useWorktrees).toBe(true)
     expect(launches[0].command).toContain('Build it.')
     expect(store.notice).toBe('Full auto: #7 → In Development')
+  })
+
+  it('moves a ticket with no PRD or agent run from Idea into In Development without an error', async () => {
+    // Same round trip the preload applies to every IPC result.
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => toPlainJson(state))
+    api.refreshProjectState.mockImplementation(async () => toPlainJson(stateWithTicketIn('dev')))
+    api.autoRunLane.mockImplementation(async () => toPlainJson({ worktreePaths: [] }))
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+
+    await store.updateTicket(PROJECT_PATH, 'ticket-1', { laneId: 'dev' })
+    expect(store.error).toBeNull()
+
+    store.state = stateWithTicketIn('idea')
+    await store.refresh()
+    await flushLaunches()
+
+    expect(store.error).toBeNull()
+    const [, , launches] = api.autoRunLane.mock.calls[0]
+    expect(launches[0].command).toContain('Add the thing')
   })
 
   it('launches nothing for a move made in this window', async () => {
