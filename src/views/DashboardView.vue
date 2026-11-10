@@ -221,10 +221,7 @@ const pickOnboardingPath = async () => {
 const startFirstScan = async () => {
   if (!onboardingPath.value) return
   const ok = await store.scan(onboardingPath.value, { requireProjects: true })
-  if (!ok) return
-  onboardingSkipped.value = true
-  // Freshly scanned projects are all 'unknown', so the Active default would show an empty list.
-  clearFilters()
+  if (ok) onboardingSkipped.value = true
 }
 
 const removePendingDirectory = async () => {

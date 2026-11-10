@@ -14,7 +14,7 @@ Opening the Dashboard shows the "Active" tile selected and the list filtered to 
 ## Decisions (open questions resolved)
 1. **On every mount, not only the first launch.** The view remounts and loses all its filter state anyway, so "reset to Active" fits how the view already behaves. Keeping a selection across navigation would mean moving the filter state into the Pinia store. That is a separate change, and the ticket only asks for a better default.
 2. **No active projects: keep Active selected and show the empty list.** No fallback to all projects. The rule stays the same whatever the data says, and the tile count shows `0`, so the empty list is easy to understand. Not falling back also avoids a flash from Active to All while `store.load()` is still in flight.
-   - Exception: after the onboarding first scan, `startFirstScan` calls `clearFilters()`. The scanner gives every new project the status `'unknown'`, so a new user would otherwise see an empty list.
+   - Onboarding never lands on an empty list: `mergeScannedProjects` makes the first project ever added `'active'`, and every later project starts as `'unknown'`.
 
 ## Requirements
 - R1: When DashboardView mounts, `activeMetric === 'active'`, `selectedStatuses` equals `['active']` and `selectedPriorities` equals `[]`.

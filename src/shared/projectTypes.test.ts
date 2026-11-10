@@ -575,6 +575,19 @@ describe('scan directory removal', () => {
     expect(merged.snapshot.projects[1].archived).toBe(true)
   })
 
+  it('makes the first project ever added active and leaves later ones unknown', () => {
+    const unknownAt = (path: string): ProjectRecord => ({ ...projectAt(path), status: 'unknown' })
+    const firstScan = mergeScannedProjects(createSeedState(), [unknownAt('/code/a/one'), unknownAt('/code/a/two')], [])
+    expect(firstScan.snapshot.projects.map((project) => project.status)).toEqual(['active', 'unknown'])
+
+    const userEdited = {
+      ...firstScan,
+      snapshot: { ...firstScan.snapshot, projects: firstScan.snapshot.projects.map((project) => ({ ...project, status: 'paused' as const })) }
+    }
+    const rescan = mergeScannedProjects(userEdited, [unknownAt('/code/a/one'), unknownAt('/code/a/two'), unknownAt('/code/a/three')], [])
+    expect(rescan.snapshot.projects.map((project) => project.status)).toEqual(['paused', 'paused', 'unknown'])
+  })
+
   it('carries hidden projects through a scan, since the scanner skips their folders', () => {
     const state = stateWith(['/code/a'], ['/code/a/app', '/code/a/secret'])
     const merged = mergeScannedProjects(state, [projectAt('/code/a/app')], [])

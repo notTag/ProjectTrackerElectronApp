@@ -118,11 +118,15 @@ export const mergeScannedProjects = (
   failures: ScanFailure[]
 ): ProjectTrackerState => {
   const existingByPath = new Map(previous.snapshot.projects.map((project) => [project.path, project]))
-  const projects = scannedProjects.map((project) => {
+  // The seed state never has scannedAt, so this also covers the onboarding scan.
+  const hasNoTrackedProjects = !previous.snapshot.scannedAt || previous.snapshot.projects.length === 0
+  const projects = scannedProjects.map((project, index) => {
     const existing = existingByPath.get(project.path)
+    const isFirstProjectAdded = hasNoTrackedProjects && index === 0
+    const scannedStatus: ProjectStatus = isFirstProjectAdded ? 'active' : project.status
     return {
       ...project,
-      status: existing?.status ?? project.status,
+      status: existing?.status ?? scannedStatus,
       priority: existing?.priority ?? project.priority,
       notes: existing?.notes ?? project.notes,
       githubUrl: project.githubUrl ?? existing?.githubUrl,
