@@ -153,15 +153,20 @@ const parseGithubRepo = (githubUrl: string) => {
 
 // Single door to the GitHub REST API so auth, headers and the status-to-message
 // mapping stay identical for every caller.
-const requestGithub = async <T>(apiPath: string): Promise<T> => {
+// A body makes it a JSON POST (the GraphQL endpoint); otherwise a GET.
+const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => {
   const token = await resolveGithubToken()
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'User-Agent': APP_NAME
   }
   if (token) headers.Authorization = `Bearer ${token}`
+  const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
 
-  const response = await fetch(`https://api.github.com${apiPath}`, { headers })
+  const response = await fetch(`https://api.github.com${apiPath}`, init)
+  if (response.status === 401 && !token) {
+    throw new Error('GitHub needs a sign-in for this. Run gh auth login or set GITHUB_TOKEN.')
+  }
   if (response.status === 404) {
     throw new Error(
       token
@@ -526,7 +531,8 @@ const registerIpc = () => {
     if (!pathsAreStrings) throw new Error('Invalid project paths.')
 
     const windows = metricWindows(new Date())
-    const projects = stateRepository.closedTicketMetrics(requestedPaths.map(normalizePath), windows)
+    const normalizedPaths = requestedPaths.map(normalizePath)
+    const projects = stateRepository.closedTicketMetrics(normalizedPaths, windows)
     const projectPaths = projects.map((project) => project.projectPath)
 
     const prsFor = async (githubUrl: string | undefined) => {

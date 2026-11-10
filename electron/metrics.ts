@@ -22,29 +22,52 @@ const WINDOW_KEYS = ['today', 'week', 'month', 'year'] as const
 // GitHub search takes an explicit offset; second precision is all it accepts.
 const githubSearchDate = (isoTimestamp: string) => `${isoTimestamp.slice(0, 19)}+00:00`
 
-interface SearchResult {
-  total_count: number
+type CountKey = 'open' | (typeof WINDOW_KEYS)[number]
+type GraphqlCounts = Record<CountKey, { issueCount: number }>
+
+interface GraphqlResponse {
+  data?: GraphqlCounts
+  errors?: { message: string }[]
 }
 
-// ponytail: 5 search calls per repo against a 30/min limit, fine for ~6 repos
-// per open. Past that, page one `merged:>=<year start>` search and bucket locally.
+const COUNT_KEYS: CountKey[] = ['open', ...WINDOW_KEYS]
+const countFields = COUNT_KEYS.map((key) => `${key}: search(query: $${key}, type: ISSUE) { issueCount }`)
+const countVariables = COUNT_KEYS.map((key) => `$${key}: String!`)
+const PR_COUNTS_QUERY = `query(${countVariables.join(', ')}) { ${countFields.join(' ')} }`
+
+// One GraphQL request per repo carries all five counts. REST search would be
+// five calls each against its 30/min limit, which the dashboard passes at ~6 repos.
 export const prCounts = async (
   owner: string,
   repo: string,
   windows: MetricWindows,
-  requestGithub: <T>(apiPath: string) => Promise<T>
+  requestGithub: <T>(apiPath: string, body?: unknown) => Promise<T>
 ): Promise<ProjectPrMetrics> => {
-  const countMatching = async (qualifiers: string) => {
-    const query = encodeURIComponent(`repo:${owner}/${repo} is:pr ${qualifiers}`)
-    const result = await requestGithub<SearchResult>(`/search/issues?q=${query}&per_page=1`)
-    return result.total_count
-  }
+  const repoPrs = `repo:${owner}/${repo} is:pr`
   const mergedSince = (key: (typeof WINDOW_KEYS)[number]) =>
-    countMatching(`is:merged merged:>=${githubSearchDate(windows[key])}`)
+    `${repoPrs} is:merged merged:>=${githubSearchDate(windows[key])}`
+  const variables = {
+    open: `${repoPrs} is:open`,
+    today: mergedSince('today'),
+    week: mergedSince('week'),
+    month: mergedSince('month'),
+    year: mergedSince('year')
+  }
 
-  const [open, ...merged] = await Promise.all([countMatching('is:open'), ...WINDOW_KEYS.map(mergedSince)])
-  const [today, week, month, year] = merged
-  return { open, merged: { today, week, month, year } }
+  const response = await requestGithub<GraphqlResponse>('/graphql', { query: PR_COUNTS_QUERY, variables })
+  const firstError = response.errors?.[0]
+  if (firstError || !response.data) throw new Error(firstError?.message ?? 'GitHub returned no PR counts.')
+
+  const counts = response.data
+  return {
+    open: counts.open.issueCount,
+    merged: {
+      today: counts.today.issueCount,
+      week: counts.week.issueCount,
+      month: counts.month.issueCount,
+      year: counts.year.issueCount
+    }
+  }
 }
 
 // Built-in agent binaries (projectTypes.ts DEFAULT_AGENT and friends). Custom
@@ -89,8 +112,10 @@ export const countAgentsByProject = (cwds: string[], projectPaths: string[]): Re
 const runForOutput = (command: string, args: string[]) =>
   new Promise<string>((resolve, reject) => {
     execFile(command, args, { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      // lsof exits 1 when a listed pid has already exited but still prints the rest.
-      if (error && !stdout) return reject(error)
+      // lsof exits 1 when a listed pid has already exited but still prints the
+      // rest. Any other failure (a timeout kill included) would be an undercount.
+      const isPartialListing = error?.code === 1 && stdout !== ''
+      if (error && !isPartialListing) return reject(error)
       resolve(stdout)
     })
   })

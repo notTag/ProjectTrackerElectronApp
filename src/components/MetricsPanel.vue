@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import type { MetricWindowCounts, ProjectMetrics, ProjectPrMetrics } from '@/shared/projectTypes'
@@ -62,9 +62,18 @@ const setOpen = (isOpen: boolean) => {
   if (isOpen) void load()
 }
 
+// Same as the sibling titlebar pickers, so two popovers never stack open.
+const rootRef = ref<HTMLElement | null>(null)
+const closeOnOutsideClick = (event: PointerEvent) => {
+  if (!open.value || rootRef.value?.contains(event.target as Node)) return
+  setOpen(false)
+}
+
 onMounted(() => {
+  window.addEventListener('pointerdown', closeOnOutsideClick)
   if (readStoredOpen()) setOpen(true)
 })
+onBeforeUnmount(() => window.removeEventListener('pointerdown', closeOnOutsideClick))
 watch(
   () => props.projectPaths.join('\n'),
   () => {
@@ -91,10 +100,14 @@ const totals = computed(() => {
   })
   const agentCounts = rows.value.map((row) => row.agentsRunning)
   const agentsKnown = agentCounts.every((count) => count !== null)
+  // A repo that failed would make the sum look complete when it isn't. Rows
+  // with no repo have nothing to count, so they don't block the total.
+  const prsKnown = rows.value.every((row) => !row.prs || 'open' in row.prs)
+  const prsOpen = sumOf(prRows.map((prs) => prs.open))
+  const prsMerged = sumWindows(prRows.map((prs) => prs.merged))
   return {
     closed: sumWindows(rows.value.map((row) => row.closed)),
-    prsOpen: sumOf(prRows.map((prs) => prs.open)),
-    prsMerged: sumWindows(prRows.map((prs) => prs.merged)),
+    prs: prsKnown ? { open: prsOpen, merged: prsMerged } : null,
     agentsRunning: agentsKnown ? sumOf(agentCounts as number[]) : null
   }
 })
@@ -102,7 +115,7 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
 </script>
 
 <template>
-  <div class="filter-menu metrics-menu">
+  <div ref="rootRef" class="filter-menu metrics-menu">
     <button class="secondary" :class="{ active: open }" :aria-expanded="open" @click="setOpen(!open)">
       📊 Metrics
     </button>
@@ -146,8 +159,11 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
             <tr>
               <th scope="row">Total</th>
               <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ totals.closed[column.key] }}</td>
-              <td>{{ totals.prsOpen }}</td>
-              <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ totals.prsMerged[column.key] }}</td>
+              <template v-if="totals.prs">
+                <td>{{ totals.prs.open }}</td>
+                <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ totals.prs.merged[column.key] }}</td>
+              </template>
+              <td v-else colspan="5" class="metrics-unavailable" title="A repository failed to load">—</td>
               <td>{{ totals.agentsRunning ?? '—' }}</td>
             </tr>
           </tfoot>

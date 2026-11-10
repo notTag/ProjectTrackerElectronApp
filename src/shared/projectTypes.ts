@@ -601,11 +601,15 @@ export interface ProjectBoard {
   unassignedLane?: SwimLane
 }
 
-// Same lanes the storage migration seeds by id (SEEDED_CLOSING_LANE_IDS).
-const CLOSING_LANE_NAMES = ['In Dev', 'In Production']
 const DEFAULT_LANE_NAMES = ['Idea', 'PRD', 'In Development', 'In PR', 'In Dev', 'In QA', 'In Production']
 
 const laneIdFromName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+
+// Every lane after the merge to main counts as closed. QA sits between In Dev
+// and In Production, so leaving it out would reopen each ticket on its way to ship.
+// New boards get these flags; the storage migration seeds the same ids once.
+const CLOSING_LANE_NAMES = ['In Dev', 'In QA', 'In Production']
+export const SEEDED_CLOSING_LANE_IDS = CLOSING_LANE_NAMES.map(laneIdFromName)
 
 // Tickets with no status live under a lane id that is never stored in
 // board.lanes — the board renders it as a virtual column, so it cannot be
@@ -675,7 +679,7 @@ export const createDefaultBoard = (): ProjectBoard => ({
     name,
     agentPrompt: '',
     agentFilePath: '',
-    closesTicket: CLOSING_LANE_NAMES.includes(name)
+    closesTicket: SEEDED_CLOSING_LANE_IDS.includes(laneIdFromName(name))
   })),
   tickets: []
 })

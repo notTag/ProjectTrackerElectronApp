@@ -63,12 +63,13 @@ describe('agent process discovery', () => {
 })
 
 describe('prCounts', () => {
-  it('asks GitHub search for open PRs plus merged PRs since each window start', async () => {
-    const queries: string[] = []
-    const requestGithub = async <T,>(apiPath: string) => {
-      const query = decodeURIComponent(new URL(apiPath, 'https://api.github.com').searchParams.get('q') ?? '')
-      queries.push(query)
-      return { total_count: queries.length } as T
+  it('asks GitHub search, in one GraphQL request, for open PRs plus merged PRs since each window start', async () => {
+    const requests: { apiPath: string; variables: Record<string, string> }[] = []
+    const requestGithub = async <T,>(apiPath: string, body?: unknown) => {
+      const { variables } = body as { variables: Record<string, string> }
+      requests.push({ apiPath, variables })
+      const issueCounts = Object.keys(variables).map((key, index) => [key, { issueCount: index + 1 }])
+      return { data: Object.fromEntries(issueCounts) } as T
     }
     const windows = {
       today: '2026-11-09T05:00:00.000Z',
@@ -77,13 +78,24 @@ describe('prCounts', () => {
       year: '2026-01-01T05:00:00.000Z'
     }
     const result = await prCounts('owner', 'repo', windows, requestGithub)
-    expect(queries).toEqual([
-      'repo:owner/repo is:pr is:open',
-      'repo:owner/repo is:pr is:merged merged:>=2026-11-09T05:00:00+00:00',
-      'repo:owner/repo is:pr is:merged merged:>=2026-11-02T20:30:00+00:00',
-      'repo:owner/repo is:pr is:merged merged:>=2026-11-01T04:00:00+00:00',
-      'repo:owner/repo is:pr is:merged merged:>=2026-01-01T05:00:00+00:00'
+    expect(requests).toEqual([
+      {
+        apiPath: '/graphql',
+        variables: {
+          open: 'repo:owner/repo is:pr is:open',
+          today: 'repo:owner/repo is:pr is:merged merged:>=2026-11-09T05:00:00+00:00',
+          week: 'repo:owner/repo is:pr is:merged merged:>=2026-11-02T20:30:00+00:00',
+          month: 'repo:owner/repo is:pr is:merged merged:>=2026-11-01T04:00:00+00:00',
+          year: 'repo:owner/repo is:pr is:merged merged:>=2026-01-01T05:00:00+00:00'
+        }
+      }
     ])
     expect(result).toEqual({ open: 1, merged: { today: 2, week: 3, month: 4, year: 5 } })
+  })
+
+  it('turns a GraphQL error (e.g. a repo it cannot see) into a thrown message for that row', async () => {
+    const requestGithub = async <T,>() => ({ errors: [{ message: 'Could not resolve to a Repository' }] }) as T
+    const windows = { today: '', week: '', month: '', year: '' }
+    await expect(prCounts('owner', 'gone', windows, requestGithub)).rejects.toThrow('Could not resolve')
   })
 })

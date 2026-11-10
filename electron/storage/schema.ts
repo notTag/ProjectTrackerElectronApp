@@ -155,7 +155,7 @@ WHEN NEW.lane_id IS NOT OLD.lane_id
 BEGIN
   UPDATE tickets SET closed_at = CASE
     WHEN NOT ${isClosingLane('NEW.lane_id')} THEN NULL
-    WHEN ${isClosingLane('OLD.lane_id')} THEN closed_at
+    WHEN ${isClosingLane('OLD.lane_id')} THEN COALESCE(closed_at, ${NOW})
     ELSE ${NOW}
   END
   WHERE id = NEW.id;
@@ -177,10 +177,17 @@ BEGIN
   UPDATE tickets SET closed_at = CASE WHEN NEW.closes_ticket = 1 THEN COALESCE(updated_at, created_at) END
   WHERE project_path = NEW.project_path AND lane_id = NEW.id;
 END;
-`
 
-// Merged to main or shipped. Boards with other lane ids start with none set.
-export const SEEDED_CLOSING_LANE_IDS = ['in-dev', 'in-production']
+-- A lane row can first appear already flagged (the unassigned column gets its
+-- row on first configure), so the insert path backfills the same way.
+CREATE TRIGGER IF NOT EXISTS swim_lanes_closed_at_on_flagged_insert
+AFTER INSERT ON swim_lanes
+WHEN NEW.closes_ticket = 1
+BEGIN
+  UPDATE tickets SET closed_at = COALESCE(closed_at, updated_at, created_at)
+  WHERE project_path = NEW.project_path AND lane_id = NEW.id;
+END;
+`
 
 export const PATH_KIND_SCAN = 'scan'
 export const PATH_KIND_HIDDEN = 'hidden'

@@ -616,7 +616,28 @@ describe('closed_at triggers (#27)', () => {
     cli.close()
   })
 
-  it('upgrading an older file seeds in-dev / in-production once and backfills their tickets', () => {
+  it('a lane row first inserted already flagged closes what sits in it', () => {
+    const { projectPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'later-lane')
+    cli
+      .prepare(
+        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, closes_ticket) VALUES ('later-lane', ?, 'Later', '', '', 99, 1)`
+      )
+      .run(projectPath)
+    expect(closedAt('ticket-a')).not.toBeNull()
+    cli.close()
+  })
+
+  it('a closing → closing move stamps a ticket that never got a closed_at', () => {
+    const { cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.exec("UPDATE tickets SET closed_at = NULL WHERE id = 'ticket-a'")
+    moveWithCli('ticket-a', 'in-production')
+    expect(closedAt('ticket-a')).not.toBeNull()
+    cli.close()
+  })
+
+  it('upgrading an older file seeds the closing lanes once and backfills their tickets', () => {
     const { userDataPath, cli, closedAt, moveWithCli } = setUp()
     moveWithCli('ticket-a', 'in-dev')
     cli.exec(`
