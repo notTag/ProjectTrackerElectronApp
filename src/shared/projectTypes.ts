@@ -796,6 +796,7 @@ export interface GithubPullRequest {
   state: 'open' | 'closed'
   draft?: boolean
   merged_at?: string | null
+  head?: { ref: string }
 }
 
 // GitHub reports a merged PR as state "closed"; merged_at is what tells the two
@@ -823,8 +824,9 @@ const PULL_REQUEST_STATE_LABELS: Record<PullRequestState, string> = {
 export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
   state ? PULL_REQUEST_STATE_LABELS[state] : 'No merge request'
 
-// Merged and closed PRs do not change again, so they are not worth a request.
-export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged' || state === 'closed'
+// Only a merge is final: a closed PR can be reopened, or replaced by a new PR
+// from the same branch.
+export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200

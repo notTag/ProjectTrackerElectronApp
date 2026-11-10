@@ -267,6 +267,9 @@ export const useProjectsStore = defineStore('projects', {
         ticket.pullRequestUrl
       )
       if (!status) return
+      // The user may have pasted a different URL while the request was in flight.
+      const currentTicket = this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
+      if (currentTicket?.pullRequestUrl !== ticket.pullRequestUrl) return
       const unchanged =
         status.url === ticket.pullRequestUrl &&
         status.state === ticket.pullRequestState &&
@@ -290,9 +293,11 @@ export const useProjectsStore = defineStore('projects', {
       for (const ticket of ticketsToCheck) {
         try {
           await this.refreshPullRequest(projectPath, ticket)
-        } catch {
+        } catch (error) {
           // A board load never surfaces GitHub errors; the modal does, on open.
-          return
+          // One bad ticket skips only itself; a rate limit would fail every one after it.
+          const isRateLimited = error instanceof Error && error.message.includes('rate limit')
+          if (isRateLimited) return
         }
       }
     },

@@ -546,7 +546,9 @@ const registerIpc = () => {
 
   // A pasted PR URL wins and is read against its own repo; otherwise the newest
   // PR opened from the ticket's branch. Assumes that branch lives in the same
-  // repo — PRs from forks are not found.
+  // repo — PRs from forks are not found. A saved URL is also what an earlier
+  // branch lookup leaves behind, so a closed PR from the ticket's own branch
+  // falls through to the lookup to pick up a newer PR reopened on that branch.
   ipcMain.handle(
     'ticket:fetch-pull-request',
     async (event, { githubUrl, branchName, pullRequestUrl }: Record<string, unknown> = {}) => {
@@ -559,13 +561,17 @@ const registerIpc = () => {
 
       if (pullRequestUrl) {
         const pastedNumber = pullRequestNumber(pullRequestUrl)
-        // ponytail: a non-GitHub URL (GitLab, say) has nothing to look up.
-        if (!pastedNumber || !isWebUrl(pullRequestUrl)) return null
+        // ponytail: only github.com is looked up; GitLab or Enterprise URLs stay plain links.
+        const isGithubDotCom = pullRequestUrl.trim().startsWith('https://github.com/')
+        if (!pastedNumber || !isGithubDotCom) return null
         const pastedRepo = parseGithubRepo(pullRequestUrl)
         const pullRequest = await requestGithub<GithubPullRequest>(
           `/repos/${pastedRepo.owner}/${pastedRepo.repo}/pulls/${pastedNumber}`
         )
-        return toPlainJson(toPullRequestStatus(pullRequest))
+        const pastedStatus = toPullRequestStatus(pullRequest)
+        const isFromTicketBranch = pullRequest.head?.ref === branchName
+        const mayHaveSuccessor = pastedStatus.state === 'closed' && isFromTicketBranch
+        if (!mayHaveSuccessor) return toPlainJson(pastedStatus)
       }
 
       const { owner, repo } = parseGithubRepo(githubUrl)

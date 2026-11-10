@@ -49,6 +49,7 @@ import {
   TICKET_CARD_FIELDS,
   isWebUrl,
   pullRequestLabel,
+  isPullRequestSettled,
   pullRequestStatusLabel,
   toPullRequestStatus,
   worktreeFolderName,
@@ -569,6 +570,13 @@ describe('ticket card labels', () => {
     expect(
       toPullRequestStatus({ ...githubPullRequest, state: 'closed', merged_at: '2026-01-04T00:00:00Z' })
     ).toEqual({ url: 'https://github.com/o/r/pull/5', number: 5, state: 'merged', mergedAt: '2026-01-04T00:00:00Z' })
+  })
+
+  it('treats only a merged PR as settled, since a closed one can reopen', () => {
+    expect(isPullRequestSettled('merged')).toBe(true)
+    expect(isPullRequestSettled('closed')).toBe(false)
+    expect(isPullRequestSettled('open')).toBe(false)
+    expect(isPullRequestSettled(undefined)).toBe(false)
   })
 
   it('links only absolute http(s) URLs', () => {
