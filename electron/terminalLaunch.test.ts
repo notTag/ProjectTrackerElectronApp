@@ -101,6 +101,48 @@ describe('multi-tab AppleScript launches', () => {
   })
 })
 
+// #38: a single-ticket Run must open exactly one window. The app asks for one
+// tab, and a terminal that is not running must not add a blank window of its
+// own, which `activate` before the script's window would make it do.
+describe('single-ticket launches', () => {
+  const scriptLines = (args: string[]) => args.slice(0, args.indexOf('--')).filter((arg) => arg !== '-e')
+  const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1)
+  const singleTab: TerminalTab[] = [{ command: 'claude hello', title: '#38 Only' }]
+
+  it('Terminal gets one command and title pair', () => {
+    const args = terminalOsascriptArgs('/tmp/project', singleTab)
+    expect(argvAfterSeparator(args)).toEqual([`cd '/tmp/project' && claude hello`, '#38 Only'])
+  })
+
+  it('iTerm2 gets one command and title pair', () => {
+    const args = itermOsascriptArgs('/tmp/project', singleTab)
+    expect(argvAfterSeparator(args)).toEqual([`cd '/tmp/project' && claude hello`, '#38 Only'])
+  })
+
+  it('Ghostty gets the directory and one command and title pair', () => {
+    const args = ghosttyOsascriptArgs('/tmp/project', singleTab)
+    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'claude hello', '#38 Only'])
+  })
+
+  it('Warp gets one window with one tab', () => {
+    const yaml = warpLaunchConfigYaml('/tmp/project', singleTab)
+    expect(yaml.split('\n').filter((line) => line.includes('- tabs:'))).toHaveLength(1)
+    expect(yaml.split('\n').filter((line) => line.includes('layout:'))).toHaveLength(1)
+  })
+
+  it.each([
+    ['Terminal', terminalOsascriptArgs, 'set newTab to do script (item 1 of argv)'],
+    ['iTerm2', itermOsascriptArgs, 'set targetWindow to (create window with default profile)'],
+    ['Ghostty', ghosttyOsascriptArgs, 'set targetWindow to new window with configuration surfaceConfig']
+  ])('%s launches without a default window and activates only after making its own', (_name, build, makesWindow) => {
+    const lines = scriptLines(build('/tmp/project', singleTab))
+    const tellIndex = lines.findIndex((line) => line.startsWith('tell application'))
+    expect(lines[tellIndex + 1]).toBe('launch')
+    expect(lines.indexOf('activate')).toBeGreaterThan(lines.indexOf(makesWindow))
+    expect(lines.filter((line) => line === 'activate')).toHaveLength(1)
+  })
+})
+
 // Titles ride argv beside their commands; a hostile one must never reach script
 // text or shift a command into the title slot.
 describe('tab titles', () => {
