@@ -321,6 +321,7 @@ In graph view this opens as a side panel instead of a centered modal.
 |-------|-------|
 | Title | Text input |
 | Status | No status or any lane. Changing it moves the ticket |
+| Move to | None, No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds. Picking a lane ticks the footer checkbox **Move to <lane> swimlane**; untick it to keep the ticket where it is. After the move the box unticks, and the target is kept so you can tick it again. Deleting the target lane clears it |
 | Assignee | Unassigned or any user (currently only "Local") |
 | Description | Textarea |
 | Labels | Comma-separated. Spaces and duplicates are cleaned up. "Searchable from the filter box." |

@@ -268,6 +268,10 @@ export interface Ticket {
   fullAuto?: boolean
   // Any further http(s) links: design docs, threads, related issues. Absent means none.
   externalLinks?: string[]
+  // Where the ticket goes when its work completes. Kept after the move so the
+  // checkbox can be re-ticked; moveOnComplete is what arms it.
+  moveToLaneId?: string
+  moveOnComplete?: boolean
 }
 
 export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
@@ -606,6 +610,49 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
   return handoffs
 }
 
+const isChecklistComplete = (ticket: Ticket | undefined): boolean => {
+  const checklist = ticket?.checklist ?? []
+  return checklist.length > 0 && checklist.every((item) => item.done)
+}
+
+export interface CompletionMove {
+  ticket: Ticket
+  toLane: SwimLane
+}
+
+// Completed = the checklist just went all-done, or the caller saw it finish
+// another way (a successful ▶ Run, passed in alsoCompletedIds). A transition,
+// not a state: a ticket already all-done in previousBoard stays put. Every
+// completed ticket with Move to armed is disarmed, even when it is already in
+// its target lane or that lane is gone, so a later re-completion never moves it.
+export const completionMoves = (
+  previousBoard: ProjectBoard,
+  nextBoard: ProjectBoard,
+  alsoCompletedIds: string[] = [],
+  at = new Date().toISOString()
+): { board: ProjectBoard; moves: CompletionMove[] } => {
+  const previousTicketById = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket]))
+  const isJustCompleted = (ticket: Ticket) => {
+    const checklistJustCompleted =
+      isChecklistComplete(ticket) && !isChecklistComplete(previousTicketById.get(ticket.id))
+    return checklistJustCompleted || alsoCompletedIds.includes(ticket.id)
+  }
+
+  const moves: CompletionMove[] = []
+  const tickets = nextBoard.tickets.map((ticket) => {
+    if (!ticket.moveOnComplete || !isJustCompleted(ticket)) return ticket
+    const toLane = ticket.moveToLaneId ? boardLaneById(nextBoard, ticket.moveToLaneId) : undefined
+    const movesLane = toLane !== undefined && toLane.id !== ticket.laneId
+    const disarmed = { ...ticket, moveOnComplete: false, updatedAt: at }
+    if (!movesLane) return disarmed
+    const moved = { ...disarmed, laneId: toLane.id }
+    moves.push({ ticket: moved, toLane })
+    return moved
+  })
+  const anyDisarmed = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
+  return { board: anyDisarmed ? { ...nextBoard, tickets } : nextBoard, moves }
+}
+
 export interface GithubIssue {
   number: number
   title: string
@@ -740,12 +787,17 @@ export const getBoard = (state: ProjectTrackerState, projectPath: string): Proje
 
 // Deleting a lane never deletes work: its tickets move to the unassigned column,
 // which always exists, so this holds even when the last lane is removed.
+// Tickets set to Move to the deleted lane lose that target.
+const withoutLane = (ticket: Ticket, laneId: string): Ticket => {
+  const laneFixed = ticket.laneId === laneId ? { ...ticket, laneId: UNASSIGNED_LANE_ID } : ticket
+  if (ticket.moveToLaneId !== laneId) return laneFixed
+  return { ...laneFixed, moveToLaneId: undefined, moveOnComplete: false }
+}
+
 export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): ProjectBoard => ({
   ...board,
   lanes: board.lanes.filter((lane) => lane.id !== laneId),
-  tickets: board.tickets.map((ticket) =>
-    ticket.laneId === laneId ? { ...ticket, laneId: UNASSIGNED_LANE_ID } : ticket
-  )
+  tickets: board.tickets.map((ticket) => withoutLane(ticket, laneId))
 })
 
 export const githubIssueExternalId = (issue: GithubIssue) => `github:${issue.number}`

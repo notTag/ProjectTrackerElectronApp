@@ -65,8 +65,10 @@ const stateWithBoard = (): ProjectTrackerState => {
             pullRequestUrl: 'https://github.com/o/r/pull/8',
             pullRequestState: 'merged',
             pullRequestMergedAt: '2026-01-04T00:00:00Z',
-                        fullAuto: true,
-            externalLinks: ['https://figma.com/f', 'https://slack.com/t']
+            fullAuto: true,
+            externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
+            moveToLaneId: 'prd',
+            moveOnComplete: true
           },
           {
             id: 'ticket-b',
@@ -140,6 +142,10 @@ describe('StateRepository', () => {
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
     expect(board?.tickets[1].agentRun?.succeeded).toBe(true)
+    expect(board?.tickets[0].moveToLaneId).toBe('prd')
+    expect(board?.tickets[0].moveOnComplete).toBe(true)
+    expect(board?.tickets[1].moveToLaneId).toBeUndefined()
+    expect(board?.tickets[1].moveOnComplete).toBe(false)
   })
 
   it('adds ticket columns missing from a database created before they existed', () => {
@@ -149,6 +155,8 @@ describe('StateRepository', () => {
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_state')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_merged_at')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_to_lane_id')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_on_complete')
     olderDatabase.close()
 
     const repository = new StateRepository(userDataPath)
@@ -158,11 +166,15 @@ describe('StateRepository', () => {
     migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
     migratedTicket.pullRequestState = 'open'
     migratedTicket.pullRequestMergedAt = undefined
+    expect(migratedTicket.moveOnComplete).toBe(false)
+    migratedTicket.moveToLaneId = 'prd'
+    migratedTicket.moveOnComplete = true
     repository.saveState(state)
 
     const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
     expect(reopenedTicket.worktreePath).toBe('/code/app-a')
     expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(reopenedTicket).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
     expect(reopenedTicket.pullRequestState).toBe('open')
     expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
   })

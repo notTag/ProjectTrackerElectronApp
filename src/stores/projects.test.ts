@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   refreshProjectState: vi.fn(),
   saveProjectState: vi.fn(),
   autoRunLane: vi.fn(),
+  runTicketAgent: vi.fn(),
   fetchProjectGithubIssues: vi.fn()
 }))
 vi.mock('@/services/projectTrackerApi', () => ({ projectTrackerApi: api }))
@@ -243,6 +244,70 @@ describe('moveLane', () => {
     const persistedOrder = getBoard(persistedState, PROJECT).lanes.map((entry) => entry.id)
     expect(persistedOrder).toEqual(['a', 'b', 'c'])
     expect(laneOrder(store)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('Move to on completion', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.autoRunLane.mockResolvedValue({ worktreePaths: [] })
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  const armedStore = ({ fullAuto = false } = {}) => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('prd')
+    const prdLane = getBoard(state, PROJECT_PATH).lanes.find((lane) => lane.id === 'prd')!
+    prdLane.fullAuto = fullAuto
+    const ticket = getBoard(state, PROJECT_PATH).tickets[0]
+    Object.assign(ticket, { moveToLaneId: 'dev', moveOnComplete: true, checklist: [{ text: 'a', done: false }] })
+    store.state = state
+    return { store, ticket }
+  }
+  const storedTicket = (store: ReturnType<typeof useProjectsStore>) => store.board(PROJECT_PATH).tickets[0]
+
+  it('moves the ticket and disarms it when ▶ Run succeeds, in one save', async () => {
+    const { store, ticket } = armedStore()
+    api.runTicketAgent.mockResolvedValue({ output: 'ok', succeeded: true })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
+
+    expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: 'dev', moveOnComplete: false })
+    expect(saveProjectState).toHaveBeenCalledTimes(1)
+    expect(store.notice).toBe('Moved #7 to In Development.')
+    expect(store.error).toBeNull()
+  })
+
+  it('leaves the ticket where it is when ▶ Run fails', async () => {
+    const { store, ticket } = armedStore()
+    api.runTicketAgent.mockResolvedValue({ output: 'boom', succeeded: false })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
+
+    expect(storedTicket(store)).toMatchObject({ laneId: 'prd', moveOnComplete: true })
+  })
+
+  it('moves on a checklist ticked done in this window, and full auto hands the move off', async () => {
+    const { store } = armedStore({ fullAuto: true })
+
+    await store.updateTicket(PROJECT_PATH, 'ticket-1', { checklist: [{ text: 'a', done: true }] })
+    await flushLaunches()
+
+    expect(storedTicket(store).laneId).toBe('dev')
+    expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves on a checklist an agent completed in the DB, picked up by refresh', async () => {
+    const { store } = armedStore()
+    const fresh: ProjectTrackerState = JSON.parse(JSON.stringify(store.state))
+    getBoard(fresh, PROJECT_PATH).tickets[0].checklist = [{ text: 'a', done: true }]
+    api.refreshProjectState.mockResolvedValue(fresh)
+
+    await store.refresh()
+
+    expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveOnComplete: false })
+    expect(saveProjectState).toHaveBeenCalledTimes(1)
   })
 })
 
