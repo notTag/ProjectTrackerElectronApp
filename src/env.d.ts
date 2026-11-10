@@ -5,6 +5,7 @@ import type {
   GithubIssue,
   ProjectGithubData,
   ProjectTrackerState,
+  PullRequestStatus,
   ScanResult
 } from './shared/projectTypes'
 
@@ -51,6 +52,7 @@ interface ProjectTrackerElectronApi {
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
+  fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string): Promise<PullRequestStatus | null>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>
 }
 

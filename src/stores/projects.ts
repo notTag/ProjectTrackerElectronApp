@@ -16,10 +16,12 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  isPullRequestSettled,
   mergeScannedProjects,
   moveLaneInBoard,
   removeLaneFromBoard,
   removeScanDirectory,
+  ticketBranchName,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
   type CompletionMove,
@@ -270,6 +272,19 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
+    // Matched against the run saved at write time, not the one the caller saw:
+    // a run that finished in between keeps its result and stays unseen.
+    // Skips the updatedAt stamp, because looking at a ticket is not editing it.
+    async markAgentRunSeen(projectPath: string, ticketId: string, runAt: string) {
+      const seenAt = new Date().toISOString()
+      const markSeen = (ticket: Ticket): Ticket => {
+        const savedRun = ticket.agentRun
+        const isUnseenRun = ticket.id === ticketId && savedRun?.at === runAt && savedRun.seenAt === undefined
+        return isUnseenRun ? { ...ticket, agentRun: { ...savedRun, seenAt } } : ticket
+      }
+      await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(markSeen) }))
+    },
+
     // Imports open GitHub issues into the board's dedicated import lane, which
     // is created on first pull. Already-imported issues are left untouched, so
     // this is safe to re-run.
@@ -308,6 +323,52 @@ export const useProjectsStore = defineStore('projects', {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
+      }
+    },
+
+    // Errors propagate so the ticket modal can show them; a project with no
+    // linked repo has nothing to ask GitHub, so that is a quiet no-op.
+    async refreshPullRequest(projectPath: string, ticket: Ticket) {
+      const githubUrl = this.projects.find((entry) => entry.path === projectPath)?.githubUrl
+      if (!githubUrl) return
+      const status = await projectTrackerApi.fetchTicketPullRequest(
+        githubUrl,
+        ticketBranchName(ticket),
+        ticket.pullRequestUrl
+      )
+      if (!status) return
+      // The user may have pasted a different URL while the request was in flight.
+      const currentTicket = this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
+      if (currentTicket?.pullRequestUrl !== ticket.pullRequestUrl) return
+      const unchanged =
+        status.url === ticket.pullRequestUrl &&
+        status.state === ticket.pullRequestState &&
+        status.mergedAt === ticket.pullRequestMergedAt
+      // Skipped so a refresh that learns nothing does not bump updatedAt.
+      if (unchanged) return
+      await this.updateTicket(projectPath, ticket.id, {
+        pullRequestUrl: status.url,
+        pullRequestState: status.state,
+        pullRequestMergedAt: status.mergedAt
+      })
+    },
+
+    // ponytail: sequential, one request per ticket. Fine for a board's worth of
+    // in-flight tickets against the 5000/h authed limit; batch via GraphQL if
+    // boards grow into the hundreds.
+    async refreshBoardPullRequests(projectPath: string) {
+      const ticketsToCheck = this.board(projectPath).tickets.filter(
+        (ticket) => (ticket.branchName || ticket.pullRequestUrl) && !isPullRequestSettled(ticket.pullRequestState)
+      )
+      for (const ticket of ticketsToCheck) {
+        try {
+          await this.refreshPullRequest(projectPath, ticket)
+        } catch (error) {
+          // A board load never surfaces GitHub errors; the modal does, on open.
+          // One bad ticket skips only itself; a rate limit would fail every one after it.
+          const isRateLimited = error instanceof Error && error.message.includes('rate limit')
+          if (isRateLimited) return
+        }
       }
     },
 
@@ -586,6 +647,9 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async openIn(path: string, targetId: string, command?: string, title?: string) {
+      // Clear before awaiting so a repeat of the same text still restarts
+      // MessageBanners' auto-dismiss timer (its watch skips same-value writes).
+      this.notice = null
       try {
         const result = await projectTrackerApi.openProjectIn(path, targetId, command, title)
         if (result.fallbackCommand) {
@@ -617,6 +681,7 @@ export const useProjectsStore = defineStore('projects', {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
+      this.notice = null
       try {
         const ticketLaunches = launches.map((entry) => entry.launch)
         const { worktreePaths } = await projectTrackerApi.autoRunLane(path, targetId, ticketLaunches, useWorktrees)

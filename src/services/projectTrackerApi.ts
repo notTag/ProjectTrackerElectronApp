@@ -1,8 +1,7 @@
+import { toPlainJson } from '@/shared/plainJson'
 import type { AutoRunTicketLaunch, ProjectTrackerState, ScanResult } from '@/shared/projectTypes'
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
-
-const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const requireElectron = () => {
   if (!window.projectTracker) {
@@ -91,5 +90,9 @@ export const projectTrackerApi = {
 
   fetchProjectGithubIssues(githubUrl: string) {
     return requireElectron().fetchProjectGithubIssues(githubUrl)
+  },
+
+  fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string) {
+    return requireElectron().fetchTicketPullRequest(githubUrl, branchName, pullRequestUrl)
   }
 }

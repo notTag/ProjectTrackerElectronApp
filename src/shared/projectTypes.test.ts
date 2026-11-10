@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  agentRunBadge,
+  hasUnseenAgentResult,
   buildAutoRunLaunch,
   completionMoves,
   fullAutoHandoffs,
@@ -37,6 +39,8 @@ import {
   checklistProgress,
   parseLabels,
   removeChecklistItem,
+  addExternalLink,
+  removeExternalLink,
   setChecklistItemDone,
   ticketSearchText,
   GITHUB_IMPORT_LANE_ID,
@@ -50,6 +54,9 @@ import {
   TICKET_CARD_FIELDS,
   isWebUrl,
   pullRequestLabel,
+  isPullRequestSettled,
+  pullRequestStatusLabel,
+  toPullRequestStatus,
   worktreeFolderName,
   type BoardPreferences,
   type ProjectTrackerState,
@@ -275,6 +282,25 @@ describe('checklist helpers', () => {
   })
 })
 
+describe('external link helpers', () => {
+  it('appends a trimmed http(s) link, treating no links as empty', () => {
+    const first = addExternalLink(undefined, '  https://figma.com/file/1  ')
+    expect(first).toEqual(['https://figma.com/file/1'])
+    expect(addExternalLink(first, 'http://example.com')).toEqual(['https://figma.com/file/1', 'http://example.com'])
+  })
+
+  it('returns the same list for invalid or duplicate links', () => {
+    const links = ['https://a.dev']
+    for (const rejected of ['ftp://a.dev', 'javascript:alert(1)', 'a.dev', '   ', ' https://a.dev ']) {
+      expect(addExternalLink(links, rejected)).toBe(links)
+    }
+  })
+
+  it('removes by index and keeps the rest in order', () => {
+    expect(removeExternalLink(['https://a', 'https://b', 'https://c'], 1)).toEqual(['https://a', 'https://c'])
+  })
+})
+
 describe('ticketSearchText', () => {
   it('matches on number, labels, and branch as well as prose', () => {
     const ticket = {
@@ -391,6 +417,12 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("hermes chat -q 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('hands opencode its TUI prompt on --prompt, not as the project-dir positional', () => {
+    const opencode = availableAgents({}).find((agent) => agent.id === 'opencode')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), opencode)
+    expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
     expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
@@ -433,6 +465,13 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
   })
 
+  it('lists external links only when the ticket has some', () => {
+    const linkedTicket = ticket({ externalLinks: ['https://figma.com/f', 'https://slack.com/t'] })
+    expect(ticketAgentPrompt(linkedTicket, lane())).toContain('Links:\n- https://figma.com/f\n- https://slack.com/t')
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Links:')
+    expect(ticketAgentPrompt(ticket({ externalLinks: [] }), lane())).not.toContain('Links:')
+  })
+
   it('ends with the lane output target and permission to reuse an existing location', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ outputTarget: 'a new folder called PRD' }))
     const outputSection = prompt.split('\n\n').at(-1)
@@ -446,11 +485,21 @@ describe('ticketShellCommand', () => {
     expect(agentForTicket(ticket({ agentId: 'aider' }), agents)).toBe(aider)
     expect(agentForTicket(ticket(), agents)).toBe(DEFAULT_AGENT)
     expect(ticketShellCommand(ticket(), lane(), aider)).toMatch(/^aider '/)
-    expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'aider'])
+    expect(agents.map((agent) => agent.id)).toEqual(['claude-code', 'codex', 'hermes', 'opencode', 'aider'])
 
     const savedCodex = { id: 'codex', name: 'My Codex', command: '/opt/bin/codex', headlessArgs: [] }
     const withSavedCodex = availableAgents({ agents: [savedCodex] })
     expect(withSavedCodex.filter((agent) => agent.id === 'codex')).toEqual([savedCodex])
+
+    const savedOpencode = {
+      id: 'opencode',
+      name: 'opencode (yolo)',
+      command: 'opencode',
+      headlessArgs: ['run', '--dangerously-skip-permissions'],
+      promptArgs: ['--prompt']
+    }
+    const withSavedOpencode = availableAgents({ agents: [savedOpencode] })
+    expect(withSavedOpencode.filter((agent) => agent.id === 'opencode')).toEqual([savedOpencode])
   })
 
   it('names the lane markdown file when the lane has one', () => {
@@ -544,6 +593,37 @@ describe('ticket card labels', () => {
     expect(pullRequestLabel('https://github.com/o/r/pull/35')).toBe('PR #35')
     expect(pullRequestLabel('https://github.com/o/r/pull/35/files')).toBe('PR #35')
     expect(pullRequestLabel('https://gitlab.com/o/r/-/merge_requests/9')).toBe('PR')
+  })
+
+  it('labels each merge request state, and a ticket with none', () => {
+    expect(pullRequestStatusLabel('open')).toBe('Open')
+    expect(pullRequestStatusLabel('draft')).toBe('Draft')
+    expect(pullRequestStatusLabel('merged')).toBe('Merged')
+    expect(pullRequestStatusLabel('closed')).toBe('Closed')
+    expect(pullRequestStatusLabel(undefined)).toBe('No merge request')
+  })
+
+  it('reads a merge request state from the GitHub payload', () => {
+    const githubPullRequest = { html_url: 'https://github.com/o/r/pull/5', number: 5 }
+    const stateOf = (fields: { state: 'open' | 'closed'; draft?: boolean; merged_at?: string | null }) =>
+      toPullRequestStatus({ ...githubPullRequest, ...fields }).state
+
+    expect(stateOf({ state: 'open', draft: false, merged_at: null })).toBe('open')
+    expect(stateOf({ state: 'open', draft: true, merged_at: null })).toBe('draft')
+    expect(pullRequestStatusLabel(stateOf({ state: 'open', draft: true }))).toBe('Draft')
+    expect(stateOf({ state: 'closed', draft: false, merged_at: null })).toBe('closed')
+    // A merged PR that was a draft once is still just merged.
+    expect(stateOf({ state: 'closed', draft: true, merged_at: '2026-01-04T00:00:00Z' })).toBe('merged')
+    expect(
+      toPullRequestStatus({ ...githubPullRequest, state: 'closed', merged_at: '2026-01-04T00:00:00Z' })
+    ).toEqual({ url: 'https://github.com/o/r/pull/5', number: 5, state: 'merged', mergedAt: '2026-01-04T00:00:00Z' })
+  })
+
+  it('treats only a merged PR as settled, since a closed one can reopen', () => {
+    expect(isPullRequestSettled('merged')).toBe(true)
+    expect(isPullRequestSettled('closed')).toBe(false)
+    expect(isPullRequestSettled('open')).toBe(false)
+    expect(isPullRequestSettled(undefined)).toBe(false)
   })
 
   it('links only absolute http(s) URLs', () => {
@@ -780,5 +860,51 @@ describe('agentMarkdownFileName', () => {
   it('falls back when a part sanitizes to nothing', () => {
     expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
     expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
+  })
+})
+
+describe('agentRunBadge', () => {
+  const ticket = (agentRun?: Ticket['agentRun']): Ticket => ({
+    id: 'ticket-1',
+    number: 17,
+    laneId: 'dev',
+    title: 'Show the run result',
+    description: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    agentRun
+  })
+  const run = (overrides: Partial<NonNullable<Ticket['agentRun']>> = {}) => ({
+    at: '2026-01-02T00:00:00.000Z',
+    laneId: 'dev',
+    output: 'done',
+    succeeded: true,
+    ...overrides
+  })
+
+  it('shows running whatever run is saved', () => {
+    expect(agentRunBadge(ticket(), true)).toBe('running')
+    expect(agentRunBadge(ticket(run({ succeeded: false })), true)).toBe('running')
+    expect(agentRunBadge(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })), true)).toBe('running')
+  })
+
+  it('shows nothing without a recorded result', () => {
+    expect(agentRunBadge(ticket(), false)).toBeNull()
+    expect(agentRunBadge(ticket(run({ succeeded: undefined })), false)).toBeNull()
+  })
+
+  it('shows nothing once seen or after the ticket left the lane', () => {
+    expect(agentRunBadge(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })), false)).toBeNull()
+    expect(agentRunBadge(ticket(run({ laneId: 'prd' })), false)).toBeNull()
+  })
+
+  it('shows the unseen result from this lane', () => {
+    expect(agentRunBadge(ticket(run()), false)).toBe('succeeded')
+    expect(agentRunBadge(ticket(run({ succeeded: false })), false)).toBe('failed')
+  })
+
+  it('counts only unseen finished runs as unseen results', () => {
+    expect(hasUnseenAgentResult(ticket(run({ succeeded: false })))).toBe(true)
+    expect(hasUnseenAgentResult(ticket(run({ seenAt: '2026-01-03T00:00:00.000Z' })))).toBe(false)
+    expect(hasUnseenAgentResult(ticket())).toBe(false)
   })
 })

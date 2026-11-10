@@ -213,7 +213,26 @@ export interface TicketAgentRun {
   // Absent on runs saved before it existed; those show no completed badge
   // rather than claiming a success nobody recorded.
   succeeded?: boolean
+  // When someone opened the ticket after this run finished. Absent = unseen, so
+  // runs saved before it existed still surface their result once.
+  seenAt?: string
 }
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed'
+
+// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
+// lane says nothing about the work in this one.
+export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
+  if (running) return 'running'
+  const lastRun = ticket.agentRun
+  if (!lastRun || lastRun.succeeded === undefined) return null
+  const alreadySeen = lastRun.seenAt !== undefined
+  const fromOtherLane = lastRun.laneId !== ticket.laneId
+  if (alreadySeen || fromOtherLane) return null
+  return lastRun.succeeded ? 'succeeded' : 'failed'
+}
+
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => agentRunBadge(ticket, false) !== null
 
 export interface Ticket {
   id: string
@@ -230,6 +249,10 @@ export interface Ticket {
   branchName?: string
   worktreePath?: string
   pullRequestUrl?: string
+  // Last state GitHub reported for that PR, cached so the board renders
+  // without the network. Refreshed by the store, never typed in by hand.
+  pullRequestState?: PullRequestState
+  pullRequestMergedAt?: string
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
@@ -243,11 +266,15 @@ export interface Ticket {
   externalUrl?: string
   // Full auto for this ticket in every lane, whatever the lane's own toggle says.
   fullAuto?: boolean
+  // Any further http(s) links: design docs, threads, related issues. Absent means none.
+  externalLinks?: string[]
   // Where the ticket goes when its work completes. Kept after the move so the
   // checkbox can be re-ticked; moveOnComplete is what arms it.
   moveToLaneId?: string
   moveOnComplete?: boolean
 }
+
+export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
 
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
 // can act on. Discarded on save when left untouched, so an unused template never
@@ -284,6 +311,16 @@ export const setChecklistItemDone = (
 
 export const removeChecklistItem = (checklist: ChecklistItem[] = [], index: number): ChecklistItem[] =>
   checklist.filter((_, itemIndex) => itemIndex !== index)
+
+// Returns the same array for a non-web or duplicate URL.
+export const addExternalLink = (links: string[] = [], url: string): string[] => {
+  const trimmedUrl = url.trim()
+  const isNewWebUrl = isWebUrl(trimmedUrl) && !links.includes(trimmedUrl)
+  return isNewWebUrl ? [...links, trimmedUrl] : links
+}
+
+export const removeExternalLink = (links: string[] = [], index: number): string[] =>
+  links.filter((_, linkIndex) => linkIndex !== index)
 
 export const checklistProgress = (checklist: ChecklistItem[] = []) => {
   const doneItems = checklist.filter((item) => item.done)
@@ -338,7 +375,20 @@ const HERMES_AGENT: Agent = {
   promptArgs: ['chat', '-q']
 }
 
-const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
+// `opencode run` is the non-interactive mode. The TUI reads its first positional
+// as a project directory (the Hermes trap again), so the prompt rides on --prompt.
+// No --dangerously-skip-permissions: opencode.json's `permission` config decides
+// what a headless run may do. To opt in, save an `opencode` agent with the flag —
+// and keep promptArgs ['--prompt'], since a saved agent replaces this one whole.
+const OPENCODE_AGENT: Agent = {
+  id: 'opencode',
+  name: 'opencode',
+  command: 'opencode',
+  headlessArgs: ['run'],
+  promptArgs: ['--prompt']
+}
+
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
 
 // Agents saved in state are offered alongside the built-ins, so adding another
 // CLI is one entry, not a code change. A saved agent with a built-in's id wins
@@ -366,6 +416,7 @@ export interface TicketPromptContext {
 // prompt instead of a column of "none"s.
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
+  const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -375,6 +426,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
+    linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')
@@ -818,10 +870,63 @@ export const isWebUrl = (url: string | undefined): url is string => /^https?:\/\
 
 // GitHub PR URLs end in /pull/<number>; anything else still gets a link, just
 // without the number.
-export const pullRequestLabel = (pullRequestUrl: string) => {
+export const pullRequestNumber = (pullRequestUrl: string): number | undefined => {
   const pullNumber = pullRequestUrl.match(/\/pull\/(\d+)/)?.[1]
+  return pullNumber ? Number(pullNumber) : undefined
+}
+
+export const pullRequestLabel = (pullRequestUrl: string) => {
+  const pullNumber = pullRequestNumber(pullRequestUrl)
   return pullNumber ? `PR #${pullNumber}` : 'PR'
 }
+
+export type PullRequestState = 'open' | 'draft' | 'merged' | 'closed'
+
+export interface PullRequestStatus {
+  url: string
+  number: number
+  state: PullRequestState
+  mergedAt?: string
+}
+
+// The slice of GitHub's pull request payload the status is read from.
+export interface GithubPullRequest {
+  html_url: string
+  number: number
+  state: 'open' | 'closed'
+  draft?: boolean
+  merged_at?: string | null
+  head?: { ref: string }
+}
+
+// GitHub reports a merged PR as state "closed"; merged_at is what tells the two
+// apart. Draft only means something while the PR is still open.
+const pullRequestStateOf = (pullRequest: GithubPullRequest): PullRequestState => {
+  if (pullRequest.merged_at) return 'merged'
+  if (pullRequest.state === 'closed') return 'closed'
+  return pullRequest.draft ? 'draft' : 'open'
+}
+
+export const toPullRequestStatus = (pullRequest: GithubPullRequest): PullRequestStatus => ({
+  url: pullRequest.html_url,
+  number: pullRequest.number,
+  state: pullRequestStateOf(pullRequest),
+  mergedAt: pullRequest.merged_at ?? undefined
+})
+
+const PULL_REQUEST_STATE_LABELS: Record<PullRequestState, string> = {
+  open: 'Open',
+  draft: 'Draft',
+  merged: 'Merged',
+  closed: 'Closed'
+}
+
+export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
+  state ? PULL_REQUEST_STATE_LABELS[state] : 'No merge request'
+
+// Only a merge is final: a closed PR can be reopened, or replaced by a new PR
+// from the same branch.
+export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200

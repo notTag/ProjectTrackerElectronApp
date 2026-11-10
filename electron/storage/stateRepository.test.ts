@@ -63,7 +63,10 @@ const stateWithBoard = (): ProjectTrackerState => {
             branchName: 'feat/a',
             worktreePath: '/code/app-a',
             pullRequestUrl: 'https://github.com/o/r/pull/8',
+            pullRequestState: 'merged',
+            pullRequestMergedAt: '2026-01-04T00:00:00Z',
             fullAuto: true,
+            externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
             moveToLaneId: 'prd',
             moveOnComplete: true
           },
@@ -126,7 +129,12 @@ describe('StateRepository', () => {
     expect(board?.tickets[0].branchName).toBe('feat/a')
     expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
     expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(board?.tickets[0].pullRequestState).toBe('merged')
+    expect(board?.tickets[0].pullRequestMergedAt).toBe('2026-01-04T00:00:00Z')
+    expect(board?.tickets[1].pullRequestState).toBeUndefined()
     expect(board?.tickets[1].worktreePath).toBeUndefined()
+    expect(board?.tickets[0].externalLinks).toEqual(['https://figma.com/f', 'https://slack.com/t'])
+    expect(board?.tickets[1].externalLinks).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
@@ -145,6 +153,8 @@ describe('StateRepository', () => {
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN worktree_path')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_state')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_merged_at')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_to_lane_id')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_on_complete')
     olderDatabase.close()
@@ -154,6 +164,8 @@ describe('StateRepository', () => {
     const migratedTicket = state.boards![projectPath].tickets[0]
     migratedTicket.worktreePath = '/code/app-a'
     migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
+    migratedTicket.pullRequestState = 'open'
+    migratedTicket.pullRequestMergedAt = undefined
     expect(migratedTicket.moveOnComplete).toBe(false)
     migratedTicket.moveToLaneId = 'prd'
     migratedTicket.moveOnComplete = true
@@ -163,6 +175,24 @@ describe('StateRepository', () => {
     expect(reopenedTicket.worktreePath).toBe('/code/app-a')
     expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
     expect(reopenedTicket).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
+    expect(reopenedTicket.pullRequestState).toBe('open')
+    expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
+  })
+
+  it('loads tickets with no links from a database created before external links existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN external_links_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket.externalLinks).toBeUndefined()
+    migratedTicket.externalLinks = ['https://a.dev']
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].externalLinks).toEqual(['https://a.dev'])
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {
