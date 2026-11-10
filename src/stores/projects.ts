@@ -105,7 +105,7 @@ const takeDeferredHandoffs = (runKey: string): ProjectHandoffs | undefined => {
 // Outside Pinia state so it is never persisted: a fresh app launch pulls again.
 const autoPulledProjects = new Set<string>()
 
-type StateUpdate =(currentState: ProjectTrackerState) => ProjectTrackerState
+type StateUpdate = (currentState: ProjectTrackerState) => ProjectTrackerState
 
 const boardUpdate =
   (projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard): StateUpdate =>
@@ -246,12 +246,19 @@ export const useProjectsStore = defineStore('projects', {
       }
       try {
         const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl)
-        let added = 0
-        await this.updateBoard(projectPath, (board) => {
-          const result = addGithubIssuesToBoard(board, issues)
-          added = result.added
-          return result.board
-        })
+        // Nothing new → no write: saving would still add an empty import lane
+        // and clear whatever banner is showing.
+        const boardBeforeImport = getBoard(this.state, projectPath)
+        const preview = addGithubIssuesToBoard(boardBeforeImport, issues)
+        let added = preview.added
+        if (added > 0) {
+          const saved = await this.updateBoard(projectPath, (board) => {
+            const result = addGithubIssuesToBoard(board, issues)
+            added = result.added
+            return result.board
+          })
+          if (!saved) return
+        }
         const skipped = issues.length - added
         if (quiet && added === 0) return
         this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`

@@ -250,6 +250,7 @@ describe('autoPullGithubIssues', () => {
     await store.autoPullGithubIssues('/code/nothing-new')
 
     expect(store.notice).toBeNull()
+    expect(api.saveProjectState).not.toHaveBeenCalled()
   })
 
   it('shows a failed pull as an error and does not retry it', async () => {
