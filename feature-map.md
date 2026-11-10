@@ -354,9 +354,9 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Actions**
 
-- **Delete** removes the ticket right away, with no confirmation.
-- **Assign to me** / **Unassign me** toggles your assignment.
-- **Done** closes the modal. So do clicking the backdrop and Escape.
+- **Trash icon** (left) asks "Are you sure you want to delete ticket #N?". Delete removes it, and Cancel, Escape or a backdrop click keep it.
+- **Cancel** undoes the edits made since the modal opened, then closes it.
+- **Done** closes the modal and keeps edits. So do clicking the backdrop and Escape.
 
 ### 3.9 Lane settings modal (⚙ on a lane)
 
