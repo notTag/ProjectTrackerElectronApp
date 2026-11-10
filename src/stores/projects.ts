@@ -8,6 +8,7 @@ import {
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
+  completionMoves,
   findAgent,
   fullAutoHandoffs,
   addScanDirectory,
@@ -23,6 +24,7 @@ import {
   ticketBranchName,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
+  type CompletionMove,
   type FullAutoHandoff,
   type BoardPreferences,
   type ProjectBoard,
@@ -68,6 +70,36 @@ const handoffsBetween = (before: ProjectTrackerState, after: ProjectTrackerState
     handoffs: fullAutoHandoffs(getBoard(before, projectPath), getBoard(after, projectPath))
   }))
   return perProject.filter((entry) => entry.handoffs.length > 0)
+}
+
+interface ProjectCompletionMoves {
+  projectPath: string
+  moves: CompletionMove[]
+}
+
+// Returns `after` itself when no ticket completed with Move to armed, so
+// callers can tell whether there is anything extra to write.
+const withCompletionMoves = (
+  before: ProjectTrackerState,
+  after: ProjectTrackerState,
+  alsoCompletedIds: string[] = []
+): { state: ProjectTrackerState; moved: ProjectCompletionMoves[] } => {
+  let state = after
+  const moved: ProjectCompletionMoves[] = []
+  for (const projectPath of Object.keys(after.boards ?? {})) {
+    const nextBoard = getBoard(after, projectPath)
+    const result = completionMoves(getBoard(before, projectPath), nextBoard, alsoCompletedIds)
+    if (result.board === nextBoard) continue
+    state = { ...state, boards: { ...state.boards, [projectPath]: result.board } }
+    if (result.moves.length > 0) moved.push({ projectPath, moves: result.moves })
+  }
+  return { state, moved }
+}
+
+const completionMovesNotice = (moved: ProjectCompletionMoves[]): string | null => {
+  const allMoves = moved.flatMap((entry) => entry.moves)
+  if (allMoves.length === 0) return null
+  return allMoves.map(({ ticket, toLane }) => `Moved #${ticket.number} to ${toLane.name}.`).join(' ')
 }
 
 // One autoRunLane call per lane and worktree choice, so a lane with worktrees
@@ -145,8 +177,12 @@ export const useProjectsStore = defineStore('projects', {
       return getBoard(this.state, projectPath)
     },
 
-    async updateBoard(projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard) {
-      return this.save(boardUpdate(projectPath, mutate))
+    async updateBoard(
+      projectPath: string,
+      mutate: (board: ProjectBoard) => ProjectBoard,
+      alsoCompletedIds: string[] = []
+    ) {
+      return this.save(boardUpdate(projectPath, mutate), undefined, alsoCompletedIds)
     },
 
     boardPreferences(projectPath: string): BoardPreferences {
@@ -219,15 +255,21 @@ export const useProjectsStore = defineStore('projects', {
     async updateTicket(
       projectPath: string,
       ticketId: string,
-      patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
+      patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>,
+      completesTicket = false
     ) {
       const updatedAt = new Date().toISOString()
-      await this.updateBoard(projectPath, (board) => ({
-        ...board,
-        tickets: board.tickets.map((ticket) =>
-          ticket.id === ticketId ? { ...ticket, ...patch, updatedAt } : ticket
-        )
-      }))
+      const alsoCompletedIds = completesTicket ? [ticketId] : []
+      await this.updateBoard(
+        projectPath,
+        (board) => ({
+          ...board,
+          tickets: board.tickets.map((ticket) =>
+            ticket.id === ticketId ? { ...ticket, ...patch, updatedAt } : ticket
+          )
+        }),
+        alsoCompletedIds
+      )
     },
 
     // Matched against the run saved at write time, not the one the caller saw:
@@ -373,8 +415,17 @@ export const useProjectsStore = defineStore('projects', {
         .then(async () => {
           const freshState = await projectTrackerApi.refreshProjectState()
           if (!freshState) return
-          handoffs = handoffsBetween(this.state, freshState)
+          const previousState = this.state
+          const { state: settledState, moved } = withCompletionMoves(previousState, freshState)
+          // Take the fresh read first: main already diffs against it, so a
+          // failed completion-move write must not leave this window behind.
+          handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
+          if (settledState === freshState) return
+          const savedState = await projectTrackerApi.saveProjectState(settledState)
+          handoffs = handoffsBetween(previousState, savedState)
+          this.state = savedState
+          this.notice = completionMovesNotice(moved) ?? this.notice
         })
       try {
         await saveQueue
@@ -423,32 +474,49 @@ export const useProjectsStore = defineStore('projects', {
     // read the edit before it is taken back and persist it.
     // A save also returns a fresh read, so an agent's move can arrive here
     // instead of through refresh. Diffing against the candidate keeps this
-    // save's own edits out of it.
-    async writeState(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate): Promise<ProjectHandoffs[]> {
+    // save's own edits out of it — but not Move to's moves, which are applied
+    // after the candidate is built, so full auto treats them like any move.
+    // A checklist an agent completed in that fresh read gets one more write.
+    async writeState(
+      nextState?: ProjectTrackerState | StateUpdate,
+      undo?: StateUpdate,
+      alsoCompletedIds: string[] = []
+    ): Promise<ProjectHandoffs[]> {
       let handoffs: ProjectHandoffs[] = []
       saveQueue = saveQueue
         .catch(() => undefined)
         .then(async () => {
           const candidate = typeof nextState === 'function' ? nextState(this.state) : nextState ?? this.state
+          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          let savedState: ProjectTrackerState
           try {
-            const savedState = await projectTrackerApi.saveProjectState(candidate)
-            handoffs = handoffsBetween(candidate, savedState)
-            this.state = savedState
+            savedState = await projectTrackerApi.saveProjectState(ownMoves.state)
           } catch (error) {
             if (undo) this.state = undo(this.state)
             throw error
           }
+          handoffs = handoffsBetween(candidate, savedState)
+          this.state = savedState
+          this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
+
+          // The edit is in the DB now, so a failed follow-up write must not undo it.
+          const outsideMoves = withCompletionMoves(ownMoves.state, savedState)
+          if (outsideMoves.state === savedState) return
+          const settledState = await projectTrackerApi.saveProjectState(outsideMoves.state)
+          handoffs = handoffsBetween(candidate, settledState)
+          this.state = settledState
+          this.notice = completionMovesNotice([...ownMoves.moved, ...outsideMoves.moved]) ?? this.notice
         })
       await saveQueue
       return handoffs
     },
 
-    async save(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate) {
+    async save(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate, alsoCompletedIds: string[] = []) {
       this.saving = true
       this.error = null
       let handoffs: ProjectHandoffs[] = []
       try {
-        handoffs = await this.writeState(nextState, undo)
+        handoffs = await this.writeState(nextState, undo, alsoCompletedIds)
         return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
@@ -687,9 +755,16 @@ export const useProjectsStore = defineStore('projects', {
           output: result.output,
           succeeded: result.succeeded
         }
-        await this.updateTicket(projectPath, ticket.id, { agentRun })
-        if (result.succeeded) this.notice = `Agent finished #${ticket.number}.`
-        else this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
+        const storedTicket = () => this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
+        const laneBeforeSave = storedTicket()?.laneId
+        await this.updateTicket(projectPath, ticket.id, { agentRun }, result.succeeded)
+        if (!result.succeeded) {
+          this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
+          return
+        }
+        // A Move to notice from that save is newer news than "finished".
+        const movedOnCompletion = storedTicket()?.laneId !== laneBeforeSave
+        if (!movedOnCompletion) this.notice = `Agent finished #${ticket.number}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
