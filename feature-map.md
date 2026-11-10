@@ -337,11 +337,12 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
-  - The run can write files but can't run shell commands.
+  - Claude Code and Codex runs can write files but can't run shell commands.
+  - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
   - It keeps showing as running if you leave the board and come back.
 - **⌁ Run in <Open In app>**:
-  - Terminals open a new window in the project folder and run the command there, so you can watch and approve each step.
+  - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
   - Editors open the folder and put the command on the clipboard.
   - The command is copied to the clipboard in both cases.
 

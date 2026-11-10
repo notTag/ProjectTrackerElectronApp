@@ -461,7 +461,8 @@ describe('ticketShellCommand', () => {
       id: 'opencode',
       name: 'opencode (yolo)',
       command: 'opencode',
-      headlessArgs: ['run', '--dangerously-skip-permissions']
+      headlessArgs: ['run', '--dangerously-skip-permissions'],
+      promptArgs: ['--prompt']
     }
     const withSavedOpencode = availableAgents({ agents: [savedOpencode] })
     expect(withSavedOpencode.filter((agent) => agent.id === 'opencode')).toEqual([savedOpencode])
