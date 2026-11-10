@@ -213,7 +213,26 @@ export interface TicketAgentRun {
   // Absent on runs saved before it existed; those show no completed badge
   // rather than claiming a success nobody recorded.
   succeeded?: boolean
+  // When someone opened the ticket after this run finished. Absent = unseen, so
+  // runs saved before it existed still surface their result once.
+  seenAt?: string
 }
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed'
+
+// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
+// lane says nothing about the work in this one.
+export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
+  if (running) return 'running'
+  const lastRun = ticket.agentRun
+  if (!lastRun || lastRun.succeeded === undefined) return null
+  const alreadySeen = lastRun.seenAt !== undefined
+  const fromOtherLane = lastRun.laneId !== ticket.laneId
+  if (alreadySeen || fromOtherLane) return null
+  return lastRun.succeeded ? 'succeeded' : 'failed'
+}
+
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => agentRunBadge(ticket, false) !== null
 
 export interface Ticket {
   id: string
