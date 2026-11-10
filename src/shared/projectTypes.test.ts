@@ -575,17 +575,39 @@ describe('scan directory removal', () => {
     expect(merged.snapshot.projects[1].archived).toBe(true)
   })
 
-  it('makes the first project ever added active and leaves later ones unknown', () => {
-    const unknownAt = (path: string): ProjectRecord => ({ ...projectAt(path), status: 'unknown' })
-    const firstScan = mergeScannedProjects(createSeedState(), [unknownAt('/code/a/one'), unknownAt('/code/a/two')], [])
-    expect(firstScan.snapshot.projects.map((project) => project.status)).toEqual(['active', 'unknown'])
+  const unknownAt = (path: string): ProjectRecord => ({ ...projectAt(path), status: 'unknown' })
+  const statusesOf = (state: ProjectTrackerState) => state.snapshot.projects.map((project) => project.status)
 
-    const userEdited = {
-      ...firstScan,
-      snapshot: { ...firstScan.snapshot, projects: firstScan.snapshot.projects.map((project) => ({ ...project, status: 'paused' as const })) }
-    }
-    const rescan = mergeScannedProjects(userEdited, [unknownAt('/code/a/one'), unknownAt('/code/a/two'), unknownAt('/code/a/three')], [])
-    expect(rescan.snapshot.projects.map((project) => project.status)).toEqual(['paused', 'paused', 'unknown'])
+  it('makes the first project ever added active and leaves later ones unknown', () => {
+    const seedState = createSeedState()
+    const firstScanResults = [unknownAt('/code/a/one'), unknownAt('/code/a/two')]
+    const firstScan = mergeScannedProjects(seedState, firstScanResults, [])
+    expect(statusesOf(firstScan)).toEqual(['active', 'unknown'])
+
+    const pausedProjects = firstScan.snapshot.projects.map((project) => ({ ...project, status: 'paused' as const }))
+    const userEdited = { ...firstScan, snapshot: { ...firstScan.snapshot, projects: pausedProjects } }
+    const rescanResults = [...firstScanResults, unknownAt('/code/a/three')]
+    const rescan = mergeScannedProjects(userEdited, rescanResults, [])
+    expect(statusesOf(rescan)).toEqual(['paused', 'paused', 'unknown'])
+  })
+
+  it('skips third-party projects when picking the first one to make active', () => {
+    const thirdParty: ProjectRecord = { ...unknownAt('/code/a/lib'), source: 'third-party' }
+    const firstScanResults = [thirdParty, unknownAt('/code/a/one')]
+    const firstScan = mergeScannedProjects(createSeedState(), firstScanResults, [])
+    expect(statusesOf(firstScan)).toEqual(['unknown', 'active'])
+  })
+
+  it('makes nothing active once projects are known, even with no scan time saved', () => {
+    const emptySnapshot = { scannedAt: '2026-01-01T00:00:00.000Z', projects: [], failures: [] }
+    const emptiedAfterScan = { ...stateWith(['/code/a'], []), snapshot: emptySnapshot }
+    const afterEmptiedList = mergeScannedProjects(emptiedAfterScan, [unknownAt('/code/a/one')], [])
+    expect(statusesOf(afterEmptiedList)).toEqual(['unknown'])
+
+    const legacyWithoutScanTime = stateWith(['/code/a'], ['/code/a/one'])
+    const legacyScanResults = [unknownAt('/code/a/new'), unknownAt('/code/a/one')]
+    const legacyRescan = mergeScannedProjects(legacyWithoutScanTime, legacyScanResults, [])
+    expect(statusesOf(legacyRescan)).toEqual(['unknown', 'active'])
   })
 
   it('carries hidden projects through a scan, since the scanner skips their folders', () => {

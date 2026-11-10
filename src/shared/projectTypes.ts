@@ -118,12 +118,15 @@ export const mergeScannedProjects = (
   failures: ScanFailure[]
 ): ProjectTrackerState => {
   const existingByPath = new Map(previous.snapshot.projects.map((project) => [project.path, project]))
-  // The seed state never has scannedAt, so this also covers the onboarding scan.
-  const hasNoTrackedProjects = !previous.snapshot.scannedAt || previous.snapshot.projects.length === 0
-  const projects = scannedProjects.map((project, index) => {
+  // Only the very first scan qualifies. A known path means an older state that
+  // lost its scannedAt, not a new user.
+  const isFirstEverScan =
+    !previous.snapshot.scannedAt && scannedProjects.every((project) => !existingByPath.has(project.path))
+  const firstFirstPartyProject = scannedProjects.find((project) => project.source === 'first-party')
+  const firstAddedPath = isFirstEverScan ? firstFirstPartyProject?.path : undefined
+  const projects = scannedProjects.map((project) => {
     const existing = existingByPath.get(project.path)
-    const isFirstProjectAdded = hasNoTrackedProjects && index === 0
-    const scannedStatus: ProjectStatus = isFirstProjectAdded ? 'active' : project.status
+    const scannedStatus: ProjectStatus = project.path === firstAddedPath ? 'active' : project.status
     return {
       ...project,
       status: existing?.status ?? scannedStatus,
