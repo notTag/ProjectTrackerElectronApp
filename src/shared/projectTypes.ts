@@ -176,6 +176,33 @@ export const addScanDirectory = (state: ProjectTrackerState, directory: string):
   return { ...state, scanDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
+// Metrics panel (#27). Window starts are ISO timestamps, computed in the main
+// process from local time.
+export interface MetricWindows {
+  today: string
+  week: string
+  month: string
+  year: string
+}
+
+export type MetricWindowCounts = Record<keyof MetricWindows, number>
+
+export interface ProjectPrMetrics {
+  open: number
+  merged: MetricWindowCounts
+}
+
+export interface ProjectMetrics {
+  projectPath: string
+  name: string
+  closed: MetricWindowCounts
+  hasClosingLanes: boolean
+  // undefined: the project has no GitHub repo, so there is nothing to count.
+  prs?: ProjectPrMetrics | { error: string }
+  // null when the process listing failed.
+  agentsRunning: number | null
+}
+
 export interface SwimLane {
   id: string
   name: string
@@ -197,6 +224,8 @@ export interface SwimLane {
   // When this lane's agent moves a ticket on, the destination lane's agent
   // starts on it with no click. Absent means off.
   fullAuto?: boolean
+  // A ticket entering this lane counts as closed in the metrics panel. Absent means no.
+  closesTicket?: boolean
 }
 
 export interface ChecklistItem {
@@ -570,6 +599,8 @@ export interface ProjectBoard {
   unassignedLane?: SwimLane
 }
 
+// Same lanes the storage migration seeds by id (SEEDED_CLOSING_LANE_IDS).
+const CLOSING_LANE_NAMES = ['In Dev', 'In Production']
 const DEFAULT_LANE_NAMES = ['Idea', 'PRD', 'In Development', 'In PR', 'In Dev', 'In QA', 'In Production']
 
 const laneIdFromName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -641,7 +672,8 @@ export const createDefaultBoard = (): ProjectBoard => ({
     id: laneIdFromName(name),
     name,
     agentPrompt: '',
-    agentFilePath: ''
+    agentFilePath: '',
+    closesTicket: CLOSING_LANE_NAMES.includes(name)
   })),
   tickets: []
 })

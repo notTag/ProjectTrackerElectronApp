@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadless } from './agentRun.js'
+import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import { StateRepository } from './storage/stateRepository.js'
@@ -506,6 +507,38 @@ const registerIpc = () => {
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
     return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
+  })
+
+  // Computed live on every call: nothing is cached or stored, so an open of the
+  // panel always shows current numbers. One repo failing only blanks its own row.
+  ipcMain.handle('metrics:get', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const requestedPaths = (payload as { projectPaths?: unknown } | null)?.projectPaths
+    const pathsAreStrings = Array.isArray(requestedPaths) && requestedPaths.every((entry) => typeof entry === 'string')
+    if (!pathsAreStrings) throw new Error('Invalid project paths.')
+
+    const windows = metricWindows(new Date())
+    const projects = stateRepository.closedTicketMetrics(requestedPaths.map(normalizePath), windows)
+    const projectPaths = projects.map((project) => project.projectPath)
+
+    const prsFor = async (githubUrl: string | undefined) => {
+      if (!githubUrl) return undefined
+      try {
+        const { owner, repo } = parseGithubRepo(githubUrl)
+        return await prCounts(owner, repo, windows, requestGithub)
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+    const agentCountsRequest = runningAgentsByProject(projectPaths).catch(() => undefined)
+    const prRequests = Promise.all(projects.map((project) => prsFor(project.githubUrl)))
+    const [agentCounts, prs] = await Promise.all([agentCountsRequest, prRequests])
+
+    return projects.map(({ githubUrl: _githubUrl, ...project }, index) => ({
+      ...project,
+      prs: prs[index],
+      agentsRunning: agentCounts ? agentCounts[project.projectPath] : null
+    }))
   })
 
   ipcMain.handle('project:fetch-github', async (event, githubUrl: unknown) => {

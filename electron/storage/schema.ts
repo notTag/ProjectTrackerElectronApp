@@ -2,7 +2,9 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
+// First version with closing lanes; opening an older file seeds and backfills them once.
+export const CLOSING_LANES_SCHEMA_VERSION = 5
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -57,6 +59,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
   full_auto INTEGER NOT NULL DEFAULT 0,
+  -- A ticket entering a lane with this set counts as closed for metrics.
+  closes_ticket INTEGER NOT NULL DEFAULT 0,
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
@@ -87,6 +91,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   external_id TEXT,
   external_url TEXT,
   full_auto INTEGER NOT NULL DEFAULT 0,
+  -- Owned by the triggers in CLOSED_AT_TRIGGERS_SQL, never written by the app.
+  closed_at TEXT,
   UNIQUE (project_path, number)
 );
 
@@ -130,8 +136,51 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'full_auto', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'tickets', column: 'worktree_path', definition: 'TEXT' },
   { table: 'tickets', column: 'pull_request_url', definition: 'TEXT' },
-  { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' }
+  { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'swim_lanes', column: 'closes_ticket', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'tickets', column: 'closed_at', definition: 'TEXT' }
 ]
+
+// closed_at lives in triggers, not app code, because agents move tickets by
+// writing lane_id with the sqlite3 CLI while the app may be closed. The app's
+// ticket UPDATE always lists lane_id, so each trigger checks the value moved.
+const isClosingLane = (laneIdExpression: string) =>
+  `EXISTS (SELECT 1 FROM swim_lanes WHERE project_path = NEW.project_path AND id = ${laneIdExpression} AND closes_ticket = 1)`
+const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+export const CLOSED_AT_TRIGGERS_SQL = `
+CREATE TRIGGER IF NOT EXISTS tickets_closed_at_on_move
+AFTER UPDATE OF lane_id ON tickets
+WHEN NEW.lane_id IS NOT OLD.lane_id
+BEGIN
+  UPDATE tickets SET closed_at = CASE
+    WHEN NOT ${isClosingLane('NEW.lane_id')} THEN NULL
+    WHEN ${isClosingLane('OLD.lane_id')} THEN closed_at
+    ELSE ${NOW}
+  END
+  WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS tickets_closed_at_on_insert
+AFTER INSERT ON tickets
+WHEN ${isClosingLane('NEW.lane_id')}
+BEGIN
+  UPDATE tickets SET closed_at = ${NOW} WHERE id = NEW.id;
+END;
+
+-- Flagging a lane later counts what already sits in it, dated like the
+-- migration backfill; unflagging it un-closes them.
+CREATE TRIGGER IF NOT EXISTS swim_lanes_closed_at_on_flag
+AFTER UPDATE OF closes_ticket ON swim_lanes
+WHEN NEW.closes_ticket IS NOT OLD.closes_ticket
+BEGIN
+  UPDATE tickets SET closed_at = CASE WHEN NEW.closes_ticket = 1 THEN COALESCE(updated_at, created_at) END
+  WHERE project_path = NEW.project_path AND lane_id = NEW.id;
+END;
+`
+
+// Merged to main or shipped. Boards with other lane ids start with none set.
+export const SEEDED_CLOSING_LANE_IDS = ['in-dev', 'in-production']
 
 export const PATH_KIND_SCAN = 'scan'
 export const PATH_KIND_HIDDEN = 'hidden'

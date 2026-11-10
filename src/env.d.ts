@@ -4,6 +4,7 @@ import type {
   AutoRunTicketLaunch,
   GithubIssue,
   ProjectGithubData,
+  ProjectMetrics,
   ProjectTrackerState,
   ScanResult
 } from './shared/projectTypes'
@@ -50,6 +51,7 @@ interface ProjectTrackerElectronApi {
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
+  getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>
 }
 

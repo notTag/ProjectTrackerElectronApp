@@ -534,3 +534,133 @@ describe('StateRepository archived projects', () => {
     expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentFilePath).toBe(agentFilePath)
   })
 })
+
+describe('closed_at triggers (#27)', () => {
+  const setUp = () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const state = stateWithBoard()
+    const projectPath = state.snapshot.projects[0].path
+    state.boards[projectPath].lanes.push(
+      { id: 'in-dev', name: 'In Dev', agentPrompt: '', agentFilePath: '', closesTicket: true },
+      { id: 'in-production', name: 'In Production', agentPrompt: '', agentFilePath: '', closesTicket: true }
+    )
+    repository.saveState(state)
+    // A second connection stands in for an agent running the sqlite3 CLI.
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const closedAt = (ticketId: string) =>
+      cli.prepare('SELECT closed_at FROM tickets WHERE id = ?').get(ticketId)?.closed_at as string | null
+    const moveWithCli = (ticketId: string, laneId: string) =>
+      cli.prepare('UPDATE tickets SET lane_id = ? WHERE id = ?').run(laneId, ticketId)
+    return { userDataPath, repository, projectPath, cli, closedAt, moveWithCli }
+  }
+
+  it('stamps on a move into a closing lane, keeps it closing to closing, clears it on the way out', () => {
+    const { cli, closedAt, moveWithCli } = setUp()
+    expect(closedAt('ticket-a')).toBeNull()
+
+    moveWithCli('ticket-a', 'in-dev')
+    const stamped = closedAt('ticket-a')
+    expect(stamped).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
+
+    cli.prepare("UPDATE tickets SET closed_at = '2026-01-05T00:00:00.000Z' WHERE id = 'ticket-a'").run()
+    moveWithCli('ticket-a', 'in-production')
+    expect(closedAt('ticket-a')).toBe('2026-01-05T00:00:00.000Z')
+
+    moveWithCli('ticket-a', 'idea')
+    expect(closedAt('ticket-a')).toBeNull()
+    cli.close()
+  })
+
+  it('stamps a ticket created straight into a closing lane, and an app-side move', () => {
+    const { repository, projectPath, cli, closedAt } = setUp()
+    const created = repository.createTicket(projectPath, {
+      id: 'ticket-c',
+      laneId: 'in-dev',
+      title: 'C',
+      description: '',
+      createdAt: '2026-01-01T00:00:00.000Z'
+    })
+    expect(closedAt(created.id)).not.toBeNull()
+
+    repository.moveTicket('ticket-b', 'in-production')
+    expect(closedAt('ticket-b')).not.toBeNull()
+    cli.close()
+  })
+
+  it('an app save that rewrites the row, lane_id included, leaves closed_at alone', () => {
+    const { repository, projectPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.prepare("UPDATE tickets SET closed_at = '2026-01-05T00:00:00.000Z' WHERE id = 'ticket-a'").run()
+
+    const state = repository.getState()
+    const ticket = state.boards[projectPath].tickets.find((entry) => entry.id === 'ticket-a')!
+    ticket.title = 'Renamed'
+    repository.saveState(state)
+
+    expect(closedAt('ticket-a')).toBe('2026-01-05T00:00:00.000Z')
+    cli.close()
+  })
+
+  it('flagging a lane later closes what sits in it; unflagging reopens them', () => {
+    const { repository, projectPath, cli, closedAt } = setUp()
+    const state = repository.getState()
+    state.boards[projectPath] = updateLaneInBoard(state.boards[projectPath], 'idea', { closesTicket: true })
+    repository.saveState(state)
+    expect(closedAt('ticket-a')).toBe('2026-01-01T00:00:00.000Z')
+
+    const next = repository.getState()
+    next.boards[projectPath] = updateLaneInBoard(next.boards[projectPath], 'idea', { closesTicket: false })
+    repository.saveState(next)
+    expect(closedAt('ticket-a')).toBeNull()
+    cli.close()
+  })
+
+  it('upgrading an older file seeds in-dev / in-production once and backfills their tickets', () => {
+    const { userDataPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.exec(`
+      UPDATE swim_lanes SET closes_ticket = 0;
+      UPDATE tickets SET closed_at = NULL, updated_at = '2026-02-02T00:00:00.000Z' WHERE id = 'ticket-a';
+      UPDATE schema_meta SET version = 4;
+    `)
+
+    new StateRepository(userDataPath)
+    const seeded = cli.prepare("SELECT id FROM swim_lanes WHERE closes_ticket = 1 ORDER BY id").all().map((row) => row.id)
+    expect(seeded).toEqual(['in-dev', 'in-production'])
+    expect(closedAt('ticket-a')).toBe('2026-02-02T00:00:00.000Z')
+
+    // Already at the current version: a lane the user unflagged stays unflagged.
+    cli.exec("UPDATE swim_lanes SET closes_ticket = 0 WHERE id = 'in-dev'")
+    new StateRepository(userDataPath)
+    const flag = cli.prepare("SELECT closes_ticket FROM swim_lanes WHERE id = 'in-dev'").get()?.closes_ticket
+    expect(flag).toBe(0)
+    cli.close()
+  })
+
+  it('counts closed tickets per window, only for visible, non-archived projects', () => {
+    const { repository, projectPath, cli } = setUp()
+    cli.exec(`
+      UPDATE tickets SET lane_id = 'in-dev' WHERE id IN ('ticket-a', 'ticket-b');
+      UPDATE tickets SET closed_at = '2026-11-09T10:00:00.000Z' WHERE id = 'ticket-a';
+      UPDATE tickets SET closed_at = '2026-03-01T10:00:00.000Z' WHERE id = 'ticket-b';
+    `)
+    const windows = {
+      today: '2026-11-09T05:00:00.000Z',
+      week: '2026-11-02T10:00:00.000Z',
+      month: '2026-11-01T04:00:00.000Z',
+      year: '2026-01-01T05:00:00.000Z'
+    }
+    const [metrics] = repository.closedTicketMetrics([projectPath, '/not/a/project'], windows)
+    expect(metrics).toMatchObject({
+      projectPath,
+      hasClosingLanes: true,
+      closed: { today: 1, week: 1, month: 1, year: 2 }
+    })
+    expect(repository.closedTicketMetrics(['/not/a/project'], windows)).toEqual([])
+
+    cli.exec(`UPDATE projects SET archived = 1`)
+    expect(repository.closedTicketMetrics([projectPath], windows)).toEqual([])
+    cli.close()
+  })
+})

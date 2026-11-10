@@ -1519,3 +1519,76 @@ code {
   align-items: center;
   gap: 0.5rem;
 }
+
+/* Metrics panel (#27): the filter popover, widened to hold the table. */
+.metrics-menu button.secondary.active {
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent);
+  background: var(--color-accent);
+}
+
+.metrics-popover {
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  overflow: auto;
+  gap: 8px;
+  padding: 10px;
+}
+
+.metrics-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.titlebar-actions .metrics-popover-header button {
+  min-width: 28px;
+  padding: 0 8px;
+}
+
+.metrics-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-table th,
+.metrics-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.metrics-table thead th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+.metrics-table tbody th,
+.metrics-table tfoot th {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 600;
+}
+
+.metrics-table tfoot th,
+.metrics-table tfoot td {
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.metrics-table .metrics-unavailable {
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.metrics-error {
+  color: var(--color-destructive);
+  font-size: 0.8rem;
+}
