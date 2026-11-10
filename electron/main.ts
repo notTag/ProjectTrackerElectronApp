@@ -209,8 +209,13 @@ const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => 
 // Formatting is ticketTabTitle's job; this only refuses garbage, and an
 // oversized title is dropped rather than failing the run over a nicety.
 const TAB_TITLE_MAX_LENGTH = 200
-const usableTabTitle = (title: string | undefined) =>
-  title && title.length <= TAB_TITLE_MAX_LENGTH ? title : undefined
+// Control characters could smuggle terminal escape sequences into the title.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
+const usableTabTitle = (title: unknown): string | undefined => {
+  if (typeof title !== 'string' || !title) return undefined
+  if (title.length > TAB_TITLE_MAX_LENGTH || CONTROL_CHARACTERS.test(title)) return undefined
+  return title
+}
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === 'string')
@@ -433,7 +438,7 @@ const registerIpc = () => {
     try {
       if (ticketCommand && runCommand) {
         // A bad title is dropped, never rejected: it must not block the command.
-        const tabTitle = usableTabTitle(typeof title === 'string' ? title : undefined)
+        const tabTitle = usableTabTitle(title)
         await runCommand(normalized, [{ command: ticketCommand, title: tabTitle }])
         return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
       }
