@@ -796,40 +796,70 @@ code {
 }
 
 .message-row {
-  /* Pin just below the sticky 48px titlebar so an error/notice stays visible
-     instead of scrolling under it. Opaque bg occludes cards scrolling beneath.
-     ponytail: 48px hardcoded to match .titlebar height; bump both together. */
-  position: sticky;
-  top: 48px;
-  z-index: 90;
+  /* Top-right overlay toasts: fixed, so showing one never shifts the board.
+     z-300 sits above the modal backdrop (200) so a save error raised from a
+     modal is visible, and below page-find (1000).
+     ponytail: 56px = 48px .titlebar height + 8px gap; bump both together. */
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  width: min(360px, calc(100vw - 32px));
+  z-index: 300;
   display: grid;
   gap: 8px;
-  margin: 12px 0;
-  padding: 8px 0;
-  background: var(--color-surface);
+  /* The gap between toasts must not swallow clicks on cards underneath. */
+  pointer-events: none;
 }
 
 .message {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   border-radius: 8px;
   padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+}
+
+/* pre-wrap lives on the span, not .message: the template's indentation
+   whitespace around the text would otherwise render as a leading space. */
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-dismiss {
   margin-left: auto;
+  align-self: flex-start;
   color: inherit;
 }
 
+/* Tints mix with the surface, not transparent, so toasts stay solid over cards. */
 .error {
   color: var(--color-destructive);
-  background: color-mix(in srgb, var(--color-destructive) 14%, transparent);
+  background: color-mix(in srgb, var(--color-destructive) 14%, var(--color-surface));
 }
 
 .notice {
   color: var(--color-text);
-  background: color-mix(in srgb, var(--color-accent-cyan) 18%, transparent);
+  background: color-mix(in srgb, var(--color-accent-cyan) 18%, var(--color-surface));
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 300ms ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
 }
 
 .failures div {
@@ -852,9 +882,9 @@ code {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  /* Above the sticky titlebar (z-100) and the pinned message row (z-90), both
-     of which are opaque and otherwise paint over the modal's top edge. A modal
-     covering the titlebar also stops its buttons firing behind the overlay. */
+  /* Above the sticky titlebar (z-100), which is opaque and otherwise paints
+     over the modal's top edge. A modal covering the titlebar also stops its
+     buttons firing behind the overlay. Message toasts (z-300) stay above. */
   z-index: 200;
   display: grid;
   place-items: center;

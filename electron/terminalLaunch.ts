@@ -86,6 +86,16 @@ const titleAfterShellStartup = (tabListName: string, ...setTitleStatements: stri
   'end repeat'
 ]
 
+// A terminal that is not running opens its own blank window when started by
+// `activate` (or by any command sent to it), because those launch it with an
+// open-application event. `launch` starts it without one, so the script makes
+// the only window; `activate` then brings that window forward. Already running
+// → `launch` does nothing.
+// ponytail: a terminal's own session restore (Warp, Ghostty's
+// window-save-state) still reopens last session's windows; that follows the
+// user's setting in that terminal.
+const LAUNCH_WITHOUT_DEFAULT_WINDOW = 'launch'
+
 // Terminal's dictionary can open a window running something (`do script`) but
 // has no verb for a new tab, so later tabs come from pressing ⌘T through System
 // Events — which needs Accessibility permission for Project Tracker. A keystroke
@@ -98,8 +108,9 @@ export const terminalOsascriptArgs = (projectPath: string, tabs: TerminalTab[]):
     [
       'on run argv',
       'tell application "Terminal"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set newTab to do script (item 1 of argv)',
+      'activate',
       'set targetWindow to front window',
       'set openedTabs to {}',
       'repeat with i from 1 to (count of argv) div 2',
@@ -135,8 +146,9 @@ export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): st
     [
       'on run argv',
       'tell application "iTerm"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set targetWindow to (create window with default profile)',
+      'activate',
       'set tabSessions to {}',
       'repeat with i from 1 to (count of argv) div 2',
       'if i > 1 then tell targetWindow to create tab with default profile',
@@ -163,7 +175,7 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): 
     [
       'on run argv',
       'tell application "Ghostty"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set surfaceConfig to new surface configuration',
       'set initial working directory of surfaceConfig to (item 1 of argv)',
       'repeat with i from 1 to ((count of argv) - 1) div 2',
@@ -177,6 +189,7 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): 
       'set tabTitle to item (2 * i + 1) of argv',
       ...setTitleIfGiven('set «class GTno» of newTab to tabTitle'),
       'end repeat',
+      'activate',
       'end tell',
       'end run'
     ],

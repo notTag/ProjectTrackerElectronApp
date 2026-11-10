@@ -21,6 +21,7 @@ import {
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
+import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
   isWebUrl,
@@ -54,7 +55,6 @@ app.setName(APP_NAME)
 app.disableHardwareAcceleration()
 
 const normalizePath = (value: string) => path.resolve(value).split(path.sep).join(path.posix.sep)
-const toPlainJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 // Hand a folder to a macOS app via Launch Services. Resolves on a successful
 // hand-off; rejects (non-zero exit) when the app isn't installed, which the
 // caller turns into the clipboard fallback. Arg-array exec — no shell, so the

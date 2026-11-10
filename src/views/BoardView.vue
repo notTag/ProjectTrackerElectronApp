@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } fro
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
+import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
@@ -837,16 +838,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </header>
 
   <main class="app-shell board-shell">
-    <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
-      </div>
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
-      </div>
-    </section>
+    <MessageBanners />
 
     <section class="board-filters">
       <input
