@@ -73,9 +73,15 @@ const openUri = (uri: string) =>
     execFile('open', [uri], (error) => (error ? reject(error) : resolve()))
   })
 
+// The timeout matters for Ghostty: its launches share one queue, so an osascript
+// stuck on an unanswered Automation prompt would otherwise block every later one.
+const OSASCRIPT_TIMEOUT_MS = 60_000
+
 const run = (bin: string, args: string[]) =>
-  new Promise<void>((resolve, reject) => {
-    execFile(bin, args, (error) => (error ? reject(error) : resolve()))
+  new Promise<string>((resolve, reject) => {
+    execFile(bin, args, { timeout: OSASCRIPT_TIMEOUT_MS }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout.trim())
+    )
   })
 
 // Write the tickets' commands where Warp looks for launch configurations, then
@@ -103,13 +109,28 @@ const openTerminalWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
 const openItermWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
   run('osascript', itermOsascriptArgs(projectPath, tabs))
 
-const openGhosttyWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
-  run('osascript', ghosttyOsascriptArgs(projectPath, tabs))
+// #53: in memory only, so an app restart starts a fresh window.
+let ghosttyWindowId = ''
+let ghosttyLaunchQueue: Promise<unknown> = Promise.resolve()
+
+// Launches run one at a time so two back-to-back handoffs can't both miss the
+// stored id and open two windows. A failed launch still rejects to its caller
+// but doesn't stall the queue.
+// ponytail: one global queue. Launches are rare and each takes about 1s, so serializing them costs nothing.
+const openGhosttyWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
+  const launch = ghosttyLaunchQueue.then(async () => {
+    const args = ghosttyOsascriptArgs(projectPath, tabs, ghosttyWindowId)
+    ghosttyWindowId = await run('osascript', args)
+  })
+  ghosttyLaunchQueue = launch.catch(() => undefined)
+  return launch
+}
 
 // Only the terminals can run a ticket's command; the editors in the allowlist
-// have no shell to run it in and keep the clipboard hand-off. Each runner opens
-// one new window with a tab per command.
-const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<void>> = {
+// have no shell to run it in and keep the clipboard hand-off. Ghostty adds its
+// tabs to the window the app last opened while it is still open; the others
+// open one new window per launch with a tab per command.
+const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>> = {
   warp: openWarpWithCommands,
   terminal: openTerminalWithCommands,
   iterm2: openItermWithCommands,

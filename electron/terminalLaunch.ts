@@ -188,13 +188,17 @@ export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): st
 
 // Ghostty 1.3+ scripting: `initial input` is typed into the tab's own shell
 // rather than replacing it (as `command` would), so the shell outlives the
-// agent with no exec trick. argv item 1 is the directory, then [command, title]
-// pairs; the commands are not cd-prefixed, the configuration sets the directory.
+// agent with no exec trick. argv item 1 is the directory, item 2 the id of a
+// window to add tabs to ('' = none), then [command, title] pairs; the commands
+// are not cd-prefixed, the configuration sets the directory.
+// #53: the window id is one this script returned earlier, so tabs only ever go
+// into a window Project Tracker opened, never the user's own front window. A
+// closed window's reference errors on first use, which falls back to a new one.
 // The tab's `name override` (1.4+) pins its title over the terminal's own. It is
 // written as its raw event code: AppleScript resolves dictionary terms at
 // compile time, so the bare term would fail the whole script on 1.3, where the
 // raw code only fails inside `try` and the tab keeps its default title.
-export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
+export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[], reuseWindowId = ''): string[] =>
   osascriptArgs(
     [
       'on run argv',
@@ -202,20 +206,36 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): 
       LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set surfaceConfig to new surface configuration',
       'set initial working directory of surfaceConfig to (item 1 of argv)',
-      'repeat with i from 1 to ((count of argv) - 1) div 2',
-      'set initial input of surfaceConfig to (item (2 * i) of argv) & linefeed',
-      'if i = 1 then',
+      'set targetWindow to missing value',
+      'set reuseWindowId to item 2 of argv',
+      'if reuseWindowId is not "" then',
+      'try',
+      'set targetWindow to window id reuseWindowId',
+      'get id of targetWindow',
+      'on error',
+      'set targetWindow to missing value',
+      'end try',
+      'end if',
+      'repeat with i from 1 to ((count of argv) - 2) div 2',
+      'set initial input of surfaceConfig to (item (2 * i + 1) of argv) & linefeed',
+      'if targetWindow is missing value then',
       'set targetWindow to new window with configuration surfaceConfig',
       'set newTab to tab 1 of targetWindow',
       'else',
       'set newTab to new tab in targetWindow with configuration surfaceConfig',
       'end if',
-      'set tabTitle to item (2 * i + 1) of argv',
+      'set tabTitle to item (2 * i + 2) of argv',
       ...setTitleIfGiven('set «class GTno» of newTab to tabTitle'),
       'end repeat',
       'activate',
+      // The tabs are already running by now, so a missing id must not fail the launch.
+      'try',
+      'return id of targetWindow',
+      'on error',
+      'return ""',
+      'end try',
       'end tell',
       'end run'
     ],
-    [projectPath, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
+    [projectPath, reuseWindowId, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
   )

@@ -98,7 +98,43 @@ describe('multi-tab AppleScript launches', () => {
   it('Ghostty gets the directory first, then the commands untouched', () => {
     const args = ghosttyOsascriptArgs('/tmp/my project', tabs('claude one', AWKWARD_COMMAND))
     expect(args).toContain('set newTab to new tab in targetWindow with configuration surfaceConfig')
-    expect(argvAfterSeparator(args)).toEqual(['/tmp/my project', 'claude one', '', AWKWARD_COMMAND, ''])
+    expect(argvAfterSeparator(args)).toEqual(['/tmp/my project', '', 'claude one', '', AWKWARD_COMMAND, ''])
+  })
+})
+
+// #53: separate launches share the window the app opened last, never a window
+// the user opened themselves.
+describe('Ghostty window reuse', () => {
+  it('passes an empty window id when there is none to reuse', () => {
+    const args = ghosttyOsascriptArgs('/tmp/project', tabs('claude one'))
+    expect(argvAfterSeparator(args)[1]).toBe('')
+  })
+
+  it('passes the window id to reuse as argv item 2, outside the script text', () => {
+    const args = ghosttyOsascriptArgs('/tmp/project', tabs('claude one'), 'window-42')
+    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'window-42', 'claude one', ''])
+    expect(scriptLines(args).some((line) => line.includes('window-42'))).toBe(false)
+  })
+
+  it('looks the window up by id and falls back to a new window when it is gone', () => {
+    const lines = scriptLines(ghosttyOsascriptArgs('/tmp/project', tabs('claude one'), 'window-42'))
+    const lookupIndex = lines.indexOf('set targetWindow to window id reuseWindowId')
+    expect(lookupIndex).toBeGreaterThan(-1)
+    expect(lines[lookupIndex - 1]).toBe('try')
+    expect(lines[lookupIndex + 1]).toBe('get id of targetWindow')
+    expect(lines.slice(lookupIndex, lookupIndex + 4)).toContain('set targetWindow to missing value')
+    const branchIndex = lines.indexOf('if targetWindow is missing value then')
+    expect(lines[branchIndex + 1]).toBe('set targetWindow to new window with configuration surfaceConfig')
+    expect(lines[branchIndex + 3]).toBe('else')
+    expect(lines[branchIndex + 4]).toBe('set newTab to new tab in targetWindow with configuration surfaceConfig')
+  })
+
+  it('returns the window id so the next launch can reuse it', () => {
+    const lines = scriptLines(ghosttyOsascriptArgs('/tmp/project', tabs('claude one')))
+    const returnIndex = lines.indexOf('return id of targetWindow')
+    expect(returnIndex).toBeGreaterThan(lines.lastIndexOf('end repeat'))
+    expect(lines[returnIndex - 1]).toBe('try')
+    expect(lines[returnIndex + 2]).toBe('return ""')
   })
 })
 
@@ -120,7 +156,7 @@ describe('single-ticket launches', () => {
 
   it('Ghostty gets the directory and one command and title pair', () => {
     const args = ghosttyOsascriptArgs('/tmp/project', singleTab)
-    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'claude hello', '#38 Only'])
+    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', '', 'claude hello', '#38 Only'])
   })
 
   it.each([
@@ -185,7 +221,7 @@ describe('tab titles', () => {
 
   it('Ghostty pairs each command with its title after the directory', () => {
     const args = ghosttyOsascriptArgs('/tmp/project', titledTabs)
-    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'claude one', HOSTILE_TITLE, 'claude two', '#34 Second'])
+    expect(argvAfterSeparator(args)).toEqual(['/tmp/project', '', 'claude one', HOSTILE_TITLE, 'claude two', '#34 Second'])
     expect(args).toContain('set «class GTno» of newTab to tabTitle')
   })
 
