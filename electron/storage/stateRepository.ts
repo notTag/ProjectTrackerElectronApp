@@ -104,10 +104,10 @@ const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
   const normalizeLane = (lane: SwimLane): SwimLane => ({
-  ...lane,
-  outputTarget: lane.outputTarget ?? '',
-  orchestratorPrompt: lane.orchestratorPrompt ?? ''
-})
+    ...lane,
+    outputTarget: lane.outputTarget ?? '',
+    orchestratorPrompt: lane.orchestratorPrompt ?? ''
+  })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
     ? [{ lane: normalizeLane({ ...board.unassignedLane, id: UNASSIGNED_LANE_ID }), position: -1 }]

@@ -221,7 +221,8 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
-  // Extra instructions appended to this lane's Auto Run orchestrator prompt.
+  // Appended, never substituted: the generated orchestrator prompt carries the
+  // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
@@ -706,11 +707,15 @@ const tabSection = (context: OrchestratorPromptContext): string => {
   ].join('\n')
 }
 
-// User text goes after the generated rules so it can steer but not replace them.
+// User text may tune the Loop (poll interval, which tabs to close) but the
+// report-only rule guards a DB shared with the app, so it always wins.
+const LANE_INSTRUCTIONS_PRECEDENCE =
+  'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.'
+
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
   if (!laneInstructions) return ''
-  return ['Lane instructions', 'Follow these unless they conflict with the rules above.', laneInstructions].join('\n')
+  return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
 }
 
 // The orchestrator only reports: it shares the DB with the app and the ticket

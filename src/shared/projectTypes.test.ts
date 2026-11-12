@@ -1037,7 +1037,7 @@ describe('Auto Run orchestrator', () => {
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
       const expectedSection = [
         'Lane instructions',
-        'Follow these unless they conflict with the rules above.',
+        'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.',
         'Poll every 2 minutes.'
       ].join('\n')
       expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
