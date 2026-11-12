@@ -19,9 +19,37 @@ const refreshUnlessTyping = () => {
 }
 const stopExternalChangeListener = projectTrackerApi.onExternalChange(refreshUnlessTyping)
 window.addEventListener('focus', refreshUnlessTyping)
+
+// Banners clear themselves 30 s after each new message. Watching here, above
+// <RouterView />, covers Board and Dashboard with one clock that survives view
+// switches. Clearing the pending timer on every change means an old timer can
+// never wipe a newer message, and × (value → null) cancels it too.
+const MESSAGE_LIFETIME_MS = 30_000
+const autoDismiss = (key: 'notice' | 'error') => {
+  let pendingTimer: ReturnType<typeof setTimeout> | undefined
+  const cancelPendingTimer = () => clearTimeout(pendingTimer)
+  const dismissMessage = () => {
+    projectsStore[key] = null
+  }
+  watch(
+    () => projectsStore[key],
+    (message) => {
+      cancelPendingTimer()
+      if (message === null) return
+      pendingTimer = setTimeout(dismissMessage, MESSAGE_LIFETIME_MS)
+    },
+    { immediate: true }
+  )
+  return cancelPendingTimer
+}
+const cancelNoticeTimer = autoDismiss('notice')
+const cancelErrorTimer = autoDismiss('error')
+
 onBeforeUnmount(() => {
   stopExternalChangeListener()
   window.removeEventListener('focus', refreshUnlessTyping)
+  cancelNoticeTimer()
+  cancelErrorTimer()
 })
 
 // Applies the active theme's CSS variables + data-theme-type to <html>,
