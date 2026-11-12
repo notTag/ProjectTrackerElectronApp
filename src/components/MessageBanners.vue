@@ -3,7 +3,7 @@ import { onUnmounted, watch } from 'vue'
 
 import { useProjectsStore } from '@/stores/projects'
 
-const NOTICE_LIFETIME_MS = 10_000
+const NOTICE_LIFETIME_MS = 30_000
 
 const store = useProjectsStore()
 
