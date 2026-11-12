@@ -228,7 +228,12 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[], r
       ...setTitleIfGiven('set «class GTno» of newTab to tabTitle'),
       'end repeat',
       'activate',
+      // The tabs are already running by now, so a missing id must not fail the launch.
+      'try',
       'return id of targetWindow',
+      'on error',
+      'return ""',
+      'end try',
       'end tell',
       'end run'
     ],

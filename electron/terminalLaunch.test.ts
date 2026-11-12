@@ -131,7 +131,10 @@ describe('Ghostty window reuse', () => {
 
   it('returns the window id so the next launch can reuse it', () => {
     const lines = scriptLines(ghosttyOsascriptArgs('/tmp/project', tabs('claude one')))
-    expect(lines.indexOf('return id of targetWindow')).toBeGreaterThan(lines.indexOf('end repeat'))
+    const returnIndex = lines.indexOf('return id of targetWindow')
+    expect(returnIndex).toBeGreaterThan(lines.lastIndexOf('end repeat'))
+    expect(lines[returnIndex - 1]).toBe('try')
+    expect(lines[returnIndex + 2]).toBe('return ""')
   })
 })
 

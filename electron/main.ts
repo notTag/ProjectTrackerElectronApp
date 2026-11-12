@@ -73,9 +73,15 @@ const openUri = (uri: string) =>
     execFile('open', [uri], (error) => (error ? reject(error) : resolve()))
   })
 
+// The timeout matters for Ghostty: its launches share one queue, so an osascript
+// stuck on an unanswered Automation prompt would otherwise block every later one.
+const OSASCRIPT_TIMEOUT_MS = 60_000
+
 const run = (bin: string, args: string[]) =>
-  new Promise<void>((resolve, reject) => {
-    execFile(bin, args, (error) => (error ? reject(error) : resolve()))
+  new Promise<string>((resolve, reject) => {
+    execFile(bin, args, { timeout: OSASCRIPT_TIMEOUT_MS }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout.trim())
+    )
   })
 
 // Write the tickets' commands where Warp looks for launch configurations, then
@@ -103,11 +109,6 @@ const openTerminalWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
 const openItermWithCommands = (projectPath: string, tabs: TerminalTab[]) =>
   run('osascript', itermOsascriptArgs(projectPath, tabs))
 
-const runWithStdout = (bin: string, args: string[]) =>
-  new Promise<string>((resolve, reject) => {
-    execFile(bin, args, (error, stdout) => (error ? reject(error) : resolve(stdout.trim())))
-  })
-
 // #53: in memory only, so an app restart starts a fresh window.
 let ghosttyWindowId = ''
 let ghosttyLaunchQueue: Promise<unknown> = Promise.resolve()
@@ -119,7 +120,7 @@ let ghosttyLaunchQueue: Promise<unknown> = Promise.resolve()
 const openGhosttyWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
   const launch = ghosttyLaunchQueue.then(async () => {
     const args = ghosttyOsascriptArgs(projectPath, tabs, ghosttyWindowId)
-    ghosttyWindowId = await runWithStdout('osascript', args)
+    ghosttyWindowId = await run('osascript', args)
   })
   ghosttyLaunchQueue = launch.catch(() => undefined)
   return launch
@@ -129,7 +130,7 @@ const openGhosttyWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
 // have no shell to run it in and keep the clipboard hand-off. Ghostty adds its
 // tabs to the window the app last opened while it is still open; the others
 // open one new window per launch with a tab per command.
-const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<void>> = {
+const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>> = {
   warp: openWarpWithCommands,
   terminal: openTerminalWithCommands,
   iterm2: openItermWithCommands,
