@@ -51,6 +51,5 @@ The Board and Dashboard each show two banners from the shared Pinia store: `stor
 ## Effort
 About 1 hour, including the manual check on both views.
 
-## Branch / worktree
-- Branch: `t19-notifications-should-dismiss`
-- Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t19`
+## Branch
+- `t19-notifications-should-dismiss`
