@@ -1031,6 +1031,31 @@ describe('Auto Run orchestrator', () => {
       expect(warp).toContain('close its tab by hand')
       expect(warp).not.toContain('osascript')
     })
+
+    it("appends the lane's orchestrator prompt after the generated rules", () => {
+      const steered = { ...inDev, orchestratorPrompt: '  Poll every 2 minutes.\n' }
+      const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
+      const expectedSection = [
+        'Lane instructions',
+        'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.',
+        'Poll every 2 minutes.'
+      ].join('\n')
+      expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
+    })
+
+    it('is unchanged by an empty or whitespace-only orchestrator prompt', () => {
+      for (const orchestratorText of ['', '  \n\t ']) {
+        const lane = { ...inDev, orchestratorPrompt: orchestratorText }
+        expect(orchestratorPrompt(lane, entries, context('ghostty', 'Ghostty'))).toBe(prompt)
+      }
+    })
+
+    it("never puts the orchestrator prompt in a ticket agent's prompt", () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
+      const agentPrompt = ticketAgentPrompt(ticket(12, 'First thing'), steered)
+      expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
+      expect(agentPrompt).not.toContain('Poll every 2 minutes.')
+    })
   })
 
   describe('buildOrchestratorLaunch', () => {

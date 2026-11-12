@@ -103,7 +103,11 @@ const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
-  const normalizeLane = (lane: SwimLane): SwimLane => ({ ...lane, outputTarget: lane.outputTarget ?? '' })
+  const normalizeLane = (lane: SwimLane): SwimLane => ({
+    ...lane,
+    outputTarget: lane.outputTarget ?? '',
+    orchestratorPrompt: lane.orchestratorPrompt ?? ''
+  })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
     ? [{ lane: normalizeLane({ ...board.unassignedLane, id: UNASSIGNED_LANE_ID }), position: -1 }]
@@ -394,12 +398,13 @@ export class StateRepository {
   upsertSwimLane(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target,
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, closes_ticket, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
+         orchestrator_prompt = excluded.orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
@@ -410,6 +415,7 @@ export class StateRepository {
         lane.agentPrompt,
         lane.agentFilePath,
         lane.outputTarget ?? '',
+        lane.orchestratorPrompt ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
@@ -535,6 +541,7 @@ export class StateRepository {
         agentPrompt: String(row.agent_prompt),
         agentFilePath: String(row.agent_file_path),
         outputTarget: String(row.output_target),
+        orchestratorPrompt: String(row.orchestrator_prompt),
         autoRunAgentId: asText(row.auto_run_agent_id),
         autoRunTerminalId: asText(row.auto_run_terminal_id),
         autoRunWorktrees: asBool(row.auto_run_worktrees),
