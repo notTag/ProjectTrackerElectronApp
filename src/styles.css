@@ -1704,3 +1704,76 @@ code {
   color: var(--color-destructive);
   font-size: 0.8rem;
 }
+
+.card-metrics-charts,
+.card-metrics-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.metric-bars {
+  margin: 0;
+  min-width: 180px;
+  flex: 1;
+}
+
+.metric-bars figcaption {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.metric-bars-plot {
+  display: flex;
+  gap: 8px;
+}
+
+.metric-bar-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+}
+
+.metric-bar-track {
+  height: 80px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.metric-bar {
+  width: 100%;
+  background: var(--color-accent-cyan);
+  border-radius: 3px 3px 0 0;
+}
+
+.metric-bar-label {
+  color: var(--color-text-muted);
+}
+
+.metric-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 96px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+}
+
+.metric-tile strong {
+  font-size: 1.4rem;
+  color: var(--color-text);
+}
+
+.metric-tile span {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
