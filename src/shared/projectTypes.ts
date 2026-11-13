@@ -383,12 +383,15 @@ export const ticketSearchText = (ticket: Ticket) => {
 // prompt as its last argument and runs in the project directory; `headlessArgs`
 // go before the prompt when it runs in the background with nobody watching, and
 // `promptArgs` go before it when it runs in a terminal someone is watching.
+// `sessionNameArgs` are the flag words before a terminal session's display name;
+// an agent without them gets no name, since not every CLI can set one at launch.
 export interface Agent {
   id: string
   name: string
   command: string
   headlessArgs: string[]
   promptArgs?: string[]
+  sessionNameArgs?: string[]
 }
 
 // acceptEdits lets a background run write its output files without a human to
@@ -397,7 +400,8 @@ export const DEFAULT_AGENT: Agent = {
   id: 'claude-code',
   name: 'Claude Code',
   command: 'claude',
-  headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
+  headlessArgs: ['-p', '--permission-mode', 'acceptEdits'],
+  sessionNameArgs: ['--name']
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -577,11 +581,17 @@ export const ticketShellCommand = (
   context: TicketPromptContext = {}
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt)
+  return agentShellCommand(agent, prompt, ticketSessionName(ticket))
 }
 
-export const agentShellCommand = (agent: Agent, prompt: string): string => {
-  const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+// Number only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
+
+export const agentShellCommand = (agent: Agent, prompt: string, sessionName?: string): string => {
+  const sessionNameArgs = agent.sessionNameArgs ?? []
+  const canNameSession = Boolean(sessionName) && sessionNameArgs.length > 0
+  const sessionNameWords = canNameSession ? [...sessionNameArgs, shellQuote(sessionName!)] : []
+  const commandWords = [agent.command, ...sessionNameWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
 }
 
@@ -811,7 +821,8 @@ export const buildOrchestratorLaunch = (
 ): TerminalTab | undefined => {
   if (entries.length < 2) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
-  return { command: agentShellCommand(agent, prompt), title: orchestratorTabTitle(lane) }
+  const title = orchestratorTabTitle(lane)
+  return { command: agentShellCommand(agent, prompt, title), title }
 }
 
 export interface FullAutoHandoff {

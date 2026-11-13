@@ -6,6 +6,7 @@ import {
   agentRunBadge,
   hasUnseenAgentResult,
   buildAutoRunLaunch,
+  agentShellCommand,
   buildOrchestratorLaunch,
   orchestratorPrompt,
   orchestratorTabTitle,
@@ -421,7 +422,7 @@ describe('ticketShellCommand', () => {
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
     expect(command).toBe(
-      "claude 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+      "claude --name 'Ticket #7' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
     )
   })
 
@@ -437,9 +438,20 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('leaves agents with no session-name flag unnamed', () => {
+    const codex = availableAgents({}).find((agent) => agent.id === 'codex')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), codex)
+    expect(command).toBe("codex 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
+  it('shell-quotes a session name the same way as the prompt', () => {
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', "Bob's run")).toBe("claude --name 'Bob'\\''s run' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
   it('never starts the prompt with "-", which a CLI would parse as an option', () => {
@@ -523,7 +535,7 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
   it("uses a ticket's own branch, else a short one from its number and first title words", () => {
     expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
@@ -1075,7 +1087,7 @@ describe('Auto Run orchestrator', () => {
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
       const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
       expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
-      expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
+      expect(launch?.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
       expect(launch?.command).toContain("it'\\''s-mine")
     })
   })
