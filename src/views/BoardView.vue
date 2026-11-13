@@ -1551,7 +1551,7 @@ const runTicketAgent = (ticket: Ticket) => {
           placeholder="e.g. Poll every 2 minutes. Flag PRs with failing checks."
           @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
-        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)</span>
+        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run)</span>
       </label>
 
       <section class="ticket-agent">
