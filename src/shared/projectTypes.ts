@@ -855,7 +855,10 @@ export const orchestratorAgentChoice = (
   agents: Agent[]
 ): AgentChoice => {
   const orchestratorModel = lane.orchestratorModel?.trim() || undefined
-  if (lane.orchestratorAgentId) return { agent: findAgent(agents, lane.orchestratorAgentId), model: orchestratorModel }
+  if (lane.orchestratorAgentId) {
+    const orchestratorAgent = findAgent(agents, lane.orchestratorAgentId)
+    return { agent: orchestratorAgent, model: orchestratorModel }
+  }
   return { agent: ticketChoice.agent, model: orchestratorModel ?? ticketChoice.model }
 }
 

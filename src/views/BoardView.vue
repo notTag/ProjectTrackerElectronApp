@@ -738,7 +738,27 @@ const ticketCommand = (ticket: Ticket) => {
   return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket), ticket.model)
 }
 
-const agentTakesModel = (agentId?: string) => Boolean(findAgent(agents.value, agentId).modelArgs?.length)
+const agentTakesModel = (agentId?: string) => {
+  const modelArgs = findAgent(agents.value, agentId).modelArgs ?? []
+  return modelArgs.length > 0
+}
+
+const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
+
+// A model id belongs to one CLI ('opus' means nothing to Codex), so switching
+// the agent clears it rather than handing the new CLI a model it can't run.
+// An orchestrator left on "Same as ticket agent" follows the ticket agent, so
+// its model is cleared along with it.
+const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
+  const orchestratorFollowsTicketAgent = !lane.orchestratorAgentId
+  const orchestratorModelPatch = orchestratorFollowsTicketAgent ? { orchestratorModel: undefined } : {}
+  editLane(lane, { autoRunAgentId, autoRunModel: undefined, ...orchestratorModelPatch })
+}
+
+const changeAutoRunConfirmAgent = () => {
+  autoRunConfirmModel.value = ''
+  if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
+}
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
 // never launches tickets the user cannot see. Checked tickets narrow it further.
@@ -1273,7 +1293,7 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.branchName ?? ''"
           placeholder="feat/board-ticket-fields"
-          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() || undefined })"
+          @change="editTicket(openTicket, { branchName: trimmedInputValue($event) })"
         />
       </label>
 
@@ -1284,7 +1304,7 @@ const runTicketAgent = (ticket: Ticket) => {
           :value="openTicket.worktreePath ?? ''"
           placeholder="/Users/me/Code/my-app-board-ticket-fields"
           @change="
-            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+            editTicket(openTicket, { worktreePath: trimmedInputValue($event) })
           "
         />
       </label>
@@ -1388,7 +1408,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Agent
           <select
             :value="agentForTicket(openTicket, agents).id"
-            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value })"
+            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value, model: undefined })"
           >
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
@@ -1398,7 +1418,7 @@ const runTicketAgent = (ticket: Ticket) => {
           <input
             :value="openTicket.model ?? ''"
             placeholder="CLI default"
-            @change="editTicket(openTicket, { model: ($event.target as HTMLInputElement).value.trim() || undefined })"
+            @change="editTicket(openTicket, { model: trimmedInputValue($event) })"
           />
         </label>
         <label class="checkbox-label">
@@ -1490,7 +1510,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
       <p id="auto-run-confirm-question" class="auto-run-question">
         Run {{ autoRunTickets(autoRunConfirmLane).length }} separate
-        <select v-model="autoRunConfirmAgentId" aria-label="Agent">
+        <select v-model="autoRunConfirmAgentId" aria-label="Agent" @change="changeAutoRunConfirmAgent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
         agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
@@ -1502,7 +1522,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <template v-if="autoRunTickets(autoRunConfirmLane).length >= 2">
         <label>
           Orchestrator agent
-          <select v-model="autoRunConfirmOrchestratorAgentId">
+          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
             <option value="">Same as ticket agent</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
@@ -1610,7 +1630,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Agent
           <select
             :value="findAgent(agents, openLane.autoRunAgentId).id"
-            @change="editLane(openLane, { autoRunAgentId: ($event.target as HTMLSelectElement).value })"
+            @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
           >
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
@@ -1620,14 +1640,19 @@ const runTicketAgent = (ticket: Ticket) => {
           <input
             :value="openLane.autoRunModel ?? ''"
             placeholder="CLI default"
-            @change="editLane(openLane, { autoRunModel: ($event.target as HTMLInputElement).value.trim() || undefined })"
+            @change="editLane(openLane, { autoRunModel: trimmedInputValue($event) })"
           />
         </label>
         <label>
           Orchestrator agent
           <select
             :value="openLane.orchestratorAgentId ?? ''"
-            @change="editLane(openLane, { orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined })"
+            @change="
+              editLane(openLane, {
+                orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
+                orchestratorModel: undefined
+              })
+            "
           >
             <option value="">Same as ticket agent</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
@@ -1638,7 +1663,7 @@ const runTicketAgent = (ticket: Ticket) => {
           <input
             :value="openLane.orchestratorModel ?? ''"
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-            @change="editLane(openLane, { orchestratorModel: ($event.target as HTMLInputElement).value.trim() || undefined })"
+            @change="editLane(openLane, { orchestratorModel: trimmedInputValue($event) })"
           />
         </label>
         <label>

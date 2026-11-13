@@ -67,6 +67,8 @@ const decodeBlobs = (row: Row): Row => {
 }
 
 const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
+// For NOT NULL DEFAULT '' columns, where '' means the field was never set.
+const asNonEmptyText = (value: unknown) => asText(value) || undefined
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
   const text = asText(value)
@@ -154,7 +156,7 @@ const ticketFromRow = (row: Row): Ticket => ({
   moveOnComplete: asBool(row.move_on_complete),
   version: asText(row.version),
   agentId: asText(row.agent_id),
-  model: asText(row.model) || undefined
+  model: asNonEmptyText(row.model)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -561,9 +563,9 @@ export class StateRepository {
         fullAuto: asBool(row.full_auto),
         agentSetsVersion: asBool(row.agent_sets_version),
         closesTicket: asBool(row.closes_ticket),
-        autoRunModel: asText(row.auto_run_model) || undefined,
+        autoRunModel: asNonEmptyText(row.auto_run_model),
         orchestratorAgentId: asText(row.orchestrator_agent_id),
-        orchestratorModel: asText(row.orchestrator_model) || undefined
+        orchestratorModel: asNonEmptyText(row.orchestrator_model)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
