@@ -1,0 +1,6 @@
+- Determine if a PRD is required for the feature, if it is then proceed on to the next steps. If not then move the ticket to the "In Development" Swimlane.
+- Create a Project Requirements Doc for the ticket to be used as additional context for the development phase. 
+- Add the PRD to the ticket. 
+- If there are no open questions move the ticket, update the ticket status to 'In Development'. 
+- If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
+- Close the terminal tab this ran in when you are done.
