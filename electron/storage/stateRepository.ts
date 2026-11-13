@@ -67,6 +67,8 @@ const decodeBlobs = (row: Row): Row => {
 }
 
 const asText = (value: unknown) => (value === null || value === undefined ? undefined : String(value))
+// For NOT NULL DEFAULT '' columns, where '' means the field was never set.
+const asNonEmptyText = (value: unknown) => asText(value) || undefined
 const asBool = (value: unknown) => Number(value) === 1
 const parseJson = <T>(value: unknown, fallback: T): T => {
   const text = asText(value)
@@ -152,7 +154,9 @@ const ticketFromRow = (row: Row): Ticket => ({
   externalLinks: parseJson<Ticket['externalLinks']>(row.external_links_json, undefined),
   moveToLaneId: asText(row.move_to_lane_id),
   moveOnComplete: asBool(row.move_on_complete),
-  version: asText(row.version)
+  version: asText(row.version),
+  agentId: asText(row.agent_id),
+  model: asNonEmptyText(row.model)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -179,7 +183,9 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   jsonOrNull(ticket.externalLinks),
   ticket.moveToLaneId ?? null,
   ticket.moveOnComplete ? 1 : 0,
-  ticket.version ?? null
+  ticket.version ?? null,
+  ticket.agentId ?? null,
+  ticket.model ?? ''
 ]
 
 export class StateRepository {
@@ -401,15 +407,18 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
+         auto_run_model, orchestrator_agent_id, orchestrator_model
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          orchestrator_prompt = excluded.orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
-         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
+         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
+         auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
+         orchestrator_model = excluded.orchestrator_model`,
       [
         lane.id,
         projectPath,
@@ -425,7 +434,10 @@ export class StateRepository {
         lane.agentSetsVersion ? 1 : 0,
         lane.closesTicket ? 1 : 0,
         position,
-        lane.id === UNASSIGNED_LANE_ID ? 1 : 0
+        lane.id === UNASSIGNED_LANE_ID ? 1 : 0,
+        lane.autoRunModel ?? '',
+        lane.orchestratorAgentId ?? null,
+        lane.orchestratorModel ?? ''
       ]
     )
   }
@@ -550,7 +562,10 @@ export class StateRepository {
         autoRunWorktrees: asBool(row.auto_run_worktrees),
         fullAuto: asBool(row.full_auto),
         agentSetsVersion: asBool(row.agent_sets_version),
-        closesTicket: asBool(row.closes_ticket)
+        closesTicket: asBool(row.closes_ticket),
+        autoRunModel: asNonEmptyText(row.auto_run_model),
+        orchestratorAgentId: asText(row.orchestrator_agent_id),
+        orchestratorModel: asNonEmptyText(row.orchestrator_model)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
@@ -673,8 +688,9 @@ export class StateRepository {
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
-         worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, version, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, version,
+         agent_id, model, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -687,7 +703,7 @@ export class StateRepository {
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
          pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?, external_links_json = ?, move_to_lane_id = ?, move_on_complete = ?,
-         version = ?
+         version = ?, agent_id = ?, model = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
