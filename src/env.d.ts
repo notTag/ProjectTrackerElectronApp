@@ -45,7 +45,7 @@ interface ProjectTrackerElectronApi {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ): Promise<{ worktreePaths: string[] }>
-  runTicketAgent(path: string, agentId: string, prompt: string): Promise<{ succeeded: boolean; output: string }>
+  runTicketAgent(path: string, agentId: string, prompt: string, model?: string): Promise<{ succeeded: boolean; output: string }>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   saveLaneAgentMarkdown(
     projectPath: string,

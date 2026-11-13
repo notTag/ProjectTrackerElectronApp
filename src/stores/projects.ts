@@ -455,7 +455,7 @@ export const useProjectsStore = defineStore('projects', {
           const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
           const useWorktrees = autoRunUsesWorktrees(toLane, laneHandoffs[0].ticket)
           const launches = laneHandoffs.map(({ ticket }) =>
-            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees)
+            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
           )
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
@@ -753,7 +753,7 @@ export const useProjectsStore = defineStore('projects', {
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt)
+          .runTicketAgent(projectPath, agentId, prompt, ticket.model)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false
