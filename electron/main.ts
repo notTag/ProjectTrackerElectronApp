@@ -526,20 +526,22 @@ const registerIpc = () => {
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, agentId, prompt } = (payload ?? {}) as {
+    const { projectPath, agentId, prompt, model } = (payload ?? {}) as {
       projectPath?: unknown
       agentId?: unknown
       prompt?: unknown
+      model?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (typeof agentId !== 'string') throw new Error('Invalid agent.')
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
+    if (model !== undefined && typeof model !== 'string') throw new Error('Invalid agent model.')
     // Resolved by id against known agents rather than taking a command from the
     // payload, so the renderer can pick which agent runs but never what binary.
     const agent = availableAgents(stateRepository.getState()).find((entry) => entry.id === agentId)
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
+    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home'), model))
   })
 
   // Computed live on every call: nothing is cached or stored, so an open of the
