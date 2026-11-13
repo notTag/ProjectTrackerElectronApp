@@ -236,6 +236,9 @@ export interface SwimLane {
   fullAuto?: boolean
   // A ticket entering this lane counts as closed in the metrics panel. Absent means no.
   closesTicket?: boolean
+  // This lane's agent is told it may set the ticket's semantic version, and how.
+  // When to set it is the agent's call, not a rule here. Absent means off.
+  agentSetsVersion?: boolean
 }
 
 export interface ChecklistItem {
@@ -311,6 +314,8 @@ export interface Ticket {
   // checkbox can be re-ticked; moveOnComplete is what arms it.
   moveToLaneId?: string
   moveOnComplete?: boolean
+  // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
+  version?: string
 }
 
 export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
@@ -449,6 +454,8 @@ export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent => findAg
 
 export interface TicketPromptContext {
   assigneeName?: string
+  // The board's project path, which the version instruction's SQL filters on.
+  projectPath?: string
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
@@ -463,6 +470,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.labels?.length ? `Labels: ${formatLabels(ticket.labels)}` : '',
     ticket.branchName ? `Branch: ${ticket.branchName}` : '',
     ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
+    ticket.version ? `Version: ${ticket.version}` : '',
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
@@ -495,6 +503,30 @@ export const isFullAuto = (ticket: Ticket, lane: SwimLane): boolean => Boolean(l
 const FULL_AUTO_INSTRUCTION =
   "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Then exit."
 
+// The official SemVer 2.0 pattern (semver.org), unchanged.
+const SEMANTIC_VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+
+// undefined = cleared, null = invalid. A leading "v" is a common habit
+// ("v1.4.0"), not part of the version, so it is dropped rather than rejected.
+export const normalizeSemanticVersion = (input: string): string | undefined | null => {
+  const trimmed = input.trim()
+  if (!trimmed) return undefined
+  const withoutPrefix = trimmed.replace(/^v/i, '')
+  return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
+}
+
+const versionInstruction = (ticket: Ticket, projectPath?: string): string => {
+  const sentence =
+    "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
+  if (!projectPath) return sentence
+  const updateSql =
+    "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
+    `WHERE project_path = ${sqlStringLiteral(projectPath)} AND number = ${ticket.number};`
+  const command = `sqlite3 "${TRACKER_DATABASE_PATH}" ${shellQuote(updateSql)}`
+  return [`${sentence} To set or change it:`, command].join('\n')
+}
+
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
 // output location closes it out as the last thing the agent reads.
@@ -506,8 +538,9 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
+  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context.projectPath) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, fullAuto, output]
+  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
@@ -1057,7 +1090,8 @@ export const TICKET_CARD_FIELDS = [
   { id: 'checklist', label: 'Checklist progress' },
   { id: 'branch', label: 'Branch' },
   { id: 'worktree', label: 'Worktree' },
-  { id: 'pullRequest', label: 'GitHub PR' }
+  { id: 'pullRequest', label: 'GitHub PR' },
+  { id: 'version', label: 'Semantic version' }
 ] as const
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']

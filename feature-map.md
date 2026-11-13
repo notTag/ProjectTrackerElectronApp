@@ -280,10 +280,11 @@ From left to right:
   - **Labels** as chips
   - **☑ done/total** checklist progress
   - **⑂ branch**
+  - **v1.4.0** semantic version
 
 ### 3.5 Display settings modal (⚙ Display)
 
-- **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch). All are on by default.
+- **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
 - **Columns**: checkboxes to show or hide No status and GitHub Issues.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
@@ -327,6 +328,7 @@ In graph view this opens as a side panel instead of a centered modal.
 | Labels | Comma-separated. Spaces and duplicates are cleaned up. "Searchable from the filter box." |
 | Branch | e.g. `feat/board-ticket-fields`. Cleared when left empty |
 | Worktree | Absolute path to a worktree. Cleared when left empty |
+| Version | Semantic version, `MAJOR.MINOR.PATCH` with optional `-prerelease` / `+build`. A leading `v` is dropped. Anything else shows "Use MAJOR.MINOR.PATCH, like 1.4.0" and isn't saved. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
 
 **External Links**
@@ -385,6 +387,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Agent** select.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
+- **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
 - **Delete lane** moves the lane's tickets to No status; no ticket is deleted. No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
 - **Done** closes the modal.
 
@@ -468,8 +471,9 @@ The parts below are joined in this order, and empty parts are left out:
 3. Ticket metadata:
    - `Ticket #N: title`
    - `Status: <lane>`
-   - then, where set: Assignee, Labels, Branch, Worktree, Pull request, Source URL, and the checklist as `- [x]` / `- [ ]` lines
+   - then, where set: Assignee, Labels, Branch, Worktree, Version, Pull request, Source URL, and the checklist as `- [x]` / `- [ ]` lines
 4. The ticket description.
+   - Lanes with **Agent sets semantic version** on add the version instruction after it.
 5. `Output: <target>`, with the standing instruction to use that location as-is or create it.
 
 If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doesn't read it as an option. For the terminal command, the prompt is wrapped in single quotes, so text from GitHub issues is passed as one literal argument and never runs as code.

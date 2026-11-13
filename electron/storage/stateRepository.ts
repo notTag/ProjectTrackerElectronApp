@@ -151,7 +151,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   fullAuto: asBool(row.full_auto),
   externalLinks: parseJson<Ticket['externalLinks']>(row.external_links_json, undefined),
   moveToLaneId: asText(row.move_to_lane_id),
-  moveOnComplete: asBool(row.move_on_complete)
+  moveOnComplete: asBool(row.move_on_complete),
+  version: asText(row.version)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -177,7 +178,8 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   ticket.fullAuto ? 1 : 0,
   jsonOrNull(ticket.externalLinks),
   ticket.moveToLaneId ?? null,
-  ticket.moveOnComplete ? 1 : 0
+  ticket.moveOnComplete ? 1 : 0,
+  ticket.version ?? null
 ]
 
 export class StateRepository {
@@ -399,15 +401,15 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, closes_ticket, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          orchestrator_prompt = excluded.orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
-         closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
+         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
         projectPath,
@@ -420,6 +422,7 @@ export class StateRepository {
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
         lane.fullAuto ? 1 : 0,
+        lane.agentSetsVersion ? 1 : 0,
         lane.closesTicket ? 1 : 0,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
@@ -546,6 +549,7 @@ export class StateRepository {
         autoRunTerminalId: asText(row.auto_run_terminal_id),
         autoRunWorktrees: asBool(row.auto_run_worktrees),
         fullAuto: asBool(row.full_auto),
+        agentSetsVersion: asBool(row.agent_sets_version),
         closesTicket: asBool(row.closes_ticket)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
@@ -669,8 +673,8 @@ export class StateRepository {
       `INSERT INTO tickets (
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
-         worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, version, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -682,7 +686,8 @@ export class StateRepository {
          project_path = ?, lane_id = ?, assignee_id = ?, number = ?, title = ?, description = ?,
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
-         pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?, external_links_json = ?, move_to_lane_id = ?, move_on_complete = ?
+         pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?, external_links_json = ?, move_to_lane_id = ?, move_on_complete = ?,
+         version = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )

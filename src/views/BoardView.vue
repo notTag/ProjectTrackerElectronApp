@@ -13,6 +13,7 @@ import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
   TICKET_CARD_FIELDS,
+  normalizeSemanticVersion,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
   addExternalLink,
@@ -430,8 +431,28 @@ const refreshOpenTicketPullRequest = async () => {
   }
 }
 
+const versionInvalid = ref(false)
+
+// An invalid value is kept in the input with an error instead of being saved.
+// A valid one is written back so "v1.4.0" shows as the "1.4.0" it saved as,
+// even when that equals the stored value and Vue sees nothing to re-render.
+const editTicketVersion = (ticket: Ticket, input: HTMLInputElement) => {
+  const version = normalizeSemanticVersion(input.value)
+  versionInvalid.value = version === null
+  if (version === null) return
+  input.value = version ?? ''
+  editTicket(ticket, { version })
+}
+
+// A version written from outside (an agent's sqlite3 UPDATE) replaces whatever
+// invalid text the error was about.
+watch(() => openTicket.value?.version, () => {
+  versionInvalid.value = false
+})
+
 watch(openTicketId, (ticketId) => {
   pullRequestError.value = null
+  versionInvalid.value = false
   if (ticketId) void refreshOpenTicketPullRequest()
 })
 
@@ -707,7 +728,8 @@ const laneOfTicket = (ticket: Ticket) =>
   laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
 
 const promptContext = (ticket: Ticket) => ({
-  assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined
+  assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined,
+  projectPath: projectPath.value
 })
 
 const ticketCommand = (ticket: Ticket) => {
@@ -1025,6 +1047,7 @@ const runTicketAgent = (ticket: Ticket) => {
                 (showsField('checklist') && ticket.checklist?.length) ||
                 (showsField('branch') && ticket.branchName) ||
                 (showsField('worktree') && ticket.worktreePath) ||
+                (showsField('version') && ticket.version) ||
                 (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
@@ -1042,6 +1065,7 @@ const runTicketAgent = (ticket: Ticket) => {
               >
                 ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
               </span>
+              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
               <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
               <a
                 v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
@@ -1241,6 +1265,17 @@ const runTicketAgent = (ticket: Ticket) => {
             editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
           "
         />
+      </label>
+
+      <label>
+        Version
+        <input
+          class="agent-file-path"
+          :value="openTicket.version ?? ''"
+          placeholder="1.4.0"
+          @change="editTicketVersion(openTicket, $event.target as HTMLInputElement)"
+        />
+        <span v-if="versionInvalid" class="field-hint field-error">Use MAJOR.MINOR.PATCH, like 1.4.0</span>
       </label>
 
       <section class="ticket-pull-request">
@@ -1557,6 +1592,15 @@ const runTicketAgent = (ticket: Ticket) => {
           />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
         </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.agentSetsVersion)"
+            @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
+          />
+          Agent sets semantic version
+        </label>
+        <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
         <label class="checkbox-label">
           <input
             type="checkbox"
