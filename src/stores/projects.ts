@@ -455,7 +455,7 @@ export const useProjectsStore = defineStore('projects', {
           const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
           const useWorktrees = autoRunUsesWorktrees(toLane, laneHandoffs[0].ticket)
           const launches = laneHandoffs.map(({ ticket }) =>
-            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket), useWorktrees)
+            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees)
           )
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
@@ -465,9 +465,9 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
-    promptContextFor(ticket: Ticket) {
+    promptContextFor(ticket: Ticket, projectPath: string) {
       const assignee = this.state.users.find((user) => user.id === ticket.assigneeId)
-      return { assigneeName: assignee?.name }
+      return { assigneeName: assignee?.name, projectPath }
     },
 
     // Throws on failure, unlike save(). `undo` reverts an optimistic edit and

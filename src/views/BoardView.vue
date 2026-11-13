@@ -434,11 +434,21 @@ const refreshOpenTicketPullRequest = async () => {
 const versionInvalid = ref(false)
 
 // An invalid value is kept in the input with an error instead of being saved.
-const editTicketVersion = (ticket: Ticket, input: string) => {
-  const version = normalizeSemanticVersion(input)
+// A valid one is written back so "v1.4.0" shows as the "1.4.0" it saved as,
+// even when that equals the stored value and Vue sees nothing to re-render.
+const editTicketVersion = (ticket: Ticket, input: HTMLInputElement) => {
+  const version = normalizeSemanticVersion(input.value)
   versionInvalid.value = version === null
-  if (version !== null) editTicket(ticket, { version })
+  if (version === null) return
+  input.value = version ?? ''
+  editTicket(ticket, { version })
 }
+
+// A version written from outside (an agent's sqlite3 UPDATE) replaces whatever
+// invalid text the error was about.
+watch(() => openTicket.value?.version, () => {
+  versionInvalid.value = false
+})
 
 watch(openTicketId, (ticketId) => {
   pullRequestError.value = null
@@ -1263,7 +1273,7 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.version ?? ''"
           placeholder="1.4.0"
-          @change="editTicketVersion(openTicket, ($event.target as HTMLInputElement).value)"
+          @change="editTicketVersion(openTicket, $event.target as HTMLInputElement)"
         />
         <span v-if="versionInvalid" class="field-hint field-error">Use MAJOR.MINOR.PATCH, like 1.4.0</span>
       </label>

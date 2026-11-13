@@ -44,7 +44,7 @@ A ticket has no way to record which release it ships in. The user wants a semant
   - `ticketAgentPrompt`: when `lane.agentSetsVersion`, add a section after the description:
     ```
     Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet. To set or change it:
-    sqlite3 "<TRACKER_DATABASE_PATH>" "UPDATE tickets SET version = '<X.Y.Z>', updated_at = '<ISO-8601 UTC>' WHERE project_path = '<project path>' AND number = <N>;"
+    sqlite3 "<TRACKER_DATABASE_PATH>" "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE project_path = '<project path>' AND number = <N>;"
     ```
   - Needs the project path: add `projectPath?: string` to `TicketPromptContext`, passed where the prompt is built. Omit the SQL line (keep the sentence) if absent
 - R5. Docs: `feature-map.md` — ticket modal "Version" entry, lane cog "Agent sets semantic version", card field

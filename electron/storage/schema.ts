@@ -60,13 +60,13 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
   full_auto INTEGER NOT NULL DEFAULT 0,
-  agent_sets_version INTEGER NOT NULL DEFAULT 0,
   -- A ticket entering a lane with this set counts as closed for metrics.
   closes_ticket INTEGER NOT NULL DEFAULT 0,
   position INTEGER NOT NULL,
   -- The unassigned column owns an agent prompt but must never be deletable, so
   -- it is flagged here rather than living in the ordered lane list.
   is_unassigned INTEGER NOT NULL DEFAULT 0,
+  agent_sets_version INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (project_path, id)
 );
 

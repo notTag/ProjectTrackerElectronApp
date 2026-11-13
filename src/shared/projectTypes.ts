@@ -521,7 +521,7 @@ const versionInstruction = (ticket: Ticket, projectPath?: string): string => {
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
   if (!projectPath) return sentence
   const updateSql =
-    "UPDATE tickets SET version = '<X.Y.Z>', updated_at = '<ISO-8601 UTC>' " +
+    "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
     `WHERE project_path = ${sqlStringLiteral(projectPath)} AND number = ${ticket.number};`
   const command = `sqlite3 "${TRACKER_DATABASE_PATH}" ${shellQuote(updateSql)}`
   return [`${sentence} To set or change it:`, command].join('\n')
@@ -538,9 +538,9 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
-  const version = lane.agentSetsVersion ? versionInstruction(ticket, context.projectPath) : ''
+  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context.projectPath) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, version, fullAuto, output]
+  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
