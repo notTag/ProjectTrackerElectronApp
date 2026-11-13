@@ -252,27 +252,34 @@ const openBoard = (project: ProjectRecord) => {
   void router.push(`/board/${encodeURIComponent(project.path)}`)
 }
 
-const cardMetrics = ref<Record<string, ProjectMetrics | undefined>>({})
-const cardMetricsLoading = ref<Record<string, boolean>>({})
-const cardMetricsError = ref<Record<string, string | null>>({})
-const cardMetricsFetchedAt = ref<Record<string, Date>>({})
+interface CardMetricsState {
+  requestId: number
+  loading: boolean
+  metrics?: ProjectMetrics
+  error?: string
+  fetchedAt?: Date
+}
 
-// The old result is cleared first so stale numbers never show as current, and
-// a reply that lands after the card collapsed or another card expanded is dropped.
+// Only one card expands at a time, so one slot holds its metrics. Each load
+// replaces the slot, so stale numbers never show as current, and a reply from
+// an older request (collapse + re-expand, or another card) is dropped.
+const cardMetricsState = ref<CardMetricsState | null>(null)
+let latestCardMetricsRequest = 0
+
 const loadCardMetrics = async (projectPath: string) => {
-  cardMetrics.value[projectPath] = undefined
-  cardMetricsError.value[projectPath] = null
-  cardMetricsLoading.value[projectPath] = true
-  const isStillExpanded = () => expandedProjectPath.value === projectPath
+  latestCardMetricsRequest += 1
+  const requestId = latestCardMetricsRequest
+  cardMetricsState.value = { requestId, loading: true }
+  const isLatestRequest = () => cardMetricsState.value?.requestId === requestId
   try {
     const [metrics] = await projectTrackerApi.getMetrics([projectPath])
-    if (!isStillExpanded()) return
-    cardMetrics.value[projectPath] = metrics
-    cardMetricsFetchedAt.value[projectPath] = new Date()
+    if (!isLatestRequest()) return
+    const missingMessage = metrics ? undefined : 'No metrics returned for this project'
+    cardMetricsState.value = { requestId, loading: false, metrics, error: missingMessage, fetchedAt: new Date() }
   } catch (error) {
-    if (isStillExpanded()) cardMetricsError.value[projectPath] = error instanceof Error ? error.message : String(error)
-  } finally {
-    if (isStillExpanded()) cardMetricsLoading.value[projectPath] = false
+    if (!isLatestRequest()) return
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    cardMetricsState.value = { requestId, loading: false, error: errorMessage }
   }
 }
 
@@ -545,7 +552,7 @@ const renderMarkdown = (markdown: string | null) => {
           <div class="tabs" @click.stop>
             <button
               class="tab-button"
-              :class="{ selected: activeTabs[project.path] === 'details' }"
+              :class="{ selected: (activeTabs[project.path] ?? 'details') === 'details' }"
               @click="selectTab(project, 'details')"
             >
               Details
@@ -567,16 +574,16 @@ const renderMarkdown = (markdown: string | null) => {
           </div>
 
           <div v-if="activeTabs[project.path] === 'metrics'" class="tab-panel card-metrics" @click.stop>
-            <p v-if="cardMetricsLoading[project.path]" class="field-hint">Loading metrics…</p>
-            <p v-else-if="cardMetricsError[project.path]" class="metrics-error">{{ cardMetricsError[project.path] }}</p>
+            <p v-if="cardMetricsState?.loading" class="field-hint">Loading metrics…</p>
+            <p v-else-if="cardMetricsState?.error" class="metrics-error">{{ cardMetricsState.error }}</p>
             <CardMetrics
-              v-else-if="cardMetrics[project.path]"
-              :metrics="cardMetrics[project.path]!"
-              :fetched-at="cardMetricsFetchedAt[project.path]"
+              v-else-if="cardMetricsState?.metrics"
+              :metrics="cardMetricsState.metrics"
+              :fetched-at="cardMetricsState.fetchedAt"
             />
           </div>
 
-          <div v-else-if="activeTabs[project.path] === 'details'" class="tab-panel" @click.stop>
+          <div v-else-if="activeTabs[project.path] !== 'readme'" class="tab-panel" @click.stop>
             <div class="project-controls">
               <label>
                 Status

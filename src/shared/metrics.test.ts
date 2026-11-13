@@ -38,6 +38,10 @@ describe('prs narrowing', () => {
     expect(prUnavailableReason(metrics)).toBe('rate limited')
   })
 
+  it('never shows a blank reason for an empty error', () => {
+    expect(prUnavailableReason(metricsWith({ error: '' }))).toBe('PR fetch failed')
+  })
+
   it('returns counts when present', () => {
     const prs = { open: 3, merged: { ...windows, year: 5 } }
     const metrics = metricsWith(prs)

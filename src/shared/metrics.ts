@@ -12,7 +12,8 @@ export const prCounts = (metrics: ProjectMetrics): ProjectPrMetrics | undefined 
 
 export const prUnavailableReason = (metrics: ProjectMetrics) => {
   if (!metrics.prs) return 'No GitHub repo'
-  return 'error' in metrics.prs ? metrics.prs.error : ''
+  if (!('error' in metrics.prs)) return ''
+  return metrics.prs.error || 'PR fetch failed'
 }
 
 export const MIN_BAR_HEIGHT = '2px'
