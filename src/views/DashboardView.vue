@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardMetrics from '@/components/CardMetrics.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
@@ -10,10 +11,11 @@ import ProjectToolbar from '@/components/ProjectToolbar.vue'
 import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import type { ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
+import { projectTrackerApi } from '@/services/projectTrackerApi'
+import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
-type ProjectTab = 'details' | 'readme'
+type ProjectTab = 'details' | 'readme' | 'metrics'
 type SortField = 'name' | 'status' | 'priority'
 type SortDirection = 'asc' | 'desc'
 
@@ -250,9 +252,35 @@ const openBoard = (project: ProjectRecord) => {
   void router.push(`/board/${encodeURIComponent(project.path)}`)
 }
 
+const cardMetrics = ref<Record<string, ProjectMetrics | undefined>>({})
+const cardMetricsLoading = ref<Record<string, boolean>>({})
+const cardMetricsError = ref<Record<string, string | null>>({})
+const cardMetricsFetchedAt = ref<Record<string, Date>>({})
+
+// The old result is cleared first so stale numbers never show as current, and
+// a reply that lands after the card collapsed or another card expanded is dropped.
+const loadCardMetrics = async (projectPath: string) => {
+  cardMetrics.value[projectPath] = undefined
+  cardMetricsError.value[projectPath] = null
+  cardMetricsLoading.value[projectPath] = true
+  const isStillExpanded = () => expandedProjectPath.value === projectPath
+  try {
+    const [metrics] = await projectTrackerApi.getMetrics([projectPath])
+    if (!isStillExpanded()) return
+    cardMetrics.value[projectPath] = metrics
+    cardMetricsFetchedAt.value[projectPath] = new Date()
+  } catch (error) {
+    if (isStillExpanded()) cardMetricsError.value[projectPath] = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (isStillExpanded()) cardMetricsLoading.value[projectPath] = false
+  }
+}
+
 const toggleProject = (project: ProjectRecord) => {
-  expandedProjectPath.value = expandedProjectPath.value === project.path ? null : project.path
+  const isExpanding = expandedProjectPath.value !== project.path
+  expandedProjectPath.value = isExpanding ? project.path : null
   activeTabs.value[project.path] ??= 'details'
+  if (isExpanding) void loadCardMetrics(project.path)
 }
 
 const selectTab = (project: ProjectRecord, tab: ProjectTab) => {
@@ -517,7 +545,7 @@ const renderMarkdown = (markdown: string | null) => {
           <div class="tabs" @click.stop>
             <button
               class="tab-button"
-              :class="{ selected: activeTabs[project.path] !== 'readme' }"
+              :class="{ selected: activeTabs[project.path] === 'details' }"
               @click="selectTab(project, 'details')"
             >
               Details
@@ -529,9 +557,26 @@ const renderMarkdown = (markdown: string | null) => {
             >
               README
             </button>
+            <button
+              class="tab-button"
+              :class="{ selected: activeTabs[project.path] === 'metrics' }"
+              @click="selectTab(project, 'metrics')"
+            >
+              Metrics
+            </button>
           </div>
 
-          <div v-if="activeTabs[project.path] !== 'readme'" class="tab-panel" @click.stop>
+          <div v-if="activeTabs[project.path] === 'metrics'" class="tab-panel card-metrics" @click.stop>
+            <p v-if="cardMetricsLoading[project.path]" class="field-hint">Loading metrics…</p>
+            <p v-else-if="cardMetricsError[project.path]" class="metrics-error">{{ cardMetricsError[project.path] }}</p>
+            <CardMetrics
+              v-else-if="cardMetrics[project.path]"
+              :metrics="cardMetrics[project.path]!"
+              :fetched-at="cardMetricsFetchedAt[project.path]"
+            />
+          </div>
+
+          <div v-else-if="activeTabs[project.path] === 'details'" class="tab-panel" @click.stop>
             <div class="project-controls">
               <label>
                 Status

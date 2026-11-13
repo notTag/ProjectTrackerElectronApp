@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
+import { METRIC_WINDOWS, prCounts, prUnavailableReason } from '@/shared/metrics'
 import type { MetricWindowCounts, ProjectMetrics, ProjectPrMetrics } from '@/shared/projectTypes'
 
 const props = defineProps<{
@@ -9,13 +10,6 @@ const props = defineProps<{
   // Which view this is, so each remembers its own open state.
   scope: 'dashboard' | 'board'
 }>()
-
-const WINDOW_COLUMNS: { key: keyof MetricWindowCounts; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: '7d' },
-  { key: 'month', label: 'Month' },
-  { key: 'year', label: 'Year' }
-]
 
 const storageKey = `metrics-panel-open:${props.scope}`
 const readStoredOpen = () => {
@@ -81,12 +75,6 @@ watch(
   }
 )
 
-const prCounts = (row: ProjectMetrics): ProjectPrMetrics | undefined =>
-  row.prs && 'open' in row.prs ? row.prs : undefined
-const prUnavailableReason = (row: ProjectMetrics) => {
-  if (!row.prs) return 'No GitHub repository'
-  return 'error' in row.prs ? row.prs.error : ''
-}
 const projectsWithoutClosingLanes = computed(() => rows.value.filter((row) => !row.hasClosingLanes))
 
 const sumOf = (values: number[]) => values.reduce((total, value) => total + value, 0)
@@ -137,17 +125,17 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
               <th rowspan="2" scope="col">Agents</th>
             </tr>
             <tr>
-              <th v-for="column in WINDOW_COLUMNS" :key="`closed-${column.key}`" scope="col">{{ column.label }}</th>
-              <th v-for="column in WINDOW_COLUMNS" :key="`merged-${column.key}`" scope="col">{{ column.label }}</th>
+              <th v-for="column in METRIC_WINDOWS" :key="`closed-${column.key}`" scope="col">{{ column.label }}</th>
+              <th v-for="column in METRIC_WINDOWS" :key="`merged-${column.key}`" scope="col">{{ column.label }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="row.projectPath">
               <th scope="row" :title="row.projectPath">{{ row.name }}</th>
-              <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ row.closed[column.key] }}</td>
+              <td v-for="column in METRIC_WINDOWS" :key="column.key">{{ row.closed[column.key] }}</td>
               <template v-if="prCounts(row)">
                 <td>{{ prCounts(row)!.open }}</td>
-                <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ prCounts(row)!.merged[column.key] }}</td>
+                <td v-for="column in METRIC_WINDOWS" :key="column.key">{{ prCounts(row)!.merged[column.key] }}</td>
               </template>
               <td v-else colspan="5" class="metrics-unavailable" :title="prUnavailableReason(row)">—</td>
               <td :title="row.agentsRunning === null ? 'Could not list processes' : ''">
@@ -158,10 +146,10 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
           <tfoot v-if="showTotals">
             <tr>
               <th scope="row">Total</th>
-              <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ totals.closed[column.key] }}</td>
+              <td v-for="column in METRIC_WINDOWS" :key="column.key">{{ totals.closed[column.key] }}</td>
               <template v-if="totals.prs">
                 <td>{{ totals.prs.open }}</td>
-                <td v-for="column in WINDOW_COLUMNS" :key="column.key">{{ totals.prs.merged[column.key] }}</td>
+                <td v-for="column in METRIC_WINDOWS" :key="column.key">{{ totals.prs.merged[column.key] }}</td>
               </template>
               <td v-else colspan="5" class="metrics-unavailable" title="A repository failed to load">—</td>
               <td>{{ totals.agentsRunning ?? '—' }}</td>
