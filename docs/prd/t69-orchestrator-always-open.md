@@ -5,7 +5,7 @@ Auto Run skips the orchestrator tab when only one ticket runs. `buildOrchestrato
 
 ## Code today (verified 2026-11-13 on `3a794ca`)
 - `buildOrchestratorLaunch` — `src/shared/projectTypes.ts:805-814`. Comment on line 805 ("One ticket needs no watcher...") + guard `if (entries.length < 2) return undefined`. Return type `TerminalTab | undefined`
-- Caller — `src/views/BoardView.vue:791`. Returns early on `launches.length === 0` (line 783), so the builder never sees 0 entries from here
+- Caller — `src/views/BoardView.vue:791`. Returns early on `launches.length === 0` (line 782), so the builder never sees 0 entries from here
 - Store → main — `store.autoRunLane(..., orchestrator)` → `electron/main.ts:494` `orchestratorTab(orchestrator)`; `orchestratorTabs = orchestratorLaunch ? [orchestratorLaunch] : []`. Count-agnostic, no change needed
 - Prompt — `orchestratorPrompt` (`projectTypes.ts:755`). Builds a ticket list, so one ticket reads as a one-item list. "Watch these tickets until each one is done" / "When every ticket is done" read fine for one ticket. No wording change needed
 - Lane settings hint — `src/views/BoardView.vue:1554`: `Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)`. Becomes wrong after this change (not listed in the ticket)
