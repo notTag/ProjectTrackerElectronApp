@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  normalizeSemanticVersion,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
@@ -363,12 +364,20 @@ describe('board preferences', () => {
 
   it('shows card fields added since the preferences were saved, keeping ones switched off', () => {
     const savedBeforeTracking = getBoardPreferences(stateWith({ cardFields: ['number', 'branch'] }), '/repo')
-    expect(savedBeforeTracking.cardFields).toEqual(['number', 'branch', 'worktree', 'pullRequest'])
+    expect(savedBeforeTracking.cardFields).toEqual(['number', 'branch', 'worktree', 'pullRequest', 'version'])
 
     const switchedOffAfterTracking = toggleCardField(savedBeforeTracking, 'worktree')
     const reread = getBoardPreferences(stateWith(switchedOffAfterTracking), '/repo')
     expect(reread.cardFields).not.toContain('worktree')
     expect(reread.cardFields).toContain('pullRequest')
+  })
+
+  it('shows the version field on preferences saved before it shipped', () => {
+    const savedBeforeVersion = stateWith({
+      cardFields: ['number'],
+      knownCardFields: ['number', 'description', 'assignee', 'labels', 'checklist', 'branch', 'worktree', 'pullRequest']
+    })
+    expect(getBoardPreferences(savedBeforeVersion, '/repo').cardFields).toEqual(['number', 'version'])
   })
 
   it('toggles a lane out of view and back', () => {
@@ -1069,5 +1078,57 @@ describe('Auto Run orchestrator', () => {
       expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
       expect(launch?.command).toContain("it'\\''s-mine")
     })
+  })
+})
+
+describe('semantic version', () => {
+  const lane = (overrides: Partial<SwimLane> = {}): SwimLane => ({
+    id: 'in-pr',
+    name: 'In PR',
+    agentPrompt: '',
+    agentFilePath: '',
+    ...overrides
+  })
+  const ticket = (overrides: Partial<Ticket> = {}): Ticket => ({
+    id: 'ticket-1',
+    number: 7,
+    laneId: 'in-pr',
+    title: 'Add the thing',
+    description: 'Make it work.',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  })
+
+  it('normalizes valid versions and rejects the rest', () => {
+    expect(normalizeSemanticVersion(' 1.4.0 ')).toBe('1.4.0')
+    expect(normalizeSemanticVersion('v2.0.1')).toBe('2.0.1')
+    expect(normalizeSemanticVersion('1.0.0-rc.1+build.5')).toBe('1.0.0-rc.1+build.5')
+    expect(normalizeSemanticVersion('   ')).toBeUndefined()
+    for (const invalid of ['1.2', '1.2.3.4', '01.2.3', 'v', 'latest']) {
+      expect(normalizeSemanticVersion(invalid)).toBeNull()
+    }
+  })
+
+  it('lists the version in ticket metadata only when set', () => {
+    const withVersion = ticketAgentPrompt(ticket({ worktreePath: '/wt', version: '1.4.0' }), lane())
+    expect(withVersion).toContain('Worktree: /wt\nVersion: 1.4.0')
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Version:')
+  })
+
+  it('tells the agent how to set the version only in lanes with the toggle on', () => {
+    const context = { projectPath: "/code/o'brien" }
+    const unchanged = ticketAgentPrompt(ticket(), lane(), context)
+    expect(unchanged).toBe('Ticket #7: Add the thing\nStatus: In PR\n\nMake it work.')
+
+    const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }), context)
+    expect(prompt).toContain("Make it work.\n\nSemantic version: you decide whether this ticket's work needs a version")
+    expect(prompt).toContain(`sqlite3 "${TRACKER_DATABASE_PATH}" 'UPDATE tickets SET version = `)
+    expect(prompt).toContain("project_path = '\\''/code/o'\\'''\\''brien'\\'' AND number = 7;")
+  })
+
+  it('keeps the version sentence but drops the command without a project path', () => {
+    const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
+    expect(prompt).toContain("Leave it unset if it doesn't apply yet.")
+    expect(prompt).not.toContain('sqlite3')
   })
 })

@@ -40,7 +40,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -68,7 +68,8 @@ const stateWithBoard = (): ProjectTrackerState => {
             fullAuto: true,
             externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
             moveToLaneId: 'prd',
-            moveOnComplete: true
+            moveOnComplete: true,
+            version: '1.4.0-rc.1'
           },
           {
             id: 'ticket-b',
@@ -121,6 +122,10 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].autoRunWorktrees).toBe(true)
     expect(board?.lanes[1].fullAuto).toBe(true)
     expect(board?.lanes[0].fullAuto).toBe(false)
+    expect(board?.lanes[1].agentSetsVersion).toBe(true)
+    expect(board?.lanes[0].agentSetsVersion).toBe(false)
+    expect(board?.tickets[0].version).toBe('1.4.0-rc.1')
+    expect(board?.tickets[1].version).toBeUndefined()
     expect(board?.tickets[0].fullAuto).toBe(true)
     expect(board?.tickets[1].fullAuto).toBe(false)
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
@@ -179,6 +184,27 @@ describe('StateRepository', () => {
     expect(reopenedTicket).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
     expect(reopenedTicket.pullRequestState).toBe('open')
     expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
+  })
+
+  it('adds the version columns to a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN version')
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN agent_sets_version')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.tickets[0].version).toBeUndefined()
+    expect(board.lanes[1].agentSetsVersion).toBe(false)
+    board.tickets[0].version = '2.0.0'
+    board.lanes[1].agentSetsVersion = true
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.tickets[0].version).toBe('2.0.0')
+    expect(reopened.lanes[1].agentSetsVersion).toBe(true)
   })
 
   it('loads tickets with no links from a database created before external links existed', () => {
