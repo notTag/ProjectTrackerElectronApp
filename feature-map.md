@@ -72,7 +72,7 @@ Shown in both title strips.
 Overlay toasts in the top-right corner, just below the title strip, in both views (`src/components/MessageBanners.vue`). They float over the content, so showing one never pushes the board down.
 
 - A red **error** banner and a neutral **notice** banner, each closed with ×. Both fade in and out.
-- Notices close on their own 10 seconds after they appear. A new notice restarts the 10 seconds. Errors stay until you close them.
+- Notices close on their own 30 seconds after they appear (timer in `src/App.vue`, so switching views doesn't restart it). A new notice restarts the 30 seconds. Errors stay until you close them.
 - Banners are at most 360px wide; long text and line breaks wrap.
 - Every store action reports here: scans, saves, GitHub calls, Open In, Auto Run and agent runs.
 

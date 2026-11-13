@@ -1,32 +1,16 @@
 <script setup lang="ts">
-import { onUnmounted, watch } from 'vue'
-
 import { useProjectsStore } from '@/stores/projects'
 
-const NOTICE_LIFETIME_MS = 30_000
-
+// Render only. The notice auto-dismiss timer lives in App.vue so it survives
+// route changes; errors never get one and stay until ×.
 const store = useProjectsStore()
 
+const dismissError = () => {
+  store.error = null
+}
 const dismissNotice = () => {
   store.notice = null
 }
-
-// Errors never get a timer: they stay until ×.
-let noticeTimer: ReturnType<typeof setTimeout> | undefined
-
-// Clearing first means an older notice's timer can never wipe a newer one.
-// `immediate` covers a notice set just before switching views.
-watch(
-  () => store.notice,
-  (notice) => {
-    clearTimeout(noticeTimer)
-    if (!notice) return
-    noticeTimer = setTimeout(dismissNotice, NOTICE_LIFETIME_MS)
-  },
-  { immediate: true },
-)
-
-onUnmounted(() => clearTimeout(noticeTimer))
 </script>
 
 <template>
@@ -34,7 +18,7 @@ onUnmounted(() => clearTimeout(noticeTimer))
     <Transition name="fade">
       <div v-if="store.error" class="message error" role="alert">
         <span class="message-text">{{ store.error }}</span>
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
+        <button class="icon-button message-dismiss" title="Dismiss" @click="dismissError">×</button>
       </div>
     </Transition>
     <Transition name="fade">

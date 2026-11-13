@@ -19,9 +19,30 @@ const refreshUnlessTyping = () => {
 }
 const stopExternalChangeListener = projectTrackerApi.onExternalChange(refreshUnlessTyping)
 window.addEventListener('focus', refreshUnlessTyping)
+
+// Notices clear themselves 30 s after each new one; errors stay until ×.
+// The clock lives here, above <RouterView />, because each view mounts its own
+// MessageBanners — a timer there would restart on every Board ↔ Dashboard switch.
+// Clearing the pending timer on every change means an old timer can never wipe
+// a newer notice, and × (notice → null) cancels it too.
+const NOTICE_LIFETIME_MS = 30_000
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+const dismissNotice = () => {
+  projectsStore.notice = null
+}
+watch(
+  () => projectsStore.notice,
+  (notice) => {
+    clearTimeout(noticeTimer)
+    if (!notice) return
+    noticeTimer = setTimeout(dismissNotice, NOTICE_LIFETIME_MS)
+  },
+)
+
 onBeforeUnmount(() => {
   stopExternalChangeListener()
   window.removeEventListener('focus', refreshUnlessTyping)
+  clearTimeout(noticeTimer)
 })
 
 // Applies the active theme's CSS variables + data-theme-type to <html>,
