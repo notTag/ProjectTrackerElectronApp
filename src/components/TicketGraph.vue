@@ -23,6 +23,20 @@ const laneIndexById = computed(() => new Map(props.lanes.map((lane, index) => [l
 const laneCenterX = (index: number) => LEFT_MARGIN + index * COLUMN_WIDTH + NODE_WIDTH / 2
 const arcHeight = (span: number) => 24 + 22 * span
 
+// Mirrors completionMoves: a target only counts if it's another lane still on the board.
+function movingTarget(fromLaneId: string, targetId: string | undefined) {
+  const isOtherBoardLane = targetId !== fromLaneId && props.boardLanes.some(lane => lane.id === targetId)
+  return isOtherBoardLane ? targetId : undefined
+}
+const boardTargetIds = computed(() => new Set(props.boardLanes.map(lane => movingTarget(lane.id, lane.nextLaneId))))
+const willMove = (ticket: Ticket, lane: SwimLane) => Boolean(ticket.moveOnComplete && movingTarget(lane.id, effectiveNextLaneId(ticket, lane)))
+
+const transitionKey = (transition: LaneTransition) => `${transition.kind}:${transition.from}->${transition.to}`
+function ticketCountLabel(transition: LaneTransition) {
+  const ticketCount = transition.ticketIds.length
+  return `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
+}
+
 function laneLabel(id: string | undefined) {
   if (!id) return undefined
   const visibleLane = props.lanes.find(lane => lane.id === id)
@@ -65,12 +79,15 @@ const layout = computed(() => {
     const apexY = anchorY + (controlY - anchorY) * 0.75
     const labelY = edge.isForward ? apexY - 4 : apexY + 12
     const d = `M ${edge.startX} ${anchorY} C ${edge.startX} ${controlY}, ${edge.endX} ${controlY}, ${edge.endX} ${anchorY}`
-    const ticketCount = edge.transition.ticketIds.length
-    const label = edge.transition.kind === 'override' ? `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}` : ''
-    return { key: `${edge.transition.kind}:${edge.transition.from}->${edge.transition.to}`, d, kind: edge.transition.kind, label, labelX: (edge.startX + edge.endX) / 2, labelY }
+    const isOverride = edge.transition.kind === 'override'
+    const label = isOverride ? ticketCountLabel(edge.transition) : ''
+    const labelX = (edge.startX + edge.endX) / 2
+    return { key: transitionKey(edge.transition), d, kind: edge.transition.kind, label, labelX, labelY }
   })
 
-  const targetIds = new Set(transitions.value.map(transition => transition.to))
+  // Hidden lanes still feed their Next Lane, so reachability uses the whole board.
+  const visibleTargetIds = transitions.value.map(transition => transition.to)
+  const targetIds = new Set([...boardTargetIds.value, ...visibleTargetIds])
   const states = props.lanes.map((lane, index) => {
     const isStart = index === 0
     const tickets = laneTickets(lane.id)
@@ -79,7 +96,7 @@ const layout = computed(() => {
       lane,
       x: LEFT_MARGIN + index * COLUMN_WIDTH,
       nodes,
-      isTerminal: Boolean(lane.closesTicket) || !lane.nextLaneId,
+      isTerminal: Boolean(lane.closesTicket) || !movingTarget(lane.id, lane.nextLaneId),
       isUnreachable: !isStart && !targetIds.has(lane.id)
     }
   })
@@ -93,9 +110,8 @@ const layout = computed(() => {
 const transitionLines = computed(() => transitions.value.map(transition => {
   const from = laneLabel(transition.from)
   const to = laneLabel(transition.to)
-  const ticketCount = transition.ticketIds.length
-  const overrideNote = transition.kind === 'override' ? ` (${ticketCount} ticket${ticketCount === 1 ? '' : 's'})` : ''
-  return { key: `${transition.kind}:${transition.from}->${transition.to}`, text: `${from} → ${to}${overrideNote}` }
+  const overrideNote = transition.kind === 'override' ? ` (${ticketCountLabel(transition)})` : ''
+  return { key: transitionKey(transition), text: `${from} → ${to}${overrideNote}` }
 }))
 
 const selectedLaneDetails = computed(() => {
@@ -110,7 +126,8 @@ const selectedLaneDetails = computed(() => {
     .filter(({ target }) => target && target !== lane.nextLaneId)
     .map(({ ticket, target }) => ({ ticket, targetName: laneLabel(target) }))
     .filter(({ targetName }) => targetName)
-  return { nextLaneName: laneLabel(lane.nextLaneId), hasNextLane: Boolean(lane.nextLaneId), incoming: uniqueIncoming, overrides }
+  const nextLaneId = movingTarget(lane.id, lane.nextLaneId)
+  return { nextLaneName: laneLabel(nextLaneId), hasNextLane: Boolean(nextLaneId), incoming: uniqueIncoming, overrides }
 })
 
 function selectLane(id: string | null) {
@@ -146,7 +163,7 @@ function selectLane(id: string | null) {
             class="graph-node graph-ticket"
             :style="{ top: `${node.y}px`, left: `${state.x}px` }"
             @click="emit('ticket', node.ticket.id)"
-          ><small>#{{ node.ticket.number }}<span v-if="node.ticket.moveOnComplete" class="graph-armed" title="Moves to its Next Lane on completion"> ▶</span></small>{{ node.ticket.title }}</button>
+          ><small>#{{ node.ticket.number }}<span v-if="willMove(node.ticket, state.lane)" class="graph-armed" title="Moves to its Next Lane on completion"> ▶</span></small>{{ node.ticket.title }}</button>
         </template>
       </div>
     </div>
