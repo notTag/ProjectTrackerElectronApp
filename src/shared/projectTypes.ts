@@ -398,6 +398,8 @@ export const ticketSearchText = (ticket: Ticket) => {
 // can't be picked here and the model field stays hidden. `models` are suggested
 // ids for that field's dropdown — free text still works, so a model shipped
 // after this list (or a custom agent's own ids) needs no code change.
+// `sessionNameArgs` are the flag words before a terminal session's display name;
+// an agent without them gets no name, since not every CLI can set one at launch.
 export interface Agent {
   id: string
   name: string
@@ -406,6 +408,7 @@ export interface Agent {
   promptArgs?: string[]
   modelArgs?: string[]
   models?: string[]
+  sessionNameArgs?: string[]
 }
 
 // acceptEdits lets a background run write its output files without a human to
@@ -425,7 +428,8 @@ export const DEFAULT_AGENT: Agent = {
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5'
-  ]
+  ],
+  sessionNameArgs: ['--name']
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -620,8 +624,11 @@ export const ticketShellCommand = (
   model?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, model)
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket) })
 }
+
+// Number only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
 
 // A model starting with "-" would read as another flag, so it counts as empty.
 // `quote` lets the terminal path shell-quote the model; argv needs no quoting.
@@ -632,10 +639,22 @@ export const agentModelWords = (agent: Agent, model?: string, quote = (word: str
   return [...agent.modelArgs, quote(trimmedModel)]
 }
 
-// The model goes before promptArgs so a prompt flag is never split from its value.
-export const agentShellCommand = (agent: Agent, prompt: string, model?: string): string => {
+const sessionNameWords = (agent: Agent, sessionName?: string): string[] => {
+  const sessionNameArgs = agent.sessionNameArgs ?? []
+  if (!sessionName || sessionNameArgs.length === 0) return []
+  return [...sessionNameArgs, shellQuote(sessionName)]
+}
+
+// Model and name go before promptArgs so a prompt flag is never split from its value.
+interface AgentLaunchOptions {
+  model?: string
+  sessionName?: string
+}
+
+export const agentShellCommand = (agent: Agent, prompt: string, { model, sessionName }: AgentLaunchOptions = {}): string => {
   const modelWords = agentModelWords(agent, model, shellQuote)
-  const commandWords = [agent.command, ...modelWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const nameWords = sessionNameWords(agent, sessionName)
+  const commandWords = [agent.command, ...modelWords, ...nameWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
 }
 
@@ -867,7 +886,8 @@ export const buildOrchestratorLaunch = (
 ): TerminalTab | undefined => {
   if (entries.length < 2) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
-  return { command: agentShellCommand(agent, prompt, model), title: orchestratorTabTitle(lane) }
+  const title = orchestratorTabTitle(lane)
+  return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
 }
 
 export interface AgentChoice {

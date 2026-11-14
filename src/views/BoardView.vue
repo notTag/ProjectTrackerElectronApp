@@ -1621,7 +1621,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </section>
       <p class="auto-run-question">
         Each opens in its own
-        <select v-model="autoRunConfirmTerminalId" aria-label="Terminal">
+        <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
           <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
             {{ terminal.label }}
           </option>
@@ -1710,15 +1710,28 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>
-        <label>
-          Agent
-          <select
-            :value="findAgent(agents, openLane.autoRunAgentId).id"
-            @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
+        <div class="auto-run-pickers">
+          <label>
+            Agent
+            <select
+              :value="findAgent(agents, openLane.autoRunAgentId).id"
+              @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Shell
+            <select
+              :value="autoRunTerminal(openLane).id"
+              @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+            >
+              <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+                {{ terminal.label }}
+              </option>
+            </select>
+          </label>
+        </div>
         <label>
           Model
           <ModelField
@@ -1753,17 +1766,6 @@ const runTicketAgent = (ticket: Ticket) => {
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
             @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
           />
-        </label>
-        <label>
-          Terminal
-          <select
-            :value="autoRunTerminal(openLane).id"
-            @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
-          >
-            <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
-              {{ terminal.label }}
-            </option>
-          </select>
         </label>
         <label class="checkbox-label">
           <input
