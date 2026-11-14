@@ -18,6 +18,12 @@ describe('runAgentHeadless', () => {
     expect(result).toEqual({ succeeded: true, output: prompt })
   })
 
+  it('puts the model flag before the prompt, which stays last', async () => {
+    const echoArgs = { ...echoLastArgument, headlessArgs: ['-e', 'console.log(process.argv.slice(1).join(" "))', '--'], modelArgs: ['--model'] }
+    const result = await runAgentHeadless(echoArgs, 'prompt', tmpdir(), tmpdir(), 'opus')
+    expect(result).toEqual({ succeeded: true, output: '--model opus prompt' })
+  })
+
   it('keeps what a failing agent printed alongside why it failed', async () => {
     const failing = { ...echoLastArgument, headlessArgs: ['-e', 'console.log("partial"); process.exit(2)'] }
     const result = await runAgentHeadless(failing, 'prompt', tmpdir(), tmpdir())
