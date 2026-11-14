@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { AutoRunTicketLaunch, ProjectTrackerState, TerminalTab } from '../src/shared/projectTypes.js'
+import type {
+  AutoRunTicketLaunch,
+  LaneWritePatch,
+  ProjectTrackerState,
+  ProjectWritePatch,
+  SwimLane,
+  TerminalTab,
+  Ticket,
+  TicketWritePatch
+} from '../src/shared/projectTypes.js'
 
 // Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
 const toPlainJson = <T,>(value: T): T => {
@@ -27,6 +36,16 @@ contextBridge.exposeInMainWorld('projectTracker', {
   getProjectState: () => invokePlain('project-state:get'),
   saveProjectState: (state: ProjectTrackerState) => invokePlain('project-state:save', state),
   refreshProjectState: () => invokePlain('project-state:refresh'),
+  createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
+  updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
+  moveTicket: (id: string, laneId: string) => invokePlain('ticket:move', { id, laneId }),
+  deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
+  createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
+  updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
+    invokePlain('lane:update', { projectPath, laneId, patch }),
+  reorderLanes: (projectPath: string, laneIds: string[]) => invokePlain('lane:reorder', { projectPath, laneIds }),
+  deleteLane: (projectPath: string, laneId: string) => invokePlain('lane:delete', { projectPath, laneId }),
+  updateProject: (path: string, patch: ProjectWritePatch) => invokePlain('project:update', { path, patch }),
   // The IPC event object is withheld so the renderer never gets ipcRenderer access.
   onExternalChange: (callback: () => void) => {
     const listener = () => callback()

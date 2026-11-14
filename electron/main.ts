@@ -34,7 +34,14 @@ import {
   type AutoRunTicketLaunch,
   type GithubPullRequest,
   type TerminalTab,
-  type ProjectTrackerState
+  type ProjectPriority,
+  type ProjectStatus,
+  type ProjectTrackerState,
+  type SwimLane,
+  type Ticket,
+  type TicketWritePatch,
+  type LaneWritePatch,
+  type ProjectWritePatch
 } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -255,6 +262,59 @@ const isProjectTrackerState = (value: unknown): value is ProjectTrackerState => 
   )
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// Every ticket field a write may set. id, number and createdAt are the repo's.
+const TICKET_PATCH_KEYS = new Set([
+  'laneId', 'title', 'description', 'updatedAt', 'labels', 'branchName', 'worktreePath', 'pullRequestUrl',
+  'pullRequestState', 'pullRequestMergedAt', 'assigneeId', 'checklist', 'agentId', 'model', 'agentRun',
+  'externalId', 'externalUrl', 'fullAuto', 'externalLinks', 'moveToLaneId', 'moveOnComplete', 'version'
+])
+const LANE_PATCH_KEYS = new Set([
+  'name', 'agentPrompt', 'agentFilePath', 'outputTarget', 'orchestratorPrompt', 'autoRunAgentId',
+  'autoRunTerminalId', 'autoRunModel', 'orchestratorAgentId', 'orchestratorModel', 'autoRunWorktrees',
+  'fullAuto', 'closesTicket', 'agentSetsVersion'
+])
+// NOT NULL text columns: a patch may change them but never clear them.
+const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
+const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
+const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
+
+const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
+  if (!isPlainObject(value)) return false
+  return Object.entries(value).every(([key, fieldValue]) => {
+    if (!allowedKeys.has(key)) return false
+    return !REQUIRED_TEXT_KEYS.has(key) || typeof fieldValue === 'string'
+  })
+}
+
+const isTicketPatch = (value: unknown): value is TicketWritePatch => isPatchOf(TICKET_PATCH_KEYS, value)
+const isLanePatch = (value: unknown): value is LaneWritePatch => isPatchOf(LANE_PATCH_KEYS, value)
+
+const isTicket = (value: unknown): value is Omit<Ticket, 'number'> => {
+  if (!isPlainObject(value)) return false
+  const { id, number: _number, createdAt, ...fields } = value
+  return typeof id === 'string' && typeof createdAt === 'string' && isTicketPatch(fields) &&
+    typeof fields.laneId === 'string' && typeof fields.title === 'string' && typeof fields.description === 'string'
+}
+
+const isSwimLane = (value: unknown): value is SwimLane => {
+  if (!isPlainObject(value)) return false
+  const { id, ...fields } = value
+  return typeof id === 'string' && isLanePatch(fields) &&
+    typeof fields.name === 'string' && typeof fields.agentPrompt === 'string' && typeof fields.agentFilePath === 'string'
+}
+
+const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
+  if (!isPlainObject(value)) return false
+  const { notes, priority, status, ...rest } = value
+  return Object.keys(rest).length === 0 &&
+    (notes === undefined || typeof notes === 'string') &&
+    (priority === undefined || PROJECT_PRIORITIES.includes(priority as ProjectPriority)) &&
+    (status === undefined || PROJECT_STATUSES.includes(status as ProjectStatus))
+}
+
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -397,6 +457,74 @@ const registerIpc = () => {
       hiddenPaths: state.hiddenPaths.map(normalizePath),
       thirdPartyPaths: state.thirdPartyPaths.map(normalizePath)
     }))
+  })
+
+  // Per-entity writes: ordinary edits send only the entity they touch. Each
+  // returns the row as stored, never a state re-read; outside changes still
+  // arrive through project-state:refresh.
+  ipcMain.handle('ticket:create', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, ticket } = (payload ?? {}) as { projectPath?: unknown; ticket?: unknown }
+    if (typeof projectPath !== 'string' || !isTicket(ticket)) throw new Error('Invalid ticket create payload.')
+    return toPlainJson(stateRepository.createTicket(normalizePath(projectPath), ticket))
+  })
+
+  ipcMain.handle('ticket:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
+    if (typeof id !== 'string' || !isTicketPatch(patch)) throw new Error('Invalid ticket update payload.')
+    return toPlainJson(stateRepository.updateTicket(id, patch))
+  })
+
+  ipcMain.handle('ticket:move', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { id, laneId } = (payload ?? {}) as { id?: unknown; laneId?: unknown }
+    if (typeof id !== 'string' || typeof laneId !== 'string') throw new Error('Invalid ticket move payload.')
+    return toPlainJson(stateRepository.moveTicket(id, laneId))
+  })
+
+  ipcMain.handle('ticket:delete', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { id } = (payload ?? {}) as { id?: unknown }
+    if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
+    stateRepository.deleteTicket(id)
+  })
+
+  ipcMain.handle('lane:create', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, lane } = (payload ?? {}) as { projectPath?: unknown; lane?: unknown }
+    if (typeof projectPath !== 'string' || !isSwimLane(lane)) throw new Error('Invalid lane create payload.')
+    return toPlainJson(stateRepository.createSwimLane(normalizePath(projectPath), lane))
+  })
+
+  ipcMain.handle('lane:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneId, patch } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown; patch?: unknown }
+    if (typeof projectPath !== 'string' || typeof laneId !== 'string' || !isLanePatch(patch)) {
+      throw new Error('Invalid lane update payload.')
+    }
+    return toPlainJson(stateRepository.updateSwimLane(normalizePath(projectPath), laneId, patch))
+  })
+
+  ipcMain.handle('lane:reorder', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneIds } = (payload ?? {}) as { projectPath?: unknown; laneIds?: unknown }
+    if (typeof projectPath !== 'string' || !isStringArray(laneIds)) throw new Error('Invalid lane reorder payload.')
+    stateRepository.reorderSwimLanes(normalizePath(projectPath), laneIds)
+  })
+
+  ipcMain.handle('lane:delete', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+    if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane delete payload.')
+    stateRepository.deleteSwimLane(normalizePath(projectPath), laneId)
+  })
+
+  ipcMain.handle('project:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { path: projectPath, patch } = (payload ?? {}) as { path?: unknown; patch?: unknown }
+    if (typeof projectPath !== 'string' || !isProjectPatch(patch)) throw new Error('Invalid project update payload.')
+    return toPlainJson(stateRepository.updateProject(normalizePath(projectPath), patch))
   })
 
   ipcMain.handle('projects:scan', (event, payload: unknown) => {

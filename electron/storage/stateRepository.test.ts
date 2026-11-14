@@ -289,15 +289,226 @@ describe('row-level writes', () => {
     expect(remainingIds).toEqual(['ticket-a', 'ticket-b'])
   })
 
-  it('upserts and deletes a swim lane', () => {
+  it('creates, updates, reorders and deletes a swim lane', () => {
     const userDataPath = freshUserDataPath()
     const { repository, projectPath } = seededRepository(userDataPath)
 
-    repository.upsertSwimLane(projectPath, { id: 'idea', name: 'Ideas', agentPrompt: '', agentFilePath: '' }, 0)
+    const created = repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    expect(created.name).toBe('QA')
+    repository.updateSwimLane(projectPath, 'idea', { name: 'Ideas', autoRunModel: null })
+    repository.reorderSwimLanes(projectPath, ['qa', 'idea', 'prd'])
     repository.deleteSwimLane(projectPath, 'prd')
 
     const lanes = reopenedBoard(userDataPath, projectPath).lanes
-    expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['idea', 'Ideas']])
+    expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['qa', 'QA'], ['idea', 'Ideas']])
+  })
+
+  it('configures the unassigned column even before it has a row', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const projectPath = repository.getState().snapshot.projects[0].path
+
+    repository.updateSwimLane(projectPath, UNASSIGNED_LANE_ID, { agentPrompt: 'Sort it.' })
+
+    expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentPrompt).toBe('Sort it.')
+  })
+
+  it('stamps updatedAt only when the patch does not carry it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository } = seededRepository(userDataPath)
+
+    const stamped = repository.updateTicket('ticket-a', { title: 'A2' })
+    expect(stamped.updatedAt).toBeDefined()
+    const kept = repository.updateTicket('ticket-a', { title: 'A3', updatedAt: '2026-02-02T00:00:00.000Z' })
+    expect(kept.updatedAt).toBe('2026-02-02T00:00:00.000Z')
+    const cleared = repository.updateTicket('ticket-b', { assigneeId: null, updatedAt: null })
+    expect(cleared.updatedAt).toBeUndefined()
+    expect(cleared.assigneeId).toBeUndefined()
+  })
+
+  it('keeps a lane missing from a reorder on the board, after the listed ones', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    new StateRepository(userDataPath).createSwimLane(projectPath, { id: 'late', name: 'Late', agentPrompt: '', agentFilePath: '' })
+
+    repository.reorderSwimLanes(projectPath, ['prd', 'idea'])
+
+    expect(reopenedBoard(userDataPath, projectPath).lanes.map((lane) => lane.id)).toEqual(['prd', 'idea', 'late'])
+  })
+
+  it('updates only the hand-edited fields of a project', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    const updated = repository.updateProject(projectPath, { notes: 'ship it', priority: 'high' })
+
+    const reloaded = new StateRepository(userDataPath).getState().snapshot.projects[0]
+    expect(reloaded).toEqual(updated)
+    expect(reloaded).toMatchObject({ notes: 'ship it', priority: 'high' })
+  })
+})
+
+const OTHER_PROJECT_PATH = '/Users/example/Projects/other'
+
+// Two projects with boards, so a write to one can be checked against the other.
+const twoProjectRepository = (userDataPath: string) => {
+  const repository = new StateRepository(userDataPath)
+  const base = stateWithBoard()
+  const otherProject = { ...base.snapshot.projects[0], path: OTHER_PROJECT_PATH, name: 'other' }
+  const otherBoard = {
+    lanes: [
+      { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' },
+      { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '' }
+    ],
+    tickets: [{ id: 'ticket-x', number: 1, laneId: 'idea', title: 'X', description: '', createdAt: '2026-01-01T00:00:00.000Z' }]
+  }
+  const projectPath = base.snapshot.projects[0].path
+  repository.saveState({
+    ...base,
+    snapshot: { ...base.snapshot, projects: [...base.snapshot.projects, otherProject] },
+    boards: { ...base.boards, [OTHER_PROJECT_PATH]: otherBoard }
+  })
+  return { repository, projectPath }
+}
+
+type DumpedRows = Record<string, unknown>[]
+const dumpRows = (userDataPath: string) => {
+  const db = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+  const rows = {
+    tickets: db.prepare('SELECT * FROM tickets ORDER BY id').all() as DumpedRows,
+    lanes: db.prepare('SELECT * FROM swim_lanes ORDER BY project_path, id').all() as DumpedRows,
+    projects: db.prepare('SELECT * FROM projects ORDER BY path').all() as DumpedRows
+  }
+  db.close()
+  return rows
+}
+const ticketRowsExcept = (rows: DumpedRows, ticketId: string) => rows.filter((row) => row.id !== ticketId)
+const laneRowsOf = (rows: DumpedRows, projectPath: string) => rows.filter((row) => row.project_path === projectPath)
+const laneRowsExcept = (rows: DumpedRows, projectPath: string, laneId: string) =>
+  rows.filter((row) => !(row.project_path === projectPath && row.id === laneId))
+
+describe('per-entity writes leave unrelated rows alone', () => {
+  it('ticket create, update, move and delete touch only that ticket', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.createTicket(projectPath, { id: 'ticket-c', laneId: 'idea', title: 'C', description: '', createdAt: '2026-01-05T00:00:00.000Z' })
+    repository.updateTicket('ticket-c', { title: 'C2' })
+    repository.moveTicket('ticket-c', 'prd')
+    const afterEdits = dumpRows(userDataPath)
+    repository.deleteTicket('ticket-c')
+    const afterDelete = dumpRows(userDataPath)
+
+    expect(ticketRowsExcept(afterEdits.tickets, 'ticket-c')).toEqual(before.tickets)
+    expect(afterDelete.tickets).toEqual(before.tickets)
+    expect(afterDelete.lanes).toEqual(before.lanes)
+    expect(afterDelete.projects).toEqual(before.projects)
+  })
+
+  it('lane create, update and delete touch only that lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.updateSwimLane(projectPath, 'qa', { name: 'In QA' })
+    const afterEdits = dumpRows(userDataPath)
+    repository.deleteSwimLane(projectPath, 'qa')
+    const afterDelete = dumpRows(userDataPath)
+
+    expect(laneRowsExcept(afterEdits.lanes, projectPath, 'qa')).toEqual(before.lanes)
+    expect(afterDelete).toEqual(before)
+  })
+
+  it('a lane reorder touches only that board', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.reorderSwimLanes(projectPath, ['prd', 'idea'])
+    const after = dumpRows(userDataPath)
+
+    expect(laneRowsOf(after.lanes, OTHER_PROJECT_PATH)).toEqual(laneRowsOf(before.lanes, OTHER_PROJECT_PATH))
+    expect(after.tickets).toEqual(before.tickets)
+    expect(after.projects).toEqual(before.projects)
+  })
+
+  it('a project update touches only that project row', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.updateProject(projectPath, { notes: 'n' })
+    const after = dumpRows(userDataPath)
+
+    expect(after.projects.filter((row) => row.path !== projectPath)).toEqual(
+      before.projects.filter((row) => row.path !== projectPath)
+    )
+    expect(after.tickets).toEqual(before.tickets)
+    expect(after.lanes).toEqual(before.lanes)
+  })
+
+  it('keeps what a second connection changed between the read and the write', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    repository.getState()
+    const otherWriter = new StateRepository(userDataPath)
+    otherWriter.updateTicket('ticket-x', { title: 'X by agent' })
+    otherWriter.updateSwimLane(OTHER_PROJECT_PATH, 'prd', { name: 'PRD by agent' })
+    otherWriter.updateProject(OTHER_PROJECT_PATH, { notes: 'agent notes' })
+    const afterOtherWriter = dumpRows(userDataPath)
+
+    repository.updateTicket('ticket-a', { title: 'A edited' })
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.reorderSwimLanes(projectPath, ['qa', 'prd', 'idea'])
+    repository.updateProject(projectPath, { notes: 'mine' })
+    const after = dumpRows(userDataPath)
+
+    expect(ticketRowsExcept(after.tickets, 'ticket-a')).toEqual(ticketRowsExcept(afterOtherWriter.tickets, 'ticket-a'))
+    expect(laneRowsOf(after.lanes, OTHER_PROJECT_PATH)).toEqual(laneRowsOf(afterOtherWriter.lanes, OTHER_PROJECT_PATH))
+    expect(after.projects.find((row) => row.path === OTHER_PROJECT_PATH)?.notes).toBe('agent notes')
+  })
+})
+
+describe('per-entity writes and the save baseline', () => {
+  // The renderer splices each written entity into its state, so a later
+  // whole-state save (a scan, board preferences) carries them unchanged. With
+  // the baseline patched they diff as nothing, and an agent's later edit to the
+  // same rows survives instead of being overwritten from the renderer's copy.
+  it('a later whole-state save does not write them back over an outside edit', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    repository.getState()
+
+    repository.updateTicket('ticket-a', { title: 'A edited' })
+    repository.createTicket(projectPath, { id: 'ticket-c', laneId: 'idea', title: 'C', description: '', createdAt: '2026-01-05T00:00:00.000Z' })
+    repository.deleteTicket('ticket-b')
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.updateSwimLane(projectPath, 'idea', { name: 'Ideas' })
+    repository.reorderSwimLanes(projectPath, ['qa', 'prd', 'idea'])
+    repository.updateProject(projectPath, { notes: 'mine' })
+    const rendererState = new StateRepository(userDataPath).getState()
+
+    const agent = new StateRepository(userDataPath)
+    agent.updateTicket('ticket-a', { title: 'A by agent' })
+    agent.updateSwimLane(projectPath, 'idea', { name: 'Ideas by agent' })
+    agent.updateProject(projectPath, { notes: 'agent notes' })
+    repository.saveState({ ...rendererState, scanDirectories: [...rendererState.scanDirectories, '/Users/example/More'] })
+
+    const reloaded = new StateRepository(userDataPath).getState()
+    const board = reloaded.boards![projectPath]
+    expect(board.tickets.map((ticket) => [ticket.id, ticket.title])).toEqual([
+      ['ticket-a', 'A by agent'],
+      ['ticket-c', 'C']
+    ])
+    expect(board.lanes.map((lane) => [lane.id, lane.name])).toEqual([
+      ['qa', 'QA'],
+      ['prd', 'PRD'],
+      ['idea', 'Ideas by agent']
+    ])
+    expect(reloaded.snapshot.projects.find((project) => project.path === projectPath)?.notes).toBe('agent notes')
+    expect(reloaded.scanDirectories).toContain('/Users/example/More')
   })
 })
 
