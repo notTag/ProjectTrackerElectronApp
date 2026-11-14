@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -12,7 +12,13 @@ import {
   type ProjectTrackerState
 } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
-import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
+import {
+  DATABASE_FILE_NAME,
+  LEGACY_BACKUP_FILE_NAME,
+  SNAPSHOT_RETENTION_COUNT,
+  SNAPSHOTS_DIRECTORY_NAME,
+  StateRepository
+} from './stateRepository.js'
 
 const createdUserDataPaths: string[] = []
 
@@ -1022,5 +1028,99 @@ describe('closed_at triggers (#27)', () => {
     cli.exec(`UPDATE projects SET archived = 1`)
     expect(repository.closedTicketMetrics([projectPath], windows)).toEqual([])
     cli.close()
+  })
+})
+
+describe('snapshots', () => {
+  const snapshotsIn = (userDataPath: string) => path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
+  const snapshotNames = (userDataPath: string) =>
+    readdirSync(snapshotsIn(userDataPath)).filter((name) => name.startsWith('project-tracker-')).sort()
+  const integrityOf = (snapshotPath: string) => {
+    const snapshot = new DatabaseSync(snapshotPath)
+    const result = snapshot.prepare('PRAGMA integrity_check').get()?.integrity_check
+    snapshot.close()
+    return result
+  }
+  const backdate = (filePath: string, hours: number) => {
+    const past = new Date(Date.now() - hours * 60 * 60 * 1000)
+    utimesSync(filePath, past, past)
+  }
+
+  it('skips a brand-new database and snapshots an existing one on launch', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    expect(existsSync(snapshotsIn(userDataPath))).toBe(false)
+
+    new StateRepository(userDataPath)
+    const names = snapshotNames(userDataPath)
+    expect(names).toHaveLength(1)
+    expect(integrityOf(path.join(snapshotsIn(userDataPath), names[0]))).toBe('ok')
+  })
+
+  it('takes at most one launch snapshot per 24 hours', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    const [firstName] = snapshotNames(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(1)
+
+    backdate(path.join(snapshotsIn(userDataPath), firstName), 25)
+    new StateRepository(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(2)
+  })
+
+  it(`keeps only the newest ${SNAPSHOT_RETENTION_COUNT} snapshots and leaves other files alone`, () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    mkdirSync(snapshotsIn(userDataPath), { recursive: true })
+    const oldNames = [1, 2, 3, 4, 5, 6, 7, 8].map((day) => `project-tracker-2000-01-0${day}T00-00-00-000Z.sqlite`)
+    for (const name of oldNames) writeFileSync(path.join(snapshotsIn(userDataPath), name), '')
+    writeFileSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'), '')
+
+    const newPath = repository.backUpNow()
+
+    const remaining = snapshotNames(userDataPath)
+    expect(remaining).toHaveLength(SNAPSHOT_RETENTION_COUNT)
+    expect(remaining).toContain(path.basename(newPath))
+    expect(remaining).not.toContain(oldNames[0])
+    expect(remaining).not.toContain(oldNames[1])
+    expect(existsSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'))).toBe(true)
+  })
+
+  it('includes WAL-only commits and excludes other connections uncommitted rows', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const otherWriter = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    otherWriter.exec('PRAGMA wal_autocheckpoint = 0')
+    otherWriter.exec("CREATE TABLE probe (value TEXT); INSERT INTO probe VALUES ('committed')")
+    otherWriter.exec("BEGIN IMMEDIATE; INSERT INTO probe VALUES ('uncommitted')")
+
+    try {
+      const snapshotPath = repository.backUpNow()
+      const snapshot = new DatabaseSync(snapshotPath)
+      const values = snapshot.prepare('SELECT value FROM probe').all().map((row) => row.value)
+      snapshot.close()
+      expect(values).toEqual(['committed'])
+      expect(integrityOf(snapshotPath)).toBe('ok')
+    } finally {
+      otherWriter.exec('ROLLBACK')
+      otherWriter.close()
+    }
+  })
+
+  it('never blocks startup when the snapshot fails', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    mkdirSync(snapshotsIn(userDataPath))
+    chmodSync(snapshotsIn(userDataPath), 0o500)
+
+    try {
+      const repository = new StateRepository(userDataPath)
+      expect(repository.getState()).toBeDefined()
+      expect(snapshotNames(userDataPath)).toHaveLength(0)
+    } finally {
+      chmodSync(snapshotsIn(userDataPath), 0o700)
+    }
   })
 })

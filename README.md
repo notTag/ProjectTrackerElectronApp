@@ -184,6 +184,17 @@ The app saves its data outside the repository, in Electron's `userData` director
 ~/Library/Application Support/Project Tracker/project-tracker.sqlite
 ```
 
+### Backups
+
+Snapshots go to `~/Library/Application Support/Project Tracker/snapshots/`. The app takes one on launch, at most once every 24 hours, and keeps the newest 7. `File → Back Up Database Now` takes one on demand, and `File → Show Backups in Finder` opens the folder. Each snapshot is made with `VACUUM INTO`, so it includes commits still in the WAL file and is a single self-contained file.
+
+To restore one:
+
+1. Quit the app, and stop any agents writing to the database.
+2. Copy the chosen snapshot over `project-tracker.sqlite`.
+3. Delete `project-tracker.sqlite-wal` and `project-tracker.sqlite-shm` if they exist.
+4. Relaunch the app.
+
 When you write file contents into a text column from the `sqlite3` CLI, wrap them as `CAST(readfile('<path>') AS TEXT)`. A bare `readfile()` returns a BLOB, which SQLite stores as-is. The app decodes BLOBs as UTF-8 when it reads them, but other tools may not.
 
 Projects, swim lanes and tickets are stored as shared rows, so every member sees the same edits. Project membership determines who can see a project; ticket assignment records who's working on it.
