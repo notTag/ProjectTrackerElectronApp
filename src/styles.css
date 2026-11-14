@@ -1517,6 +1517,23 @@ code {
   word-break: break-word;
 }
 
+.auto-run-pickers {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Scoped through .lane-modal to outrank `.lane-modal label` by specificity, not file order. */
+.lane-modal .auto-run-pickers label {
+  flex: 1 1 0;
+  min-width: 140px;
+}
+
+.auto-run-pickers select {
+  width: 100%;
+}
+
 .ticket-agent .agent-actions {
   display: flex;
   gap: 8px;
