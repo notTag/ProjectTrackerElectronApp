@@ -1524,7 +1524,8 @@ code {
   gap: 8px;
 }
 
-.auto-run-pickers label {
+/* Scoped through .lane-modal to outrank `.lane-modal label` by specificity, not file order. */
+.lane-modal .auto-run-pickers label {
   flex: 1 1 0;
   min-width: 140px;
 }
