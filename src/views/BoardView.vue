@@ -743,6 +743,14 @@ const agentTakesModel = (agentId?: string) => {
   return modelArgs.length > 0
 }
 
+// The datalists below are keyed by agent id, so a field follows whichever agent
+// is in effect for it. No models → no list attribute → a plain text input.
+const agentModelListId = (agentId?: string) => {
+  const agent = findAgent(agents.value, agentId)
+  const hasModels = (agent.models?.length ?? 0) > 0
+  return hasModels ? `agent-models-${agent.id}` : undefined
+}
+
 const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
 
 // A model id belongs to one CLI ('opus' means nothing to Codex), so switching
@@ -1417,6 +1425,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Model
           <input
             :value="openTicket.model ?? ''"
+            :list="agentModelListId(openTicket.agentId)"
             placeholder="CLI default"
             @change="editTicket(openTicket, { model: trimmedInputValue($event) })"
           />
@@ -1517,7 +1526,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </p>
       <label v-if="agentTakesModel(autoRunConfirmAgentId)">
         Model
-        <input v-model="autoRunConfirmModel" placeholder="CLI default" />
+        <input v-model="autoRunConfirmModel" :list="agentModelListId(autoRunConfirmAgentId)" placeholder="CLI default" />
       </label>
       <template v-if="autoRunTickets(autoRunConfirmLane).length >= 2">
         <label>
@@ -1531,6 +1540,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Orchestrator model
           <input
             v-model="autoRunConfirmOrchestratorModel"
+            :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
             :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
           />
         </label>
@@ -1639,6 +1649,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Model
           <input
             :value="openLane.autoRunModel ?? ''"
+            :list="agentModelListId(openLane.autoRunAgentId)"
             placeholder="CLI default"
             @change="editLane(openLane, { autoRunModel: trimmedInputValue($event) })"
           />
@@ -1662,6 +1673,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Orchestrator model
           <input
             :value="openLane.orchestratorModel ?? ''"
+            :list="agentModelListId(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
             @change="editLane(openLane, { orchestratorModel: trimmedInputValue($event) })"
           />
@@ -1734,5 +1746,10 @@ const runTicketAgent = (ticket: Ticket) => {
         <button @click="openLaneId = null">Done</button>
       </div>
     </section>
+    <template v-for="agent in agents" :key="agent.id">
+      <datalist v-if="agent.models?.length" :id="`agent-models-${agent.id}`">
+        <option v-for="model in agent.models" :key="model" :value="model" />
+      </datalist>
+    </template>
   </div>
 </template>

@@ -392,7 +392,9 @@ export const ticketSearchText = (ticket: Ticket) => {
 // go before the prompt when it runs in the background with nobody watching, and
 // `promptArgs` go before it when it runs in a terminal someone is watching.
 // `modelArgs` is the flag that takes a model name; absent means the CLI's model
-// can't be picked here and the model field stays hidden.
+// can't be picked here and the model field stays hidden. `models` are suggested
+// ids for that field's dropdown — free text still works, so a model shipped
+// after this list (or a custom agent's own ids) needs no code change.
 export interface Agent {
   id: string
   name: string
@@ -400,6 +402,7 @@ export interface Agent {
   headlessArgs: string[]
   promptArgs?: string[]
   modelArgs?: string[]
+  models?: string[]
 }
 
 // acceptEdits lets a background run write its output files without a human to
@@ -409,7 +412,17 @@ export const DEFAULT_AGENT: Agent = {
   name: 'Claude Code',
   command: 'claude',
   headlessArgs: ['-p', '--permission-mode', 'acceptEdits'],
-  modelArgs: ['--model']
+  modelArgs: ['--model'],
+  models: [
+    'fable',
+    'opus',
+    'sonnet',
+    'haiku',
+    'claude-fable-5-2',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5'
+  ]
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -419,7 +432,8 @@ const CODEX_AGENT: Agent = {
   name: 'Codex',
   command: 'codex',
   headlessArgs: ['exec', '--sandbox', 'workspace-write'],
-  modelArgs: ['-m']
+  modelArgs: ['-m'],
+  models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
 }
 
 // Hermes reads its first positional as a subcommand, so a bare prompt would be
@@ -443,7 +457,18 @@ const OPENCODE_AGENT: Agent = {
   command: 'opencode',
   headlessArgs: ['run'],
   promptArgs: ['--prompt'],
-  modelArgs: ['-m']
+  modelArgs: ['-m'],
+  // ponytail: opencode's ids depend on which providers are configured
+  // (`opencode models`), so this is a starting set, not the full list.
+  models: [
+    'anthropic/claude-opus-5-5',
+    'anthropic/claude-sonnet-5-5',
+    'anthropic/claude-haiku-5-5',
+    'openai/gpt-6.1-sol',
+    'openai/gpt-6.1-terra',
+    'openai/gpt-5.6-sol',
+    'opencode/big-pickle'
+  ]
 }
 
 const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
