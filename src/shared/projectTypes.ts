@@ -245,6 +245,9 @@ export interface SwimLane {
   // This lane's agent is told it may set the ticket's semantic version, and how.
   // When to set it is the agent's call, not a rule here. Absent means off.
   agentSetsVersion?: boolean
+  // Where this lane's tickets go on completion when they set no Next Lane of
+  // their own. Absent means None.
+  nextLaneId?: string
 }
 
 export interface ChecklistItem {
@@ -871,6 +874,13 @@ export interface FullAutoHandoff {
 const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
   laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
 
+// A ticket's own Next Lane wins; without one it inherits its lane's. The modal
+// and completionMoves both resolve through here so what is shown is what moves.
+export const effectiveNextLaneId = (
+  ticket: Pick<Ticket, 'moveToLaneId'>,
+  lane: SwimLane | undefined
+): string | undefined => ticket.moveToLaneId ?? lane?.nextLaneId
+
 // The lane a ticket LEFT decides: its agent did the work and moved the ticket.
 // Tickets new in nextBoard have no previous lane, so they never hand off.
 export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: ProjectBoard): FullAutoHandoff[] => {
@@ -920,11 +930,15 @@ export const completionMoves = (
   const moves: CompletionMove[] = []
   const tickets = nextBoard.tickets.map((ticket) => {
     if (!ticket.moveOnComplete || !isJustCompleted(ticket)) return ticket
-    const toLane = ticket.moveToLaneId ? boardLaneById(nextBoard, ticket.moveToLaneId) : undefined
+    const currentLane = boardLaneById(nextBoard, ticket.laneId)
+    const toLaneId = effectiveNextLaneId(ticket, currentLane)
+    const toLane = toLaneId ? boardLaneById(nextBoard, toLaneId) : undefined
     const movesLane = toLane !== undefined && toLane.id !== ticket.laneId
     const disarmed = { ...ticket, moveOnComplete: false, updatedAt: at }
     if (!movesLane) return disarmed
-    const moved = { ...disarmed, laneId: toLane.id }
+    // The override is spent once it lands: from here the ticket inherits its new
+    // lane's Next Lane instead of pointing at the lane it already sits in.
+    const moved = { ...disarmed, laneId: toLane.id, moveToLaneId: undefined }
     moves.push({ ticket: moved, toLane })
     return moved
   })
@@ -1059,7 +1073,7 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
 
 export const addTicketToBoard = (
   board: ProjectBoard,
-  input: { laneId: string; title: string; description: string }
+  input: { laneId: string; title: string; description: string; moveToLaneId?: string; moveOnComplete?: boolean }
 ): ProjectBoard => ({
   ...board,
   tickets: [
@@ -1073,17 +1087,21 @@ export const getBoard = (state: ProjectTrackerState, projectPath: string): Proje
 
 // Deleting a lane never deletes work: its tickets move to the unassigned column,
 // which always exists, so this holds even when the last lane is removed.
-// Tickets set to Move to the deleted lane lose that target.
+// Tickets and lanes whose Next Lane was the deleted lane lose that target.
 const withoutLane = (ticket: Ticket, laneId: string): Ticket => {
   const laneFixed = ticket.laneId === laneId ? { ...ticket, laneId: UNASSIGNED_LANE_ID } : ticket
   if (ticket.moveToLaneId !== laneId) return laneFixed
   return { ...laneFixed, moveToLaneId: undefined, moveOnComplete: false }
 }
 
+const withoutNextLane = (lane: SwimLane, laneId: string): SwimLane =>
+  lane.nextLaneId === laneId ? { ...lane, nextLaneId: undefined } : lane
+
 export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): ProjectBoard => ({
   ...board,
-  lanes: board.lanes.filter((lane) => lane.id !== laneId),
-  tickets: board.tickets.map((ticket) => withoutLane(ticket, laneId))
+  lanes: board.lanes.filter((lane) => lane.id !== laneId).map((lane) => withoutNextLane(lane, laneId)),
+  tickets: board.tickets.map((ticket) => withoutLane(ticket, laneId)),
+  ...(board.unassignedLane && { unassignedLane: withoutNextLane(board.unassignedLane, laneId) })
 })
 
 export const githubIssueExternalId = (issue: GithubIssue) => `github:${issue.number}`

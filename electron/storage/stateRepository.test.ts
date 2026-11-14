@@ -209,6 +209,24 @@ describe('StateRepository', () => {
     expect(reopened.lanes[1].agentSetsVersion).toBe(true)
   })
 
+  it('adds the next lane column to a database created before it existed, then round-trips it', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN next_lane_id')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.lanes.map((lane) => lane.nextLaneId)).toEqual(board.lanes.map(() => undefined))
+    board.lanes[0].nextLaneId = board.lanes[1].id
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[0].nextLaneId).toBe(board.lanes[1].id)
+    expect(reopened.lanes[1].nextLaneId).toBeUndefined()
+  })
+
   it('adds the agent model columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
