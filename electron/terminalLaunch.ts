@@ -126,7 +126,8 @@ const LAUNCH_WITHOUT_DEFAULT_WINDOW = 'launch'
 // goes to whatever is frontmost, so Terminal is brought forward first and the
 // tab count is polled: if no tab appears the script errors rather than typing
 // the next command into the previous ticket's running agent. A single command
-// never touches System Events.
+// (Open In, or a full-auto handoff of one ticket) never touches System Events;
+// Auto Run always has 2+ tabs since the orchestrator opens with every run.
 export const terminalOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [

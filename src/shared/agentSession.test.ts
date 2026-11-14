@@ -42,12 +42,12 @@ describe('isUuid', () => {
 
 describe('agentShellCommand with a session id', () => {
   it('starts the session under the given id, before the prompt', () => {
-    expect(agentShellCommand(DEFAULT_AGENT, 'go', undefined, SESSION_ID)).toBe(`claude --session-id ${SESSION_ID} 'go'`)
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionId: SESSION_ID })).toBe(`claude --session-id ${SESSION_ID} 'go'`)
   })
 
   it('passes no session flag to an agent that cannot resume, or for a bad id', () => {
-    expect(agentShellCommand(CODEX, 'go', undefined, SESSION_ID)).toBe(`codex 'go'`)
-    expect(agentShellCommand(DEFAULT_AGENT, 'go', undefined, "'; rm -rf ~'")).toBe(`claude 'go'`)
+    expect(agentShellCommand(CODEX, 'go', { sessionId: SESSION_ID })).toBe(`codex 'go'`)
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionId: "'; rm -rf ~'" })).toBe(`claude 'go'`)
   })
 
   it('gives each Auto Run launch its own fresh session', () => {

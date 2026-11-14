@@ -1524,6 +1524,23 @@ code {
   word-break: break-word;
 }
 
+.auto-run-pickers {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Scoped through .lane-modal to outrank `.lane-modal label` by specificity, not file order. */
+.lane-modal .auto-run-pickers label {
+  flex: 1 1 0;
+  min-width: 140px;
+}
+
+.auto-run-pickers select {
+  width: 100%;
+}
+
 .ticket-agent .agent-actions {
   display: flex;
   gap: 8px;
@@ -1565,9 +1582,11 @@ code {
 .is-graph .view-switch-slider { transform: translateX(0); }
 .ticket-graph { display: flex; min-height: 450px; flex: 1; min-width: 0; }
 .graph-scroll { flex: 1; min-width: 0; max-height: calc(100vh - 210px); overflow: auto; }
-.graph-canvas { position: relative; width: 860px; }
+.graph-canvas { position: relative; }
 .graph-edges { position: absolute; inset: 0; color: var(--color-text-muted); }
-.graph-edges g > path { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .55; marker-end: url(#ticket-graph-arrow); }
+.graph-edge { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .7; marker-end: url(#ticket-graph-arrow); }
+.graph-edge-override { stroke: var(--color-accent); stroke-dasharray: 5 4; }
+.graph-edge-label { fill: var(--color-accent); font-size: 11px; }
 .graph-node {
   position: absolute;
   transform: translateY(-50%);
@@ -1586,9 +1605,14 @@ code {
 }
 .graph-node small { display: block; font-size: 10px; color: var(--color-text-muted); }
 .graph-node:hover, .graph-node.selected { border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent); }
-.graph-project { left: 30px; }
-.graph-lane { left: 330px; }
-.graph-ticket { left: 610px; width: 230px; }
+/* DFA notation: double border = terminal state, dimmed = no incoming transition. */
+.graph-lane.terminal { border: 3px double var(--color-text-muted); }
+.graph-lane.unreachable { opacity: .5; }
+.graph-lane.unreachable:hover, .graph-lane.unreachable.selected { opacity: 1; }
+.graph-armed { color: var(--color-accent); }
+.graph-details-heading { margin: 18px 0 4px; font-size: 13px; color: var(--color-text-muted); }
+.graph-transition { margin: 4px 0; }
+.graph-back { margin-bottom: 12px; }
 .graph-details { width: 340px; flex-shrink: 0; padding: 20px; border-left: 1px solid var(--color-text-muted); overflow: auto; max-height: calc(100vh - 210px); }
 .graph-details h2 { overflow-wrap: anywhere; }
 .graph-list-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
@@ -1631,9 +1655,10 @@ code {
   padding: 0;
 }
 
-/* .lane-modal label stacks its contents as a column; the scoped selector
-   outranks it so the checkbox stays beside its text. */
+/* .ticket-modal label and .lane-modal label stack their contents as a column;
+   the scoped selectors outrank them so the checkbox stays beside its text. */
 .checkbox-label,
+.ticket-modal .checkbox-label,
 .lane-modal .checkbox-label {
   display: flex;
   flex-direction: row;
