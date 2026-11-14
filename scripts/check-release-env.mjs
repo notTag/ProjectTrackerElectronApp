@@ -11,7 +11,7 @@ const GITHUB_TOKEN_NAMES = ['GITHUB_RELEASE_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']
 // Delegates to electron-builder's own resolver so precedence and messages can't
 // drift. With no credentials it returns undefined and the build only warns and
 // ships un-notarized — which macOS then refuses to install as an update.
-const notarizeProblem = (env) => {
+export const notarizeProblem = (env) => {
   // ponytail: getNotarizeOptions reads process.env directly, so swap it in for the call
   const realEnv = process.env
   process.env = env
@@ -44,10 +44,18 @@ const entryScriptPath = process.argv[1]
 const entryScriptUrl = entryScriptPath ? pathToFileURL(realpathSync(entryScriptPath)).href : null
 const isRunDirectly = import.meta.url === entryScriptUrl
 
+// `dist` builds locally and never uploads, so it needs notarize creds but no GitHub token.
+export const distEnvProblems = (env) => {
+  const notarizeIssue = notarizeProblem(env)
+  return notarizeIssue ? [notarizeIssue] : []
+}
+
 if (isRunDirectly) {
-  const problems = releaseEnvProblems(process.env)
+  const isNotarizeOnly = process.argv.includes('--notarize-only')
+  const problems = isNotarizeOnly ? distEnvProblems(process.env) : releaseEnvProblems(process.env)
+  const abortHeader = isNotarizeOnly ? 'Dist aborted before building' : 'Release aborted before building'
   if (problems.length > 0) {
-    console.error(`Release aborted before building:\n\n${problems.join('\n\n')}`)
+    console.error(`${abortHeader}:\n\n${problems.join('\n\n')}`)
     process.exit(1)
   }
 }
