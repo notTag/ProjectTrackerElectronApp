@@ -368,21 +368,83 @@ describe('Move to on completion', () => {
   })
 })
 
+const projectRecord = (path: string, githubUrl?: string): ProjectRecord => ({
+  path,
+  name: 'app',
+  status: 'active',
+  priority: 'none',
+  notes: '',
+  source: 'first-party',
+  githubUrl,
+  hasGit: true,
+  hasPackageJson: true,
+  hasReadme: false,
+  lastScannedAt: '2026-01-01T00:00:00.000Z'
+})
+
+describe('refreshPullRequest', () => {
+  const PULL_REQUEST_URL = 'https://github.com/o/r/pull/9'
+  const SEEDED_UPDATED_AT = '2026-01-01T00:00:00.000Z'
+
+  const storeWithOpenPullRequest = () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    Object.assign(getBoard(state, PROJECT_PATH).tickets[0], {
+      pullRequestUrl: PULL_REQUEST_URL,
+      pullRequestState: 'open',
+      updatedAt: SEEDED_UPDATED_AT
+    })
+    const projects = [projectRecord(PROJECT_PATH, 'https://github.com/o/r')]
+    store.state = { ...state, snapshot: { ...state.snapshot, projects } }
+    return store
+  }
+  const savedTicket = (store: ReturnType<typeof useProjectsStore>) => getBoard(store.state, PROJECT_PATH).tickets[0]
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('saves a PR state change without stamping updatedAt', async () => {
+    const mergedAt = '2026-01-05T00:00:00.000Z'
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'merged', mergedAt })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestState: 'merged', pullRequestMergedAt: mergedAt })
+    expect(savedTicket(store).updatedAt).toBe(SEEDED_UPDATED_AT)
+    const sentPatch = api.updateTicket.mock.calls[0][1]
+    expect(sentPatch).toMatchObject({ pullRequestState: 'merged', updatedAt: SEEDED_UPDATED_AT })
+  })
+
+  it('writes nothing when GitHub reports no change', async () => {
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'open', mergedAt: undefined })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('drops the answer when the URL changed while GitHub was asked', async () => {
+    const store = storeWithOpenPullRequest()
+    const pastedUrl = 'https://github.com/o/r/pull/10'
+    api.fetchTicketPullRequest.mockImplementation(async () => {
+      savedTicket(store).pullRequestUrl = pastedUrl
+      return { url: PULL_REQUEST_URL, state: 'merged', mergedAt: '2026-01-05T00:00:00.000Z' }
+    })
+
+    await store.refreshPullRequest(PROJECT_PATH, { ...savedTicket(store) })
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestUrl: pastedUrl, pullRequestState: 'open' })
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+})
+
 const storeWithProject = (path: string, githubUrl?: string) => {
   const store = useProjectsStore()
-  const project: ProjectRecord = {
-    path,
-    name: 'app',
-    status: 'active',
-    priority: 'none',
-    notes: '',
-    source: 'first-party',
-    githubUrl,
-    hasGit: true,
-    hasPackageJson: true,
-    hasReadme: false,
-    lastScannedAt: '2026-01-01T00:00:00.000Z'
-  }
+  const project = projectRecord(path, githubUrl)
   store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
   return store
 }
@@ -390,7 +452,6 @@ const storeWithProject = (path: string, githubUrl?: string) => {
 describe('autoPullGithubIssues', () => {
   // The pulled-once set lives for the module's lifetime (one app launch), so
   // each test uses its own project path.
-
   const issue = { number: 3, title: 'Crash on save', body: '', htmlUrl: 'https://github.com/o/r/issues/3' }
 
   beforeEach(() => {

@@ -395,20 +395,28 @@ export const useProjectsStore = defineStore('projects', {
         ticket.pullRequestUrl
       )
       if (!status) return
-      // The user may have pasted a different URL while the request was in flight.
+      // The user may have pasted a different URL (or deleted the ticket) while
+      // the request was in flight; GitHub's answer is about the old URL then.
+      const askedAbout = (savedTicket: Ticket | undefined) => savedTicket?.pullRequestUrl === ticket.pullRequestUrl
       const currentTicket = this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
-      if (currentTicket?.pullRequestUrl !== ticket.pullRequestUrl) return
+      if (!currentTicket || !askedAbout(currentTicket)) return
       const unchanged =
-        status.url === ticket.pullRequestUrl &&
-        status.state === ticket.pullRequestState &&
-        status.mergedAt === ticket.pullRequestMergedAt
-      // Skipped so a refresh that learns nothing does not bump updatedAt.
+        status.url === currentTicket.pullRequestUrl &&
+        status.state === currentTicket.pullRequestState &&
+        status.mergedAt === currentTicket.pullRequestMergedAt
+      // Skipped so a refresh that learns nothing does not trigger a no-op save.
       if (unchanged) return
-      await this.updateTicket(projectPath, ticket.id, {
+      const pullRequestPatch = {
         pullRequestUrl: status.url,
         pullRequestState: status.state,
         pullRequestMergedAt: status.mergedAt
-      })
+      }
+      // Skips the updatedAt stamp, because a background PR sync is not a user edit.
+      // Re-checked against the ticket saved at write time: a queued save ahead of
+      // this one may have changed the URL, and other fields edited meanwhile are kept.
+      const applyPullRequest = (savedTicket: Ticket): Ticket =>
+        savedTicket.id === ticket.id && askedAbout(savedTicket) ? { ...savedTicket, ...pullRequestPatch } : savedTicket
+      await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(applyPullRequest) }))
     },
 
     // ponytail: sequential, one request per ticket. Fine for a board's worth of
