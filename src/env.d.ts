@@ -27,7 +27,6 @@ interface ProjectTrackerElectronApi {
   refreshProjectState(): Promise<ProjectTrackerState | null>
   createTicket(projectPath: string, ticket: Omit<Ticket, 'number'>): Promise<Ticket>
   updateTicket(id: string, patch: TicketWritePatch): Promise<Ticket>
-  moveTicket(id: string, laneId: string): Promise<Ticket>
   deleteTicket(id: string): Promise<void>
   createLane(projectPath: string, lane: SwimLane): Promise<SwimLane>
   updateLane(projectPath: string, laneId: string, patch: LaneWritePatch): Promise<SwimLane>

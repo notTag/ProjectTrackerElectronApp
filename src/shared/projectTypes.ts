@@ -1351,16 +1351,34 @@ export type BoardWrite =
   | { kind: 'ticket:delete'; id: string }
   | { kind: 'lane:delete'; laneId: string }
 
+// Key order differs between objects read from the database and objects the
+// renderer rebuilt with a spread, so values are compared with sorted keys.
+const canonicalJson = (value: unknown) =>
+  JSON.stringify(value, (_key, nested: unknown) => {
+    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
+    if (!isPlainObject) return nested
+    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
+    return Object.fromEntries(sortedEntries)
+  })
+export const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
+
 // Keys present on either side whose values differ; a key now absent stays in
 // the result as undefined, which is how a cleared field is written.
-const changedFieldsOf = <T extends object>(next: T, previous: T): Partial<T> => {
+export const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
   const nextRecord = next as Record<string, unknown>
   const previousRecord = previous as Record<string, unknown>
   const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
-  const changedKeys = [...allKeys].filter(
-    (key) => JSON.stringify(nextRecord[key]) !== JSON.stringify(previousRecord[key])
-  )
-  return Object.fromEntries(changedKeys.map((key) => [key, nextRecord[key]])) as Partial<T>
+  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
+  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
+  return Object.fromEntries(changedEntries) as Partial<T>
+}
+
+// Listed ids first, in the given order, then every other stored id in its old
+// order. Shared by the repository's lane reorder and the browser fallback.
+export const orderedIds = (storedIds: string[], listedIds: string[]) => {
+  const listed = listedIds.filter((laneId) => storedIds.includes(laneId))
+  const unlisted = storedIds.filter((laneId) => !listedIds.includes(laneId))
+  return [...listed, ...unlisted]
 }
 
 const isEmptyPatch = (patch: object) => Object.keys(patch).length === 0
@@ -1382,12 +1400,12 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
   for (const lane of after.lanes) {
     const previous = beforeLaneById.get(lane.id)
     if (!previous) continue
-    const { id: _id, ...patch } = changedFieldsOf(lane, previous)
+    const { id: _id, ...patch } = changedFields(lane, previous)
     if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: lane.id, patch })
   }
   if (after.unassignedLane) {
     const previous = before.unassignedLane ?? createUnassignedLane()
-    const { id: _id, ...patch } = changedFieldsOf(after.unassignedLane, previous)
+    const { id: _id, ...patch } = changedFields(after.unassignedLane, previous)
     if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: UNASSIGNED_LANE_ID, patch })
   }
 
@@ -1399,7 +1417,7 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
       ticketCreates.push({ kind: 'ticket:create', ticket })
       continue
     }
-    const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFieldsOf(ticket, previous)
+    const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
     if (isEmptyPatch(patch)) continue
     ticketUpdates.push({ kind: 'ticket:update', id: ticket.id, patch: { ...patch, updatedAt: ticket.updatedAt } })
   }

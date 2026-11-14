@@ -475,8 +475,7 @@ export const useProjectsStore = defineStore('projects', {
           handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
           if (settledState === freshState) return
-          // ticket:update rather than ticket:move, so the disarmed Move to is
-          // stored along with the new lane.
+          // ticket:update carries the disarmed Move to along with the new lane.
           this.state = settledState
           try {
             for (const projectPath of Object.keys(settledState.boards ?? {})) {

@@ -1,6 +1,7 @@
 import { toPlainJson } from '@/shared/plainJson'
 import {
   nextTicketNumber,
+  orderedIds,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
   type Clearable,
@@ -83,17 +84,16 @@ export const projectTrackerApi = {
     if (window.projectTracker) return window.projectTracker.updateTicket(id, toPlainJson(withNullClears(patch)))
     const stamp = 'updatedAt' in patch ? {} : { updatedAt: new Date().toISOString() }
     let updated: Ticket | undefined
-    editFallbackBoards(null, (board) => ({
-      ...board,
-      tickets: board.tickets.map((ticket) => (ticket.id === id ? (updated = { ...ticket, ...patch, ...stamp }) : ticket))
-    }))
+    editFallbackBoards(null, (board) => {
+      const current = board.tickets.find((ticket) => ticket.id === id)
+      if (!current) return board
+      const updatedTicket = { ...current, ...patch, ...stamp }
+      updated = updatedTicket
+      const tickets = board.tickets.map((ticket) => (ticket.id === id ? updatedTicket : ticket))
+      return { ...board, tickets }
+    })
     if (!updated) throw new Error(`Ticket ${id} does not exist.`)
     return updated
-  },
-
-  async moveTicket(id: string, laneId: string): Promise<Ticket> {
-    if (window.projectTracker) return window.projectTracker.moveTicket(id, laneId)
-    return this.updateTicket(id, { laneId })
   },
 
   async deleteTicket(id: string): Promise<void> {
@@ -124,9 +124,9 @@ export const projectTrackerApi = {
   async reorderLanes(projectPath: string, laneIds: string[]): Promise<void> {
     if (window.projectTracker) return window.projectTracker.reorderLanes(projectPath, [...laneIds])
     editFallbackBoards(projectPath, (board) => {
-      const listed = laneIds.flatMap((laneId) => board.lanes.filter((lane) => lane.id === laneId))
-      const unlisted = board.lanes.filter((lane) => !laneIds.includes(lane.id))
-      return { ...board, lanes: [...listed, ...unlisted] }
+      const laneById = new Map(board.lanes.map((lane) => [lane.id, lane]))
+      const order = orderedIds([...laneById.keys()], laneIds)
+      return { ...board, lanes: order.map((laneId) => laneById.get(laneId)!) }
     })
   },
 

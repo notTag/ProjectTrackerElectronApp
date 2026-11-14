@@ -4,9 +4,12 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 
 import {
   createSeedState,
+  changedFields,
   createUnassignedLane,
   DEFAULT_USER_ID,
   DEFAULT_USER_NAME,
+  orderedIds,
+  sameRow,
   SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
   type BoardPreferences,
@@ -85,27 +88,6 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 }
 const jsonOrNull = (value: unknown) => (value ? JSON.stringify(value) : null)
 
-// Key order differs between objects read from the database and objects the
-// renderer rebuilt with a spread, so rows are compared with sorted keys.
-const canonicalJson = (value: unknown) =>
-  JSON.stringify(value, (_key, nested: unknown) => {
-    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
-    if (!isPlainObject) return nested
-    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
-    return Object.fromEntries(sortedEntries)
-  })
-const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
-
-// Includes fields present on only one side, so a cleared field (now undefined)
-// counts as a change and gets written as NULL.
-const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
-  const nextRecord = next as Record<string, unknown>
-  const previousRecord = previous as Record<string, unknown>
-  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
-  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
-  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
-  return Object.fromEntries(changedEntries) as Partial<T>
-}
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
@@ -198,13 +180,6 @@ const projectFromRow = (row: Row): ProjectRecord => ({
   lastScannedAt: String(row.last_scanned_at),
   archived: asBool(row.archived)
 })
-
-// Listed ids first, in the given order, then every other stored id in its old order.
-const orderedIds = (storedIds: string[], listedIds: string[]) => {
-  const listed = listedIds.filter((laneId) => storedIds.includes(laneId))
-  const unlisted = storedIds.filter((laneId) => !listedIds.includes(laneId))
-  return [...listed, ...unlisted]
-}
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
 const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
@@ -445,8 +420,7 @@ export class StateRepository {
   // agents and the CLI get a stamp for free. A null value clears the field.
   updateTicket(id: string, patch: TicketWritePatch): Ticket {
     const updated = this.transaction(() => {
-      const current = this.readTicket(id)
-      const projectPath = this.ticketProjectPath(id)
+      const { ticket: current, projectPath } = this.readTicketWithProject(id)
       const stamp = 'updatedAt' in patch ? {} : { updatedAt: new Date().toISOString() }
       const merged = { ...current, ...patch, ...stamp } as Ticket
       this.updateTicketRow(projectPath, merged)
@@ -454,10 +428,6 @@ export class StateRepository {
     })
     this.spliceBaselineTicket(updated.projectPath, updated.ticket)
     return updated.ticket
-  }
-
-  moveTicket(id: string, laneId: string): Ticket {
-    return this.updateTicket(id, { laneId })
   }
 
   deleteTicket(id: string) {
@@ -473,9 +443,13 @@ export class StateRepository {
     }))
   }
 
-  // Appended after every lane already on the board, whatever the caller's copy says.
+  // Appended after every lane already on the board, whatever the caller's copy
+  // says. An existing id throws rather than upserting, so a stale renderer copy
+  // can't wipe another writer's lane config; the store's failure path re-reads.
   createSwimLane(projectPath: string, lane: SwimLane): SwimLane {
     const created = this.transaction(() => {
+      const existing = this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, lane.id])
+      if (existing.length > 0) throw new Error(`Lane ${lane.id} already exists.`)
       const [row] = this.select(
         'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0',
         [projectPath]
@@ -639,15 +613,14 @@ export class StateRepository {
     this.run('DELETE FROM tickets WHERE id = ?', [id])
   }
 
-  private readTicket(id: string): Ticket {
+  private readTicketWithProject(id: string): { ticket: Ticket; projectPath: string } {
     const [row] = this.select('SELECT * FROM tickets WHERE id = ?', [id])
     if (!row) throw new Error(`Ticket ${id} does not exist.`)
-    return ticketFromRow(row)
+    return { ticket: ticketFromRow(row), projectPath: String(row.project_path) }
   }
 
-  private ticketProjectPath(id: string): string {
-    const [row] = this.select('SELECT project_path FROM tickets WHERE id = ?', [id])
-    return String(row.project_path)
+  private readTicket(id: string): Ticket {
+    return this.readTicketWithProject(id).ticket
   }
 
   private readLane(projectPath: string, laneId: string): SwimLane {

@@ -280,7 +280,7 @@ describe('row-level writes', () => {
     expect(created.number).toBe(3)
 
     repository.updateTicket('ticket-c', { title: 'C, retitled', labels: ['ui'] })
-    repository.moveTicket('ticket-c', 'prd')
+    repository.updateTicket('ticket-c', { laneId: 'prd' })
     const afterEdit = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-c')
     expect(afterEdit).toMatchObject({ number: 3, title: 'C, retitled', labels: ['ui'], laneId: 'prd' })
 
@@ -301,6 +301,18 @@ describe('row-level writes', () => {
 
     const lanes = reopenedBoard(userDataPath, projectPath).lanes
     expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['qa', 'QA'], ['idea', 'Ideas']])
+  })
+
+  it('refuses to create a lane whose id is already stored, keeping its config', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    repository.updateSwimLane(projectPath, 'idea', { agentPrompt: 'keep me' })
+
+    const staleCopy = { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }
+    expect(() => repository.createSwimLane(projectPath, staleCopy)).toThrow('already exists')
+
+    const idea = reopenedBoard(userDataPath, projectPath).lanes.find((lane) => lane.id === 'idea')
+    expect(idea?.agentPrompt).toBe('keep me')
   })
 
   it('configures the unassigned column even before it has a row', () => {
@@ -395,7 +407,7 @@ describe('per-entity writes leave unrelated rows alone', () => {
 
     repository.createTicket(projectPath, { id: 'ticket-c', laneId: 'idea', title: 'C', description: '', createdAt: '2026-01-05T00:00:00.000Z' })
     repository.updateTicket('ticket-c', { title: 'C2' })
-    repository.moveTicket('ticket-c', 'prd')
+    repository.updateTicket('ticket-c', { laneId: 'prd' })
     const afterEdits = dumpRows(userDataPath)
     repository.deleteTicket('ticket-c')
     const afterDelete = dumpRows(userDataPath)
@@ -892,7 +904,7 @@ describe('closed_at triggers (#27)', () => {
     })
     expect(closedAt(created.id)).not.toBeNull()
 
-    repository.moveTicket('ticket-b', 'in-production')
+    repository.updateTicket('ticket-b', { laneId: 'in-production' })
     expect(closedAt('ticket-b')).not.toBeNull()
     cli.close()
   })

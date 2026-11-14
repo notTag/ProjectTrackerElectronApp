@@ -275,16 +275,21 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 // Every ticket field a write may set. id, number and createdAt are the repo's.
-const TICKET_PATCH_KEYS = new Set([
-  'laneId', 'title', 'description', 'updatedAt', 'labels', 'branchName', 'worktreePath', 'pullRequestUrl',
-  'pullRequestState', 'pullRequestMergedAt', 'assigneeId', 'checklist', 'agentId', 'model', 'agentRun',
-  'externalId', 'externalUrl', 'fullAuto', 'externalLinks', 'moveToLaneId', 'moveOnComplete', 'version'
-])
-const LANE_PATCH_KEYS = new Set([
-  'name', 'agentPrompt', 'agentFilePath', 'outputTarget', 'orchestratorPrompt', 'autoRunAgentId',
-  'autoRunTerminalId', 'autoRunModel', 'orchestratorAgentId', 'orchestratorModel', 'autoRunWorktrees',
-  'fullAuto', 'closesTicket', 'agentSetsVersion'
-])
+// Typed as a full Record so a field added to Ticket / SwimLane but not listed
+// here fails typecheck instead of rejecting every write at runtime.
+const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
+  laneId: true, title: true, description: true, updatedAt: true, labels: true, branchName: true,
+  worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
+  assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
+  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true
+}
+const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
+  name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
+  autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
+  orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true
+}
+const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
+const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
 // NOT NULL text columns: a patch may change them but never clear them.
 const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
@@ -483,13 +488,6 @@ const registerIpc = () => {
     const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
     if (typeof id !== 'string' || !isTicketPatch(patch)) throw new Error('Invalid ticket update payload.')
     return toPlainJson(stateRepository.updateTicket(id, patch))
-  })
-
-  ipcMain.handle('ticket:move', (event, payload: unknown) => {
-    assertTrustedSender(event)
-    const { id, laneId } = (payload ?? {}) as { id?: unknown; laneId?: unknown }
-    if (typeof id !== 'string' || typeof laneId !== 'string') throw new Error('Invalid ticket move payload.')
-    return toPlainJson(stateRepository.moveTicket(id, laneId))
   })
 
   ipcMain.handle('ticket:delete', (event, payload: unknown) => {

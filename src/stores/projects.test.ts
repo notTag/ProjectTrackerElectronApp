@@ -18,7 +18,6 @@ const api = vi.hoisted(() => ({
   scanProjectDirectories: vi.fn(),
   createTicket: vi.fn(),
   updateTicket: vi.fn(),
-  moveTicket: vi.fn(),
   deleteTicket: vi.fn(),
   createLane: vi.fn(),
   updateLane: vi.fn(),

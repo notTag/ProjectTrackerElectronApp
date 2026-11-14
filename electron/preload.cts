@@ -38,7 +38,6 @@ contextBridge.exposeInMainWorld('projectTracker', {
   refreshProjectState: () => invokePlain('project-state:refresh'),
   createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
   updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
-  moveTicket: (id: string, laneId: string) => invokePlain('ticket:move', { id, laneId }),
   deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
   updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
