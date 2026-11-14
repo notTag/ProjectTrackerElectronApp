@@ -1313,7 +1313,8 @@ code {
 }
 
 .ticket-modal label,
-.lane-modal label {
+.lane-modal label,
+.auto-run-orchestrator label {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1621,8 +1622,18 @@ code {
   line-height: 2;
 }
 
-.auto-run-question select {
+.auto-run-question select,
+.auto-run-question input {
   margin: 0 0.25rem;
+}
+
+.auto-run-orchestrator {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
 }
 
 /* The fast-forward glyph is drawn larger than the ⚙ text glyph, so it drops

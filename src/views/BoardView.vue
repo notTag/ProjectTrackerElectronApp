@@ -1474,11 +1474,12 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(openTicket.agentId)">
+        <label>
           Model
           <ModelField
             :model-value="openTicket.model ?? ''"
             :models="agentModels(openTicket.agentId)"
+            :agent-takes-model="agentTakesModel(openTicket.agentId)"
             placeholder="CLI default"
             @update:model-value="editTicket(openTicket, { model: $event || undefined })"
           />
@@ -1590,29 +1591,34 @@ const runTicketAgent = (ticket: Ticket) => {
         <select v-model="autoRunConfirmAgentId" aria-label="Agent" @change="changeAutoRunConfirmAgent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
-        agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
+        agents with
+        <ModelField
+          v-model="autoRunConfirmModel"
+          :models="agentModels(autoRunConfirmAgentId)"
+          :agent-takes-model="agentTakesModel(autoRunConfirmAgentId)"
+          placeholder="CLI default"
+        />
+        for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
-      <label v-if="agentTakesModel(autoRunConfirmAgentId)">
-        Model
-        <ModelField v-model="autoRunConfirmModel" :models="agentModels(autoRunConfirmAgentId)" placeholder="CLI default" />
-      </label>
-      <template v-if="autoRunTickets(autoRunConfirmLane).length >= 2">
+      <section v-if="autoRunTickets(autoRunConfirmLane).length >= 2" class="auto-run-orchestrator">
+        <p class="eyebrow">Orchestrator</p>
         <label>
-          Orchestrator agent
+          Agent
           <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
             <option value="">Same as ticket agent</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
-          Orchestrator model
+        <label>
+          Model
           <ModelField
             v-model="autoRunConfirmOrchestratorModel"
             :models="agentModels(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :agent-takes-model="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
             :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
           />
         </label>
-      </template>
+      </section>
       <p class="auto-run-question">
         Each opens in its own
         <select v-model="autoRunConfirmTerminalId" aria-label="Terminal">
@@ -1713,11 +1719,12 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(openLane.autoRunAgentId)">
+        <label>
           Model
           <ModelField
             :model-value="openLane.autoRunModel ?? ''"
             :models="agentModels(openLane.autoRunAgentId)"
+            :agent-takes-model="agentTakesModel(openLane.autoRunAgentId)"
             placeholder="CLI default"
             @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
           />
@@ -1737,11 +1744,12 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)">
+        <label>
           Orchestrator model
           <ModelField
             :model-value="openLane.orchestratorModel ?? ''"
             :models="agentModels(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+            :agent-takes-model="agentTakesModel(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
             @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
           />
