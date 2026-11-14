@@ -1368,6 +1368,113 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
   return nothingSelectedHere ? tickets : selectedTickets
 }
 
+// Per-entity patches cross IPC as JSON, which drops undefined keys, so an
+// explicit clear travels as null.
+export type Clearable<T> = { [K in keyof T]?: T[K] | null }
+export type TicketWritePatch = Clearable<Omit<Ticket, 'id' | 'number' | 'createdAt'>>
+export type LaneWritePatch = Clearable<Omit<SwimLane, 'id'>>
+export type ProjectWritePatch = Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>
+
+// One per-entity write. The store turns a board edit into a list of these and
+// sends each over its own IPC channel instead of shipping the whole state.
+export type BoardWrite =
+  | { kind: 'lane:create'; lane: SwimLane }
+  | { kind: 'lane:update'; laneId: string; patch: Partial<Omit<SwimLane, 'id'>> }
+  | { kind: 'ticket:create'; ticket: Ticket }
+  | { kind: 'ticket:update'; id: string; patch: Partial<Omit<Ticket, 'id' | 'number' | 'createdAt'>> }
+  | { kind: 'lane:reorder'; laneIds: string[] }
+  | { kind: 'ticket:delete'; id: string }
+  | { kind: 'lane:delete'; laneId: string }
+
+// Key order differs between objects read from the database and objects the
+// renderer rebuilt with a spread, so values are compared with sorted keys.
+const canonicalJson = (value: unknown) =>
+  JSON.stringify(value, (_key, nested: unknown) => {
+    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
+    if (!isPlainObject) return nested
+    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
+    return Object.fromEntries(sortedEntries)
+  })
+export const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
+
+// Keys present on either side whose values differ; a key now absent stays in
+// the result as undefined, which is how a cleared field is written.
+export const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
+  const nextRecord = next as Record<string, unknown>
+  const previousRecord = previous as Record<string, unknown>
+  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
+  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
+  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
+  return Object.fromEntries(changedEntries) as Partial<T>
+}
+
+// Listed ids first, in the given order, then every other stored id in its old
+// order. Shared by the repository's lane reorder and the browser fallback.
+export const orderedIds = (storedIds: string[], listedIds: string[]) => {
+  const listed = listedIds.filter((laneId) => storedIds.includes(laneId))
+  const unlisted = storedIds.filter((laneId) => !listedIds.includes(laneId))
+  return [...listed, ...unlisted]
+}
+
+const isEmptyPatch = (patch: object) => Object.keys(patch).length === 0
+
+// Order matters: lanes exist before tickets point at them, and deletes come
+// last so a removed lane's tickets have already moved out. A ticket patch
+// always carries updatedAt, so the repository keeps this window's value
+// (marking a run seen stays unstamped) instead of stamping its own.
+export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWrite[] => {
+  const beforeLaneById = new Map(before.lanes.map((lane) => [lane.id, lane]))
+  const afterLaneIds = new Set(after.lanes.map((lane) => lane.id))
+  const beforeTicketById = new Map(before.tickets.map((ticket) => [ticket.id, ticket]))
+  const afterTicketIds = new Set(after.tickets.map((ticket) => ticket.id))
+
+  const createdLanes = after.lanes.filter((lane) => !beforeLaneById.has(lane.id))
+  const laneCreates: BoardWrite[] = createdLanes.map((lane) => ({ kind: 'lane:create', lane }))
+
+  const laneUpdates: BoardWrite[] = []
+  for (const lane of after.lanes) {
+    const previous = beforeLaneById.get(lane.id)
+    if (!previous) continue
+    const { id: _id, ...patch } = changedFields(lane, previous)
+    if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: lane.id, patch })
+  }
+  if (after.unassignedLane) {
+    const previous = before.unassignedLane ?? createUnassignedLane()
+    const { id: _id, ...patch } = changedFields(after.unassignedLane, previous)
+    if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: UNASSIGNED_LANE_ID, patch })
+  }
+
+  const ticketCreates: BoardWrite[] = []
+  const ticketUpdates: BoardWrite[] = []
+  for (const ticket of after.tickets) {
+    const previous = beforeTicketById.get(ticket.id)
+    if (!previous) {
+      ticketCreates.push({ kind: 'ticket:create', ticket })
+      continue
+    }
+    const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
+    if (isEmptyPatch(patch)) continue
+    ticketUpdates.push({ kind: 'ticket:update', id: ticket.id, patch: { ...patch, updatedAt: ticket.updatedAt } })
+  }
+
+  // Creates are appended last, so that is the order the store would hold
+  // without a reorder.
+  const orderAfterCreates = [...before.lanes.map((lane) => lane.id), ...createdLanes.map((lane) => lane.id)]
+  const expectedOrder = orderAfterCreates.filter((laneId) => afterLaneIds.has(laneId))
+  const afterOrder = after.lanes.map((lane) => lane.id)
+  const orderChanged = afterOrder.some((laneId, index) => laneId !== expectedOrder[index])
+  const reorder: BoardWrite[] = orderChanged ? [{ kind: 'lane:reorder', laneIds: afterOrder }] : []
+
+  const ticketDeletes: BoardWrite[] = before.tickets
+    .filter((ticket) => !afterTicketIds.has(ticket.id))
+    .map((ticket) => ({ kind: 'ticket:delete', id: ticket.id }))
+  const laneDeletes: BoardWrite[] = before.lanes
+    .filter((lane) => !afterLaneIds.has(lane.id))
+    .map((lane) => ({ kind: 'lane:delete', laneId: lane.id }))
+
+  return [...laneCreates, ...laneUpdates, ...ticketCreates, ...ticketUpdates, ...reorder, ...ticketDeletes, ...laneDeletes]
+}
+
 export interface LaneTransition {
   from: string
   to: string

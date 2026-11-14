@@ -4,6 +4,7 @@ import {
   GITHUB_UNREACHABLE_MESSAGE,
   isGithubUnreachableError,
   normalizeSemanticVersion,
+  boardWrites,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
@@ -1296,6 +1297,52 @@ describe('agent model', () => {
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
     const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
     expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+  })
+})
+
+describe('boardWrites', () => {
+  const baseLane = (id: string) => ({ id, name: id, agentPrompt: '', agentFilePath: '' })
+  const baseTicket = { id: 't1', number: 1, laneId: 'a', title: 'T', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
+  const board = { lanes: [baseLane('a'), baseLane('b')], tickets: [baseTicket] }
+
+  it('emits nothing for an identical board', () => {
+    expect(boardWrites(board, structuredClone(board))).toEqual([])
+  })
+
+  it('sends only the changed field of a ticket, plus its updatedAt', () => {
+    const edited = { ...board, tickets: [{ ...baseTicket, title: 'T2' }] }
+    expect(boardWrites(board, edited)).toEqual([
+      { kind: 'ticket:update', id: 't1', patch: { title: 'T2', updatedAt: undefined } }
+    ])
+  })
+
+  it('keeps a cleared field as an explicit undefined', () => {
+    const before = { ...board, tickets: [{ ...baseTicket, branchName: 'feat/x' }] }
+    const [write] = boardWrites(before, board)
+    expect(write).toEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
+    expect(write.kind === 'ticket:update' && 'branchName' in write.patch).toBe(true)
+  })
+
+  it('creates lanes before tickets and deletes last, tickets before lanes', () => {
+    const after = {
+      lanes: [baseLane('c'), baseLane('a')],
+      tickets: [{ ...baseTicket, laneId: 'c' }, { ...baseTicket, id: 't2', number: 2, laneId: 'c' }]
+    }
+    const before = { ...board, tickets: [...board.tickets, { ...baseTicket, id: 't3', number: 3, laneId: 'b' }] }
+    const kinds = boardWrites(before, after).map((write) => write.kind)
+    expect(kinds).toEqual(['lane:create', 'ticket:create', 'ticket:update', 'lane:reorder', 'ticket:delete', 'lane:delete'])
+  })
+
+  it('skips the reorder when lanes are only appended or removed', () => {
+    const after = { ...board, lanes: [baseLane('b'), baseLane('c')] }
+    expect(boardWrites(board, after).map((write) => write.kind)).toEqual(['lane:create', 'lane:delete'])
+  })
+
+  it('updates the unassigned column by its own id', () => {
+    const after = updateLaneInBoard(board, UNASSIGNED_LANE_ID, { agentPrompt: 'Triage.' })
+    expect(boardWrites(board, after)).toEqual([
+      { kind: 'lane:update', laneId: UNASSIGNED_LANE_ID, patch: { agentPrompt: 'Triage.' } }
+    ])
   })
 })
 
