@@ -228,6 +228,12 @@ export interface SwimLane {
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
   autoRunTerminalId?: string
+  // Model handed to the Auto Run agent's CLI. Absent means the CLI's own default.
+  autoRunModel?: string
+  // Agent and model for the orchestrator tab. Absent agent means the run's
+  // ticket agent; absent model means the run's ticket model when the agent is too.
+  orchestratorAgentId?: string
+  orchestratorModel?: string
   // Each Auto Run ticket gets its own git worktree and branch off freshly
   // fetched main. Absent (lanes saved before it existed) means on.
   autoRunWorktrees?: boolean
@@ -301,6 +307,8 @@ export interface Ticket {
   // Which configured agent this ticket is earmarked for. Absent means none has
   // been chosen, which is every ticket until agents exist in state.
   agentId?: string
+  // Model for this ticket's own Run / Open In. Absent means the CLI's default.
+  model?: string
   agentRun?: TicketAgentRun
   // Set only on tickets imported from GitHub. Doubles as the dedupe key so
   // re-pulling issues updates nothing and duplicates nothing.
@@ -383,12 +391,15 @@ export const ticketSearchText = (ticket: Ticket) => {
 // prompt as its last argument and runs in the project directory; `headlessArgs`
 // go before the prompt when it runs in the background with nobody watching, and
 // `promptArgs` go before it when it runs in a terminal someone is watching.
+// `modelArgs` is the flag that takes a model name; absent means the CLI's model
+// can't be picked here and the model field stays hidden.
 export interface Agent {
   id: string
   name: string
   command: string
   headlessArgs: string[]
   promptArgs?: string[]
+  modelArgs?: string[]
 }
 
 // acceptEdits lets a background run write its output files without a human to
@@ -397,7 +408,8 @@ export const DEFAULT_AGENT: Agent = {
   id: 'claude-code',
   name: 'Claude Code',
   command: 'claude',
-  headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
+  headlessArgs: ['-p', '--permission-mode', 'acceptEdits'],
+  modelArgs: ['--model']
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -406,7 +418,8 @@ const CODEX_AGENT: Agent = {
   id: 'codex',
   name: 'Codex',
   command: 'codex',
-  headlessArgs: ['exec', '--sandbox', 'workspace-write']
+  headlessArgs: ['exec', '--sandbox', 'workspace-write'],
+  modelArgs: ['-m']
 }
 
 // Hermes reads its first positional as a subcommand, so a bare prompt would be
@@ -429,7 +442,8 @@ const OPENCODE_AGENT: Agent = {
   name: 'opencode',
   command: 'opencode',
   headlessArgs: ['run'],
-  promptArgs: ['--prompt']
+  promptArgs: ['--prompt'],
+  modelArgs: ['-m']
 }
 
 const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
@@ -574,14 +588,26 @@ export const ticketShellCommand = (
   ticket: Ticket,
   lane: SwimLane,
   agent: Agent = DEFAULT_AGENT,
-  context: TicketPromptContext = {}
+  context: TicketPromptContext = {},
+  model?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt)
+  return agentShellCommand(agent, prompt, model)
 }
 
-export const agentShellCommand = (agent: Agent, prompt: string): string => {
-  const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+// A model starting with "-" would read as another flag, so it counts as empty.
+// `quote` lets the terminal path shell-quote the model; argv needs no quoting.
+export const agentModelWords = (agent: Agent, model?: string, quote = (word: string) => word): string[] => {
+  const trimmedModel = model?.trim() ?? ''
+  const isUsableModel = trimmedModel !== '' && !trimmedModel.startsWith('-')
+  if (!agent.modelArgs?.length || !isUsableModel) return []
+  return [...agent.modelArgs, quote(trimmedModel)]
+}
+
+// The model goes before promptArgs so a prompt flag is never split from its value.
+export const agentShellCommand = (agent: Agent, prompt: string, model?: string): string => {
+  const modelWords = agentModelWords(agent, model, shellQuote)
+  const commandWords = [agent.command, ...modelWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
 }
 
@@ -643,11 +669,12 @@ export const buildAutoRunLaunch = (
   lane: SwimLane,
   agent: Agent,
   context: TicketPromptContext,
-  useWorktrees: boolean
+  useWorktrees: boolean,
+  model?: string
 ): AutoRunLaunchEntry => {
   const branchName = ticketBranchName(ticket)
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context)
+  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model)
   return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
 }
 
@@ -806,10 +833,31 @@ export const buildOrchestratorLaunch = (
   lane: SwimLane,
   entries: AutoRunLaunchEntry[],
   agent: Agent,
-  context: OrchestratorPromptContext
+  context: OrchestratorPromptContext,
+  model?: string
 ): TerminalTab => {
   const prompt = orchestratorPrompt(lane, entries, context)
-  return { command: agentShellCommand(agent, prompt), title: orchestratorTabTitle(lane) }
+  return { command: agentShellCommand(agent, prompt, model), title: orchestratorTabTitle(lane) }
+}
+
+export interface AgentChoice {
+  agent: Agent
+  model?: string
+}
+
+// No orchestrator agent of its own means "same as the ticket agent", model
+// included unless the lane names one for the orchestrator.
+export const orchestratorAgentChoice = (
+  lane: Pick<SwimLane, 'orchestratorAgentId' | 'orchestratorModel'>,
+  ticketChoice: AgentChoice,
+  agents: Agent[]
+): AgentChoice => {
+  const orchestratorModel = lane.orchestratorModel?.trim() || undefined
+  if (lane.orchestratorAgentId) {
+    const orchestratorAgent = findAgent(agents, lane.orchestratorAgentId)
+    return { agent: orchestratorAgent, model: orchestratorModel }
+  }
+  return { agent: ticketChoice.agent, model: orchestratorModel ?? ticketChoice.model }
 }
 
 export interface FullAutoHandoff {

@@ -40,7 +40,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini' }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -69,7 +69,9 @@ const stateWithBoard = (): ProjectTrackerState => {
             externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
             moveToLaneId: 'prd',
             moveOnComplete: true,
-            version: '1.4.0-rc.1'
+            version: '1.4.0-rc.1',
+            agentId: 'codex',
+            model: 'gpt-5'
           },
           {
             id: 'ticket-b',
@@ -205,6 +207,31 @@ describe('StateRepository', () => {
     const reopened = reopenedBoard(userDataPath, projectPath)
     expect(reopened.tickets[0].version).toBe('2.0.0')
     expect(reopened.lanes[1].agentSetsVersion).toBe(true)
+  })
+
+  it('adds the agent model columns to a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    for (const column of ['auto_run_model', 'orchestrator_agent_id', 'orchestrator_model']) {
+      olderDatabase.exec(`ALTER TABLE swim_lanes DROP COLUMN ${column}`)
+    }
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN agent_id')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN model')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.lanes[1]).toMatchObject({ autoRunModel: undefined, orchestratorAgentId: undefined, orchestratorModel: undefined })
+    expect(board.tickets[0]).toMatchObject({ agentId: undefined, model: undefined })
+    board.lanes[1].orchestratorAgentId = 'opencode'
+    board.tickets[0].agentId = 'codex'
+    board.tickets[0].model = 'gpt-5'
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[1].orchestratorAgentId).toBe('opencode')
+    expect(reopened.tickets[0]).toMatchObject({ agentId: 'codex', model: 'gpt-5' })
   })
 
   it('loads tickets with no links from a database created before external links existed', () => {

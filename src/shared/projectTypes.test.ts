@@ -7,6 +7,8 @@ import {
   hasUnseenAgentResult,
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
+  orchestratorAgentChoice,
+  agentShellCommand,
   orchestratorPrompt,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
@@ -1134,5 +1136,61 @@ describe('semantic version', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
     expect(prompt).toContain("Leave it unset if it doesn't apply yet.")
     expect(prompt).not.toContain('sqlite3')
+  })
+})
+
+describe('agent model', () => {
+  const agents = availableAgents({})
+  const byId = (id: string) => agents.find((agent) => agent.id === id)!
+  const modelLane: SwimLane = { id: 'dev', name: 'Dev', agentPrompt: '', agentFilePath: '' }
+  const modelTicket = (number: number): Ticket => ({
+    id: `ticket-${number}`,
+    number,
+    laneId: 'dev',
+    title: 'Model work',
+    description: '',
+    createdAt: '2026-01-01T00:00:00.000Z'
+  })
+
+  it('puts each built-in model flag before the prompt flags, model quoted', () => {
+    expect(agentShellCommand(byId('claude-code'), 'p', 'opus')).toBe("claude --model 'opus' 'p'")
+    expect(agentShellCommand(byId('codex'), 'p', 'gpt-5')).toBe("codex -m 'gpt-5' 'p'")
+    expect(agentShellCommand(byId('opencode'), 'p', 'anthropic/claude')).toBe(
+      "opencode -m 'anthropic/claude' --prompt 'p'"
+    )
+  })
+
+  it('adds no flag for an empty, blank or "-"-prefixed model', () => {
+    for (const model of [undefined, '', '   ', '--dangerously-skip-permissions']) {
+      expect(agentShellCommand(DEFAULT_AGENT, 'p', model)).toBe("claude 'p'")
+    }
+  })
+
+  it('adds no flag for an agent that cannot take a model', () => {
+    expect(agentShellCommand(byId('hermes'), 'p', 'some-model')).toBe("hermes chat -q 'p'")
+  })
+
+  it('carries the model into an Auto Run launch', () => {
+    const entry = buildAutoRunLaunch(modelTicket(3), modelLane, DEFAULT_AGENT, {}, false, 'sonnet')
+    expect(entry.launch.command.startsWith("claude --model 'sonnet' ")).toBe(true)
+  })
+
+  it('falls back to the ticket agent and its model when the lane names no orchestrator', () => {
+    const ticketChoice = { agent: byId('codex'), model: 'gpt-5' }
+    expect(orchestratorAgentChoice({}, ticketChoice, agents)).toEqual(ticketChoice)
+    expect(orchestratorAgentChoice({ orchestratorModel: 'gpt-5-mini' }, ticketChoice, agents)).toEqual({
+      agent: byId('codex'),
+      model: 'gpt-5-mini'
+    })
+  })
+
+  it('uses the lane orchestrator agent with its own model, not the ticket model', () => {
+    const ticketChoice = { agent: DEFAULT_AGENT, model: 'opus' }
+    const choice = orchestratorAgentChoice({ orchestratorAgentId: 'codex' }, ticketChoice, agents)
+    expect(choice).toEqual({ agent: byId('codex'), model: undefined })
+    const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
+    const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
+    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
+    expect(tab.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
   })
 })
