@@ -20,6 +20,12 @@ const refreshUnlessTyping = () => {
 const stopExternalChangeListener = projectTrackerApi.onExternalChange(refreshUnlessTyping)
 window.addEventListener('focus', refreshUnlessTyping)
 
+// The first pass runs after load(); this catches tabs closed later.
+const AGENT_RUN_RECONCILE_MS = 60_000
+const reconcileAgentRuns = () => void projectsStore.reconcileAgentRuns().catch(() => undefined)
+const reconcileTimer = setInterval(reconcileAgentRuns, AGENT_RUN_RECONCILE_MS)
+const stopAgentRetryListener = projectTrackerApi.onAgentRetry((retry) => projectsStore.noteAgentRetry(retry))
+
 // Notices clear themselves 30 s after each new one; errors stay until ×.
 // The clock lives here, above <RouterView />, because each view mounts its own
 // MessageBanners — a timer there would restart on every Board ↔ Dashboard switch.
@@ -41,6 +47,8 @@ watch(
 
 onBeforeUnmount(() => {
   stopExternalChangeListener()
+  stopAgentRetryListener()
+  clearInterval(reconcileTimer)
   window.removeEventListener('focus', refreshUnlessTyping)
   clearTimeout(noticeTimer)
 })

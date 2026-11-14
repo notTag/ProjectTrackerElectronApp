@@ -3,6 +3,7 @@ import {
   nextTicketNumber,
   orderedIds,
   updateLaneInBoard,
+  type AgentRetryEvent,
   type AutoRunTicketLaunch,
   type Clearable,
   type ProjectBoard,
@@ -200,8 +201,23 @@ export const projectTrackerApi = {
     return requireElectron().autoRunLane(path, targetId, tickets, useWorktrees, orchestrator)
   },
 
-  runTicketAgent(path: string, agentId: string, prompt: string, model?: string) {
-    return requireElectron().runTicketAgent(path, agentId, prompt, model)
+  runTicketAgent(path: string, agentId: string, prompt: string, model?: string, sessionId?: string) {
+    return requireElectron().runTicketAgent(path, agentId, prompt, model, sessionId)
+  },
+
+  onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void {
+    if (window.projectTracker) return window.projectTracker.onAgentRetry(callback)
+    return () => undefined
+  },
+
+  // The browser fallback runs no agents, so nothing predates it.
+  async appStartedAt(): Promise<string> {
+    if (window.projectTracker) return window.projectTracker.appStartedAt()
+    return new Date(0).toISOString()
+  },
+
+  terminalTabsAlive(targetId: string, titles: string[]) {
+    return requireElectron().terminalTabsAlive(targetId, titles)
   },
 
   readProjectReadme(path: string) {

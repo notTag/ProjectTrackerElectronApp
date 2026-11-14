@@ -5,6 +5,8 @@ import {
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
+  tabLiveness,
+  tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
@@ -260,5 +262,27 @@ describe('orchestratorTab', () => {
     ['an oversized title', { ...valid, title: 'A'.repeat(201) }]
   ])('rejects %s', (_label, payload) => {
     expect(() => orchestratorTab(payload)).toThrow('Invalid Auto Run orchestrator.')
+  })
+})
+
+describe('tab liveness', () => {
+  it('builds a read-only Terminal listing, checking it is running before telling it anything', () => {
+    const lines = (tabTitlesOsascriptArgs('terminal') ?? []).filter((arg) => arg !== '-e')
+    expect(lines[0]).toBe('if application "Terminal" is not running then return ""')
+    expect(lines).toContain('set end of titles to custom title of t')
+    expect(lines.join('\n')).not.toMatch(/activate|launch|close|keystroke/)
+  })
+
+  // Their tab names follow the agent's own title escapes, so a live tab would read as gone.
+  it('has no listing for terminals whose tab names the agent overwrites, Warp, or an unknown id', () => {
+    expect(tabTitlesOsascriptArgs('iterm2')).toBeUndefined()
+    expect(tabTitlesOsascriptArgs('ghostty')).toBeUndefined()
+    expect(tabTitlesOsascriptArgs('warp')).toBeUndefined()
+    expect(tabTitlesOsascriptArgs('constructor')).toBeUndefined()
+  })
+
+  it('matches whole titles, and says unknown when there is no listing', () => {
+    expect(tabLiveness(['#7 Add the thing', '#8 Other'], ['#7 Add the thing', '#7 Add'])).toEqual(['alive', 'gone'])
+    expect(tabLiveness(undefined, ['#7 Add the thing'])).toEqual(['unknown'])
   })
 })

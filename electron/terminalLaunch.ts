@@ -12,7 +12,7 @@
  * that tests can reach.
  */
 
-import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
+import { shellQuote, type TabLiveness, type TerminalTab } from '../src/shared/projectTypes.js'
 
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 
@@ -240,3 +240,32 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[], r
     ],
     [projectPath, reuseWindowId, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
   )
+
+// Only Terminal can be asked: its custom title is a property of its own that
+// title escapes never touch. iTerm2 session names and Ghostty tab names follow
+// whatever the agent sets (Claude Code retitles its tab), so a live tab there
+// would read as gone and get resumed a second time. Undefined = can't be asked.
+export const tabTitlesOsascriptArgs = (targetId: string): string[] | undefined => {
+  if (targetId !== 'terminal') return undefined
+  const scriptLines = [
+    'if application "Terminal" is not running then return ""',
+    'set titles to {}',
+    'tell application "Terminal"',
+    'repeat with w in windows',
+    'repeat with t in tabs of w',
+    'set end of titles to custom title of t',
+    'end repeat',
+    'end repeat',
+    'end tell',
+    'set AppleScript\'s text item delimiters to linefeed',
+    'return titles as text'
+  ]
+  return scriptLines.flatMap((line) => ['-e', line])
+}
+
+// No listing (unsupported terminal, osascript error) → nobody can say.
+export const tabLiveness = (openTitles: string[] | undefined, wantedTitles: string[]): TabLiveness[] =>
+  wantedTitles.map((title) => {
+    if (!openTitles) return 'unknown'
+    return openTitles.includes(title) ? 'alive' : 'gone'
+  })
