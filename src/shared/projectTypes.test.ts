@@ -503,6 +503,19 @@ describe('ticketShellCommand', () => {
     expect(outputSection).toContain('use it as-is without asking')
   })
 
+  it('suggests models per agent, and a saved agent brings its own', () => {
+    const builtInAgents = availableAgents({})
+    const modelsOf = (agents: typeof builtInAgents, agentId: string) =>
+      agents.find((agent) => agent.id === agentId)?.models
+    expect(modelsOf(builtInAgents, 'claude-code')).toEqual(expect.arrayContaining(['fable', 'opus', 'claude-opus-5-5']))
+    expect(modelsOf(builtInAgents, 'codex')?.length).toBeGreaterThan(0)
+    expect(modelsOf(builtInAgents, 'opencode')?.every((model) => model.includes('/'))).toBe(true)
+    expect(modelsOf(builtInAgents, 'hermes')).toBeUndefined()
+
+    const savedCodex = { id: 'codex', name: 'My Codex', command: 'codex', headlessArgs: [], modelArgs: ['-m'], models: ['my-model'] }
+    expect(modelsOf(availableAgents({ agents: [savedCodex] }), 'codex')).toEqual(['my-model'])
+  })
+
   it("runs the ticket's chosen agent, falling back to the default", () => {
     const aider = { id: 'aider', name: 'Aider', command: 'aider', headlessArgs: ['--yes'] }
     const agents = availableAgents({ agents: [aider] })
@@ -770,10 +783,19 @@ describe('full auto', () => {
 
     const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
     const sections = onPrompt.split('\n\n')
-    expect(sections.at(-2)).toMatch(/^Full auto is on\. .*Then exit\.$/)
+    expect(sections.at(-2)).toMatch(/^Full auto is on\. /)
     expect(sections.at(-1)).toMatch(/^Output: docs\/prd\//)
     const onPromptWithoutSection = sections.filter((section) => !section.startsWith(FULL_AUTO_SECTION)).join('\n\n')
     expect(onPromptWithoutSection).toBe(offPrompt)
+  })
+
+  it('only lets a full auto agent exit when no open questions remain', () => {
+    const outputLane = lane('prd', { outputTarget: 'docs/prd/' })
+    const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
+    const fullAutoSection = onPrompt.split('\n\n').at(-2)
+    expect(fullAutoSection).toMatch(
+      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\.$/
+    )
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
