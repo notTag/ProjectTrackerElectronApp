@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   -- it is flagged here rather than living in the ordered lane list.
   is_unassigned INTEGER NOT NULL DEFAULT 0,
   agent_sets_version INTEGER NOT NULL DEFAULT 0,
+  orchestrator_poll_minutes INTEGER NOT NULL DEFAULT 2,
+  orchestrator_poll_active INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (project_path, id)
 );
 
@@ -154,7 +156,9 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'tickets', column: 'closed_at', definition: 'TEXT' },
   { table: 'tickets', column: 'version', definition: 'TEXT' },
-  { table: 'swim_lanes', column: 'agent_sets_version', definition: 'INTEGER NOT NULL DEFAULT 0' }
+  { table: 'swim_lanes', column: 'agent_sets_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
+  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by

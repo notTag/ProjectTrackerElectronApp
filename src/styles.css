@@ -1779,3 +1779,9 @@ code {
   font-size: 0.75rem;
   color: var(--color-text-muted);
 }
+
+.orchestrator-poll-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}

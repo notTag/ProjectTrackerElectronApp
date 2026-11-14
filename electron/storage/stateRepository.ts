@@ -6,6 +6,8 @@ import {
   createSeedState,
   DEFAULT_USER_ID,
   DEFAULT_USER_NAME,
+  orchestratorPollActive,
+  orchestratorPollMinutes,
   SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
   type BoardPreferences,
@@ -401,15 +403,18 @@ export class StateRepository {
     this.run(
       `INSERT INTO swim_lanes (
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version,
+         orchestrator_poll_minutes, orchestrator_poll_active, closes_ticket, position, is_unassigned
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
          orchestrator_prompt = excluded.orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
-         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
+         agent_sets_version = excluded.agent_sets_version,
+         orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
+         closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned`,
       [
         lane.id,
         projectPath,
@@ -423,6 +428,8 @@ export class StateRepository {
         lane.autoRunWorktrees === false ? 0 : 1,
         lane.fullAuto ? 1 : 0,
         lane.agentSetsVersion ? 1 : 0,
+        orchestratorPollMinutes(lane),
+        orchestratorPollActive(lane) ? 1 : 0,
         lane.closesTicket ? 1 : 0,
         position,
         lane.id === UNASSIGNED_LANE_ID ? 1 : 0
@@ -550,6 +557,8 @@ export class StateRepository {
         autoRunWorktrees: asBool(row.auto_run_worktrees),
         fullAuto: asBool(row.full_auto),
         agentSetsVersion: asBool(row.agent_sets_version),
+        orchestratorPollMinutes: Number(row.orchestrator_poll_minutes),
+        orchestratorPollActive: asBool(row.orchestrator_poll_active),
         closesTicket: asBool(row.closes_ticket)
       }
       if (asBool(row.is_unassigned)) board.unassignedLane = lane

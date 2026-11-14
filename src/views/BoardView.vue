@@ -31,6 +31,8 @@ import {
   isFullAuto,
   isWebUrl,
   moveLaneInBoard,
+  orchestratorPollActive,
+  orchestratorPollMinutes,
   parseLabels,
   pullRequestLabel,
   pullRequestStatusLabel,
@@ -647,6 +649,16 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
+}
+
+const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) => {
+  const minutes = input.valueAsNumber
+  const isWholeMinutes = Number.isInteger(minutes) && minutes >= 1
+  if (!isWholeMinutes) {
+    input.value = String(orchestratorPollMinutes(lane))
+    return
+  }
+  editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
 // Live copies of the two lane fields, because both inputs only commit on blur:
@@ -1548,11 +1560,33 @@ const runTicketAgent = (ticket: Ticket) => {
         <textarea
           class="agent-prompt"
           :value="openLane.orchestratorPrompt ?? ''"
-          placeholder="e.g. Poll every 2 minutes. Flag PRs with failing checks."
+          placeholder="e.g. Flag PRs with failing checks."
           @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
         <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)</span>
       </label>
+
+      <div class="orchestrator-poll-row">
+        <label>
+          Orchestrator poll (minutes)
+          <input
+            type="number"
+            min="1"
+            step="1"
+            :value="orchestratorPollMinutes(openLane)"
+            :disabled="!orchestratorPollActive(openLane)"
+            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+          />
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="orchestratorPollActive(openLane)"
+            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
+          />
+          Active
+        </label>
+      </div>
 
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>

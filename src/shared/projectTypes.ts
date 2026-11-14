@@ -239,6 +239,10 @@ export interface SwimLane {
   // This lane's agent is told it may set the ticket's semantic version, and how.
   // When to set it is the agent's call, not a rule here. Absent means off.
   agentSetsVersion?: boolean
+  // How often this lane's Auto Run orchestrator polls, in whole minutes. Absent means 2.
+  orchestratorPollMinutes?: number
+  // Off means this lane's Auto Run opens no orchestrator tab. Absent means on.
+  orchestratorPollActive?: boolean
 }
 
 export interface ChecklistItem {
@@ -656,6 +660,13 @@ export const buildAutoRunLaunch = (
 export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =>
   lane.autoRunWorktrees !== false || Boolean(ticket?.worktreePath)
 
+export const DEFAULT_ORCHESTRATOR_POLL_MINUTES = 2
+
+export const orchestratorPollMinutes = (lane: SwimLane): number =>
+  lane.orchestratorPollMinutes ?? DEFAULT_ORCHESTRATOR_POLL_MINUTES
+
+export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
+
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
 
@@ -740,10 +751,10 @@ const tabSection = (context: OrchestratorPromptContext): string => {
   ].join('\n')
 }
 
-// User text may tune the Loop (poll interval, which tabs to close) but the
+// User text may tune the Loop (which tabs to close) but the
 // report-only rule guards a DB shared with the app, so it always wins.
 const LANE_INSTRUCTIONS_PRECEDENCE =
-  'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.'
+  'These override the Loop above (e.g. closing tabs), but never the report-only rule.'
 
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
@@ -773,6 +784,8 @@ export const orchestratorPrompt = (
   ].join(' ')
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
+  const pollMinutes = orchestratorPollMinutes(lane)
+  const pollSeconds = pollMinutes * 60
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
 
   return [
@@ -788,7 +801,7 @@ export const orchestratorPrompt = (
     tabSection(context),
     [
       'Loop:',
-      '1. On start, then every 60 seconds (sleep 60), gather the state above.',
+      `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
       '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
       '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
       '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
@@ -809,6 +822,7 @@ export const buildOrchestratorLaunch = (
   agent: Agent,
   context: OrchestratorPromptContext
 ): TerminalTab | undefined => {
+  if (!orchestratorPollActive(lane)) return undefined
   if (entries.length < 2) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
   return { command: agentShellCommand(agent, prompt), title: orchestratorTabTitle(lane) }

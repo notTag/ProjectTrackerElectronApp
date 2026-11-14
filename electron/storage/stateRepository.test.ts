@@ -40,7 +40,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -124,6 +124,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].fullAuto).toBe(false)
     expect(board?.lanes[1].agentSetsVersion).toBe(true)
     expect(board?.lanes[0].agentSetsVersion).toBe(false)
+    expect(board?.lanes[1]).toMatchObject({ orchestratorPollMinutes: 5, orchestratorPollActive: false })
+    expect(board?.lanes[0]).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
     expect(board?.tickets[0].version).toBe('1.4.0-rc.1')
     expect(board?.tickets[1].version).toBeUndefined()
     expect(board?.tickets[0].fullAuto).toBe(true)
@@ -205,6 +207,19 @@ describe('StateRepository', () => {
     const reopened = reopenedBoard(userDataPath, projectPath)
     expect(reopened.tickets[0].version).toBe('2.0.0')
     expect(reopened.lanes[1].agentSetsVersion).toBe(true)
+  })
+
+  it('gives lanes the default orchestrator poll in a database created before it existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_minutes')
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_active')
+    olderDatabase.close()
+
+    const lanes = new StateRepository(userDataPath).getState().boards![projectPath].lanes
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
+    }
   })
 
   it('loads tickets with no links from a database created before external links existed', () => {

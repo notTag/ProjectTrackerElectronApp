@@ -1046,7 +1046,7 @@ describe('Auto Run orchestrator', () => {
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
       const expectedSection = [
         'Lane instructions',
-        'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.',
+        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
         'Poll every 2 minutes.'
       ].join('\n')
       expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
@@ -1065,11 +1065,29 @@ describe('Auto Run orchestrator', () => {
       expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
       expect(agentPrompt).not.toContain('Poll every 2 minutes.')
     })
+
+    it("polls at the lane's rate, every 2 minutes by default", () => {
+      expect(prompt).toContain('every 2 minutes (sleep 120)')
+      expect(prompt).not.toContain('sleep 60)')
+      const slower = orchestratorPrompt({ ...inDev, orchestratorPollMinutes: 5 }, entries, context('ghostty', 'Ghostty'))
+      expect(slower).toContain('every 5 minutes (sleep 300)')
+    })
+
+    it('no longer advertises the poll interval as a lane-instruction override', () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Flag PRs with failing checks.' }
+      const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
+      expect(withInstructions).not.toContain('poll interval')
+    })
   })
 
   describe('buildOrchestratorLaunch', () => {
     it('sends no orchestrator for a one-ticket run', () => {
       expect(buildOrchestratorLaunch(inDev, entries.slice(0, 1), DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    })
+
+    it('sends no orchestrator when the lane turned its orchestrator off', () => {
+      const inactive = { ...inDev, orchestratorPollActive: false }
+      expect(buildOrchestratorLaunch(inactive, entries, DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
