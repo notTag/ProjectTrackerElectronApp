@@ -403,7 +403,6 @@ describe('refreshPullRequest', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
   })
 
   it('saves a PR state change without stamping updatedAt', async () => {
@@ -415,6 +414,8 @@ describe('refreshPullRequest', () => {
 
     expect(savedTicket(store)).toMatchObject({ pullRequestState: 'merged', pullRequestMergedAt: mergedAt })
     expect(savedTicket(store).updatedAt).toBe(SEEDED_UPDATED_AT)
+    const sentPatch = api.updateTicket.mock.calls[0][1]
+    expect(sentPatch).toMatchObject({ pullRequestState: 'merged', updatedAt: SEEDED_UPDATED_AT })
   })
 
   it('writes nothing when GitHub reports no change', async () => {
@@ -423,7 +424,21 @@ describe('refreshPullRequest', () => {
 
     await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
 
-    expect(api.saveProjectState).not.toHaveBeenCalled()
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('drops the answer when the URL changed while GitHub was asked', async () => {
+    const store = storeWithOpenPullRequest()
+    const pastedUrl = 'https://github.com/o/r/pull/10'
+    api.fetchTicketPullRequest.mockImplementation(async () => {
+      savedTicket(store).pullRequestUrl = pastedUrl
+      return { url: PULL_REQUEST_URL, state: 'merged', mergedAt: '2026-01-05T00:00:00.000Z' }
+    })
+
+    await store.refreshPullRequest(PROJECT_PATH, { ...savedTicket(store) })
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestUrl: pastedUrl, pullRequestState: 'open' })
+    expect(api.updateTicket).not.toHaveBeenCalled()
   })
 })
 

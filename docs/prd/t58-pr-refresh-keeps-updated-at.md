@@ -50,7 +50,7 @@
 - `bun run test` + `bun run typecheck` clean.
 
 ## Out of scope
-- `electron/storage/stateRepository.ts:383` row-level `updateTicket` stamp (renderer saves via `saveState` diff, doesn't hit it).
+- `electron/storage/stateRepository.ts` row-level `updateTicket` stamp. Since #12 the renderer does hit it (`dispatchBoardWrites` → `api.updateTicket`), but it only stamps when the patch lacks `updatedAt`, and `boardWrites` always sends the ticket's own value. The test asserts the sent patch carries it.
 - Repairing `updatedAt` values already bumped by past syncs (no record of the true value).
 
 ## Open questions
@@ -58,4 +58,4 @@ None.
 
 ## Branch / worktree
 - Branch: `t58-bug-opening-a` (at `origin/main` `3a794ca`, no rebase needed)
-- Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t58`
+- Worktree: `.worktrees/t58`
