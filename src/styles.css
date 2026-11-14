@@ -1624,9 +1624,10 @@ code {
   padding: 0;
 }
 
-/* .lane-modal label stacks its contents as a column; the scoped selector
-   outranks it so the checkbox stays beside its text. */
+/* .ticket-modal label and .lane-modal label stack their contents as a column;
+   the scoped selectors outrank them so the checkbox stays beside its text. */
 .checkbox-label,
+.ticket-modal .checkbox-label,
 .lane-modal .checkbox-label {
   display: flex;
   flex-direction: row;
