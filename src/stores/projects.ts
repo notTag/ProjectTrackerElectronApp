@@ -16,6 +16,7 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  isGithubUnreachableError,
   isPullRequestSettled,
   mergeScannedProjects,
   moveLaneInBoard,
@@ -321,6 +322,9 @@ export const useProjectsStore = defineStore('projects', {
         if (quiet && added === 0) return
         this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
       } catch (error) {
+        // A background pull while offline is not worth a banner; the caller retries later.
+        const isQuietOfflinePull = quiet && isGithubUnreachableError(error)
+        if (isQuietOfflinePull) return 'offline'
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
@@ -367,22 +371,25 @@ export const useProjectsStore = defineStore('projects', {
         } catch (error) {
           // A board load never surfaces GitHub errors; the modal does, on open.
           // One bad ticket skips only itself; a rate limit would fail every one after it.
+          // Being offline fails every one after it too.
           const isRateLimited = error instanceof Error && error.message.includes('rate limit')
-          if (isRateLimited) return
+          if (isRateLimited || isGithubUnreachableError(error)) return
         }
       }
     },
 
     // At most once per project per app launch. Marked before the await so two
     // overlapping calls can't both fetch, and a failure isn't retried: the
-    // manual button is the retry. A project without a repo isn't marked, so it
-    // still pulls if its data was just not loaded yet.
+    // manual button is the retry. Being offline is the exception: it's unmarked
+    // so the next board open after reconnecting pulls. A project without a repo
+    // isn't marked, so it still pulls if its data was just not loaded yet.
     async autoPullGithubIssues(projectPath: string) {
       if (autoPulledProjects.has(projectPath)) return
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) return
       autoPulledProjects.add(projectPath)
-      await this.pullGithubIssues(projectPath, { quiet: true })
+      const outcome = await this.pullGithubIssues(projectPath, { quiet: true })
+      if (outcome === 'offline') autoPulledProjects.delete(projectPath)
     },
 
     async removeTicket(projectPath: string, ticketId: string) {

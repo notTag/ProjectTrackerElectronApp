@@ -27,6 +27,7 @@ import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
+  GITHUB_UNREACHABLE_MESSAGE,
   isWebUrl,
   pullRequestNumber,
   shellQuote,
@@ -189,7 +190,11 @@ const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => 
   if (token) headers.Authorization = `Bearer ${token}`
   const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
 
-  const response = await fetch(`https://api.github.com${apiPath}`, init)
+  // fetch rejects only when no HTTP response arrived (DNS, no route, refused):
+  // that is "offline" to the user, whatever the underlying cause.
+  const response = await fetch(`https://api.github.com${apiPath}`, init).catch(() => {
+    throw new Error(GITHUB_UNREACHABLE_MESSAGE)
+  })
   if (response.status === 401 && !token) {
     throw new Error('GitHub needs a sign-in for this. Run gh auth login or set GITHUB_TOKEN.')
   }
