@@ -775,10 +775,19 @@ describe('full auto', () => {
 
     const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
     const sections = onPrompt.split('\n\n')
-    expect(sections.at(-2)).toMatch(/^Full auto is on\. .*Then exit\.$/)
+    expect(sections.at(-2)).toMatch(/^Full auto is on\. /)
     expect(sections.at(-1)).toMatch(/^Output: docs\/prd\//)
     const onPromptWithoutSection = sections.filter((section) => !section.startsWith(FULL_AUTO_SECTION)).join('\n\n')
     expect(onPromptWithoutSection).toBe(offPrompt)
+  })
+
+  it('only lets a full auto agent exit when no open questions remain', () => {
+    const outputLane = lane('prd', { outputTarget: 'docs/prd/' })
+    const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
+    const fullAutoSection = onPrompt.split('\n\n').at(-2)
+    expect(fullAutoSection).toMatch(
+      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\.$/
+    )
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
