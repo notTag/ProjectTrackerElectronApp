@@ -17,6 +17,7 @@ import {
   completionMoves,
   effectiveNextLaneId,
   createUnassignedLane,
+  laneTransitions,
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
@@ -1295,5 +1296,40 @@ describe('agent model', () => {
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
     const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
     expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+  })
+})
+
+describe('laneTransitions', () => {
+  const lane = (id: string, nextLaneId?: string) => ({ id, name: id, agentPrompt: '', agentFilePath: '', nextLaneId })
+  const ticket = (id: string, laneId: string, moveToLaneId?: string) =>
+    ({ id, number: 1, laneId, title: id, description: '', createdAt: '', updatedAt: '', moveToLaneId }) as Ticket
+
+  it('draws one lane edge per Next Lane, forward and backward', () => {
+    const lanes = [lane('dev', 'mr'), lane('mr', 'dev')]
+    expect(laneTransitions(lanes, [])).toEqual([
+      { from: 'dev', to: 'mr', kind: 'lane', ticketIds: [] },
+      { from: 'mr', to: 'dev', kind: 'lane', ticketIds: [] }
+    ])
+  })
+
+  it('merges ticket overrides by source and target, and skips inherit-only tickets', () => {
+    const lanes = [lane('idea', 'prd'), lane('prd'), lane('dev')]
+    const tickets = [ticket('a', 'idea', 'dev'), ticket('b', 'idea', 'dev'), ticket('c', 'idea'), ticket('d', 'idea', 'prd')]
+    expect(laneTransitions(lanes, tickets)).toEqual([
+      { from: 'idea', to: 'prd', kind: 'lane', ticketIds: [] },
+      { from: 'idea', to: 'dev', kind: 'override', ticketIds: ['a', 'b'] }
+    ])
+  })
+
+  it('drops targets that are hidden, missing, or the lane itself', () => {
+    const lanes = [lane('idea', 'hidden'), lane('prd', 'prd')]
+    const tickets = [ticket('a', 'idea', 'gone'), ticket('b', 'prd', 'prd'), ticket('c', 'hidden', 'idea')]
+    expect(laneTransitions(lanes, tickets)).toEqual([])
+  })
+
+  it('treats the unassigned lane as a normal source', () => {
+    const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
+    const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
+    expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
   })
 })
