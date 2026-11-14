@@ -348,7 +348,8 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Agent completion**
 
-- **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state.
+- **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
+- **Model** input (placeholder "CLI default"), shown only for agents that take a model (Claude Code `--model`, Codex and opencode `-m`; not Hermes). Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
   - Claude Code and Codex runs can write files but can't run shell commands.
@@ -385,7 +386,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
 - **Auto Run** section:
-  - **Agent** select.
+  - **Agent** select, plus **Model** for agents that take one. Full auto handoffs into the lane use both.
+  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model**: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
@@ -410,6 +412,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and, when 2+ tickets run, the orchestrator agent and model.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view

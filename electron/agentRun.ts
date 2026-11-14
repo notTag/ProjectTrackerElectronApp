@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 
-import type { Agent } from '../src/shared/projectTypes.js'
+import { agentModelWords, type Agent } from '../src/shared/projectTypes.js'
 
 // ponytail: an agent run is one-shot prelim work, not a session. Half an hour
 // covers it; add a cancel button if runs ever need stopping sooner.
@@ -41,10 +41,11 @@ export const runAgentHeadless = (
   agent: Agent,
   prompt: string,
   projectPath: string,
-  homeDirectory: string
+  homeDirectory: string,
+  model?: string
 ): Promise<AgentRunResult> =>
   new Promise((resolve) => {
-    const args = [...agent.headlessArgs, prompt]
+    const args = [...agent.headlessArgs, ...agentModelWords(agent, model), prompt]
     const options = {
       cwd: projectPath,
       env: { ...process.env, PATH: agentSearchPath(homeDirectory) },
