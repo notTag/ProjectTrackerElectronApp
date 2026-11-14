@@ -1601,23 +1601,21 @@ const runTicketAgent = (ticket: Ticket) => {
         Model
         <input v-model="autoRunConfirmModel" :list="agentModelListId(autoRunConfirmAgentId)" placeholder="CLI default" />
       </label>
-      <template v-if="autoRunTickets(autoRunConfirmLane).length >= 2">
-        <label>
-          Orchestrator agent
-          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-            <option value="">Same as ticket agent</option>
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
-          Orchestrator model
-          <input
-            v-model="autoRunConfirmOrchestratorModel"
-            :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-          />
-        </label>
-      </template>
+      <label>
+        Orchestrator agent
+        <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+          <option value="">Same as ticket agent</option>
+          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+        </select>
+      </label>
+      <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
+        Orchestrator model
+        <input
+          v-model="autoRunConfirmOrchestratorModel"
+          :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+          :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+        />
+      </label>
       <p class="auto-run-question">
         Each opens in its own
         <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
@@ -1704,7 +1702,7 @@ const runTicketAgent = (ticket: Ticket) => {
           placeholder="e.g. Poll every 2 minutes. Flag PRs with failing checks."
           @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
-        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)</span>
+        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run)</span>
       </label>
 
       <section class="ticket-agent">

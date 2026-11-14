@@ -1177,15 +1177,19 @@ describe('Auto Run orchestrator', () => {
   })
 
   describe('buildOrchestratorLaunch', () => {
-    it('sends no orchestrator for a one-ticket run', () => {
-      expect(buildOrchestratorLaunch(inDev, entries.slice(0, 1), DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    it('sends an orchestrator for a one-ticket run', () => {
+      const oneTicket = entries.slice(0, 1)
+      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command).toContain('#12 First thing')
+      expect(launch.command).not.toContain('#13 Second thing')
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
       const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
-      expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
-      expect(launch?.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
-      expect(launch?.command).toContain("it'\\''s-mine")
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
+      expect(launch.command).toContain("it'\\''s-mine")
     })
   })
 })
@@ -1308,7 +1312,7 @@ describe('agent model', () => {
     const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
     const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
-    expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+    expect(tab.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
   })
 })
 

@@ -876,15 +876,13 @@ export const orchestratorPrompt = (
     .join('\n\n')
 }
 
-// One ticket needs no watcher: its own tab already says everything.
 export const buildOrchestratorLaunch = (
   lane: SwimLane,
   entries: AutoRunLaunchEntry[],
   agent: Agent,
   context: OrchestratorPromptContext,
   model?: string
-): TerminalTab | undefined => {
-  if (entries.length < 2) return undefined
+): TerminalTab => {
   const prompt = orchestratorPrompt(lane, entries, context)
   const title = orchestratorTabTitle(lane)
   return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }

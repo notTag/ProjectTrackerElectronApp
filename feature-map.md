@@ -420,7 +420,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and, when 2+ tickets run, the orchestrator agent and model.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
