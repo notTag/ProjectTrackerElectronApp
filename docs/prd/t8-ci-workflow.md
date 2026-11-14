@@ -40,7 +40,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -74,7 +74,7 @@ Decisions:
 gh api -X PUT repos/notTag/ProjectTrackerElectronApp/branches/main/protection \
   --input - <<'JSON'
 {
-  "required_status_checks": { "strict": false, "contexts": ["check"] },
+  "required_status_checks": { "strict": false, "checks": [{ "context": "check", "app_id": 15368 }] },
   "enforce_admins": false,
   "required_pull_request_reviews": null,
   "restrictions": null
@@ -83,7 +83,7 @@ JSON
 ```
 - `strict: false` — no forced rebase-before-merge on a solo repo.
 - No review requirement, `enforce_admins: false` → owner can still merge own PRs / push in an emergency.
-- Verify: `gh api repos/notTag/ProjectTrackerElectronApp/branches/main/protection --jq .required_status_checks.contexts` → `["check"]`.
+- Verify: `gh api repos/notTag/ProjectTrackerElectronApp/branches/main/protection --jq .required_status_checks.checks` → `[{"app_id":15368,"context":"check"}]`.
 
 ## Implementation steps
 1. Branch `t8-add-ci-typecheck` already fast-forwarded to `3a794ca` (latest `main`).
