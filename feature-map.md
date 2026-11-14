@@ -294,6 +294,7 @@ From left to right:
 
 - **Title** input. Enter saves.
 - **Status** select: No status or any lane. It defaults to the lane you started from.
+- **Next Lane** select: None, No status, or any lane. Prefilled from the Status lane's Next Lane (3.9) and follows Status changes until you pick a value. A pick that matches the lane default is saved as no override, so the ticket keeps inheriting. A ticket saved with a resolved Next Lane starts armed (the ticket modal's footer checkbox is ticked).
 - **Description** textarea, prefilled with a template:
   ```
   ## Context
@@ -323,7 +324,6 @@ In graph view this opens as a side panel instead of a centered modal.
 |-------|-------|
 | Title | Text input |
 | Status | No status or any lane. Changing it moves the ticket |
-| Move to | None, No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds. Picking a lane ticks the footer checkbox **Move to <lane> swimlane**; untick it to keep the ticket where it is. After the move the box unticks, and the target is kept so you can tick it again. Deleting the target lane clears it |
 | Assignee | Unassigned or any user (currently only "Local") |
 | Description | Textarea |
 | Labels | Comma-separated. Spaces and duplicates are cleaned up. "Searchable from the filter box." |
@@ -350,6 +350,12 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** input (placeholder "CLI default"), shown only for agents that take a model (Claude Code `--model`, Codex and opencode `-m`; not Hermes). Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it.
+- **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
+  - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
+  - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
+  - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
+  - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
   - Claude Code and Codex runs can write files but can't run shell commands.
@@ -390,6 +396,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model**: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
+- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
+- **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
 - **Delete lane** moves the lane's tickets to No status; no ticket is deleted. No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
 - **Done** closes the modal.

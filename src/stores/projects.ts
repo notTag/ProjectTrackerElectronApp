@@ -245,10 +245,18 @@ export const useProjectsStore = defineStore('projects', {
       await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
     },
 
-    async addTicket(projectPath: string, laneId: string, title: string, description = '') {
+    async addTicket(
+      projectPath: string,
+      laneId: string,
+      title: string,
+      description = '',
+      completion: { moveToLaneId?: string; moveOnComplete?: boolean } = {}
+    ) {
       // Built inside the mutate callback so the ticket number is derived from the
       // same board revision it is appended to.
-      await this.updateBoard(projectPath, (board) => addTicketToBoard(board, { laneId, title, description }))
+      await this.updateBoard(projectPath, (board) =>
+        addTicketToBoard(board, { laneId, title, description, ...completion })
+      )
     },
 
     // Every ticket edit funnels through here — modal fields, checklist toggles,
