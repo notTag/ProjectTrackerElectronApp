@@ -2,7 +2,14 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { toPlainJson } from '@/shared/plainJson'
-import { createSeedState, getBoard, type ProjectRecord, type ProjectTrackerState, type Ticket } from '@/shared/projectTypes'
+import {
+  createSeedState,
+  getBoard,
+  GITHUB_UNREACHABLE_MESSAGE,
+  type ProjectRecord,
+  type ProjectTrackerState,
+  type Ticket
+} from '@/shared/projectTypes'
 
 const api = vi.hoisted(() => ({
   getProjectState: vi.fn(),
@@ -20,8 +27,13 @@ const api = vi.hoisted(() => ({
   updateProject: vi.fn(),
   autoRunLane: vi.fn(),
   runTicketAgent: vi.fn(),
-  fetchProjectGithubIssues: vi.fn()
+  fetchProjectGithubIssues: vi.fn(),
+  fetchTicketPullRequest: vi.fn()
 }))
+
+const offlineError = new Error(
+  `Error invoking remote method 'project:fetch-github-issues': Error: ${GITHUB_UNREACHABLE_MESSAGE}`
+)
 vi.mock('@/services/projectTrackerApi', () => ({ projectTrackerApi: api }))
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined })
@@ -357,27 +369,28 @@ describe('Move to on completion', () => {
   })
 })
 
+const storeWithProject = (path: string, githubUrl?: string) => {
+  const store = useProjectsStore()
+  const project: ProjectRecord = {
+    path,
+    name: 'app',
+    status: 'active',
+    priority: 'none',
+    notes: '',
+    source: 'first-party',
+    githubUrl,
+    hasGit: true,
+    hasPackageJson: true,
+    hasReadme: false,
+    lastScannedAt: '2026-01-01T00:00:00.000Z'
+  }
+  store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
+  return store
+}
+
 describe('autoPullGithubIssues', () => {
   // The pulled-once set lives for the module's lifetime (one app launch), so
   // each test uses its own project path.
-  const storeWithProject = (path: string, githubUrl?: string) => {
-    const store = useProjectsStore()
-    const project: ProjectRecord = {
-      path,
-      name: 'app',
-      status: 'active',
-      priority: 'none',
-      notes: '',
-      source: 'first-party',
-      githubUrl,
-      hasGit: true,
-      hasPackageJson: true,
-      hasReadme: false,
-      lastScannedAt: '2026-01-01T00:00:00.000Z'
-    }
-    store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
-    return store
-  }
 
   const issue = { number: 3, title: 'Crash on save', body: '', htmlUrl: 'https://github.com/o/r/issues/3' }
 
@@ -430,6 +443,52 @@ describe('autoPullGithubIssues', () => {
     expect(store.error).toBe('GitHub rate limit exceeded')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     expect(store.githubLoading['/code/offline']).toBe(false)
+  })
+
+  it('shows a 404 as an error and does not retry it', async () => {
+    api.fetchProjectGithubIssues.mockRejectedValueOnce(new Error('Repository not found on GitHub.'))
+    const store = storeWithProject('/code/missing', 'https://github.com/o/r')
+
+    await store.autoPullGithubIssues('/code/missing')
+    await store.autoPullGithubIssues('/code/missing')
+
+    expect(store.error).toBe('Repository not found on GitHub.')
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays silent when GitHub is unreachable and pulls again on the next open', async () => {
+    api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce([issue])
+    const store = storeWithProject('/code/unreachable', 'https://github.com/o/r')
+
+    await store.autoPullGithubIssues('/code/unreachable')
+    expect(store.error).toBeNull()
+    expect(store.githubLoading['/code/unreachable']).toBe(false)
+
+    await store.autoPullGithubIssues('/code/unreachable')
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(2)
+    expect(store.notice).toBe('Imported 1 issue.')
+  })
+})
+
+describe('refreshBoardPullRequests', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('stops after the first request when GitHub is unreachable', async () => {
+    const store = storeWithProject(PROJECT_PATH, 'https://github.com/o/r')
+    const { boards } = stateWithTicketIn('dev')
+    const board = getBoard({ ...store.state, boards }, PROJECT_PATH)
+    const [template] = board.tickets
+    board.tickets = [1, 2, 3].map((number) => ({ ...template, id: `ticket-${number}`, number, branchName: `t${number}` }))
+    store.state = { ...store.state, boards }
+    api.fetchTicketPullRequest.mockRejectedValueOnce(offlineError)
+
+    await store.refreshBoardPullRequests(PROJECT_PATH)
+
+    expect(api.fetchTicketPullRequest).toHaveBeenCalledTimes(1)
+    expect(store.error).toBeNull()
   })
 })
 
