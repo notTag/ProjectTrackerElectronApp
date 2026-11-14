@@ -891,6 +891,16 @@ export interface GithubIssue {
   htmlUrl: string
 }
 
+// GitHub's state_reason: 'completed', 'not_planned', 'duplicate', or null.
+export interface GithubClosedIssue extends GithubIssue {
+  stateReason: string | null
+}
+
+export interface GithubIssueLists {
+  open: GithubIssue[]
+  closed: GithubClosedIssue[]
+}
+
 export interface ProjectBoard {
   lanes: SwimLane[]
   tickets: Ticket[]
@@ -1043,23 +1053,63 @@ export const githubIssueExternalId = (issue: GithubIssue) => `github:${issue.num
 export const GITHUB_IMPORT_LANE_ID = 'github-issues'
 export const GITHUB_IMPORT_LANE_NAME = 'GitHub Issues'
 
+// Where tickets closed as completed on GitHub go: the rightmost lane that closes tickets.
+export const productionLane = (board: ProjectBoard): SwimLane | undefined =>
+  [...board.lanes].reverse().find((lane) => lane.closesTicket)
+
+const hasLocalWork = (ticket: Ticket) => Boolean(ticket.worktreePath || ticket.pullRequestUrl)
+
+export interface GithubSyncResult {
+  board: ProjectBoard
+  added: number
+  moved: number
+  removed: number
+  keptWithWork: number
+}
+
 // A GitHub issue carries no swim-lane status, so imports land in a dedicated
-// lane at the far left instead of guessing. Issues already imported are skipped,
-// so pulling repeatedly is safe and never clobbers edits to an imported ticket.
-export const addGithubIssuesToBoard = (
-  board: ProjectBoard,
-  issues: GithubIssue[]
-): { board: ProjectBoard; added: number } => {
-  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
-  const lanes = importLaneExists
-    ? board.lanes
-    : [
-        { id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' },
-        ...board.lanes
-      ]
+// lane at the far left instead of guessing. Already-imported tickets keep every
+// local edit; only GitHub's closed state reaches them: completed → production
+// lane, closed for any other reason → removed unless the ticket has local work.
+// Open or unlisted issues leave their ticket untouched.
+export const syncGithubIssuesToBoard = (board: ProjectBoard, issues: GithubIssueLists): GithubSyncResult => {
+  const closedById = new Map(issues.closed.map((issue) => [githubIssueExternalId(issue), issue]))
+  const targetLane = productionLane(board)
+  const movedAt = new Date().toISOString()
+  let moved = 0
+  let removed = 0
+  let keptWithWork = 0
+
+  const syncedTickets: Ticket[] = []
+  for (const ticket of board.tickets) {
+    const closedIssue = ticket.externalId ? closedById.get(ticket.externalId) : undefined
+    if (!closedIssue) {
+      syncedTickets.push(ticket)
+      continue
+    }
+    const isCompleted = closedIssue.stateReason === 'completed'
+    if (isCompleted) {
+      const shouldMove = targetLane !== undefined && ticket.laneId !== targetLane.id
+      if (shouldMove) moved += 1
+      syncedTickets.push(shouldMove ? { ...ticket, laneId: targetLane.id, updatedAt: movedAt } : ticket)
+      continue
+    }
+    if (hasLocalWork(ticket)) {
+      keptWithWork += 1
+      syncedTickets.push(ticket)
+      continue
+    }
+    removed += 1
+  }
 
   const importedIds = new Set(board.tickets.map((ticket) => ticket.externalId).filter(Boolean))
-  const newIssues = issues.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  const newIssues = issues.open.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  // ponytail: no new issues → no import lane, so a sync-only pull doesn't add an empty lane.
+  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
+  const needsImportLane = newIssues.length > 0 && !importLaneExists
+  const lanes = needsImportLane
+    ? [{ id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' }, ...board.lanes]
+    : board.lanes
 
   const createdAt = new Date().toISOString()
   const firstNumber = nextTicketNumber(board)
@@ -1075,9 +1125,38 @@ export const addGithubIssuesToBoard = (
   }))
 
   return {
-    board: { ...board, lanes, tickets: [...board.tickets, ...newTickets] },
-    added: newTickets.length
+    board: { ...board, lanes, tickets: [...syncedTickets, ...newTickets] },
+    added: newTickets.length,
+    moved,
+    removed,
+    keptWithWork
   }
+}
+
+// Closed issues older than every imported ticket can't match one, so the closed
+// fetch starts there. Undefined means nothing is imported and the fetch is skipped.
+export const oldestImportedCreatedAt = (board: ProjectBoard): string | undefined => {
+  const importedCreatedAts = board.tickets
+    .filter((ticket) => ticket.externalId?.startsWith('github:'))
+    .map((ticket) => ticket.createdAt)
+  // ISO-8601 UTC strings sort chronologically.
+  return importedCreatedAts.sort()[0]
+}
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+
+export const githubSyncNotice = (result: GithubSyncResult, openCount: number, productionLaneName: string): string => {
+  const skipped = openCount - result.added
+  const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
+  const nothingChanged = result.added + result.moved + result.removed === 0
+  const parts = [
+    result.added > 0 || nothingChanged ? `Imported ${plural(result.added, 'issue')}${skippedNote}` : '',
+    result.moved > 0 ? `moved ${result.moved} to ${productionLaneName}` : '',
+    result.removed > 0 ? `removed ${result.removed} closed` : '',
+    result.keptWithWork > 0 ? `kept ${result.keptWithWork} closed with local work` : ''
+  ].filter(Boolean)
+  const sentence = parts.join(', ')
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`
 }
 
 // What a ticket card can show on the board. Ids are persisted, so renaming one

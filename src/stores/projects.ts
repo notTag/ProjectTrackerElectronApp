@@ -4,7 +4,11 @@ import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { resolveAutoRunTerminal } from '@/shared/openInTargets'
 import { useOpenInStore } from '@/stores/openIn'
 import {
-  addGithubIssuesToBoard,
+  githubSyncNotice,
+  type GithubSyncResult,
+  oldestImportedCreatedAt,
+  productionLane,
+  syncGithubIssuesToBoard,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -286,11 +290,11 @@ export const useProjectsStore = defineStore('projects', {
       await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(markSeen) }))
     },
 
-    // Imports open GitHub issues into the board's dedicated import lane, which
-    // is created on first pull. Already-imported issues are left untouched, so
-    // this is safe to re-run.
+    // Imports open GitHub issues into the board's dedicated import lane and
+    // syncs already-imported tickets with GitHub's closed state (see
+    // syncGithubIssuesToBoard). Safe to re-run.
     // Quiet is the automatic pull on board open: no banner for a project without
-    // a repo, and no notice when nothing new arrived. Errors still show.
+    // a repo, and no notice when nothing changed. Errors still show.
     async pullGithubIssues(projectPath: string, { quiet = false } = {}) {
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) {
@@ -303,23 +307,22 @@ export const useProjectsStore = defineStore('projects', {
         this.notice = null
       }
       try {
-        const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl)
-        // Nothing new → no write: saving would still add an empty import lane
-        // and clear whatever banner is showing.
-        const boardBeforeImport = getBoard(this.state, projectPath)
-        const preview = addGithubIssuesToBoard(boardBeforeImport, issues)
-        let added = preview.added
-        if (added > 0) {
+        const boardBeforeSync = getBoard(this.state, projectPath)
+        const since = oldestImportedCreatedAt(boardBeforeSync)
+        const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl, since)
+        // Nothing changed → no write: saving would clear whatever banner is showing.
+        let result = syncGithubIssuesToBoard(boardBeforeSync, issues)
+        const changeCount = (sync: GithubSyncResult) => sync.added + sync.moved + sync.removed
+        if (changeCount(result) > 0) {
           const saved = await this.updateBoard(projectPath, (board) => {
-            const result = addGithubIssuesToBoard(board, issues)
-            added = result.added
+            result = syncGithubIssuesToBoard(board, issues)
             return result.board
           })
           if (!saved) return
         }
-        const skipped = issues.length - added
-        if (quiet && added === 0) return
-        this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
+        if (quiet && changeCount(result) === 0) return
+        const productionLaneName = productionLane(result.board)?.name ?? 'production'
+        this.notice = githubSyncNotice(result, issues.open.length, productionLaneName)
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {

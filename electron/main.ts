@@ -638,9 +638,12 @@ const registerIpc = () => {
     }
   )
 
-  ipcMain.handle('project:fetch-github-issues', async (event, githubUrl: unknown) => {
+  ipcMain.handle('project:fetch-github-issues', async (event, request: unknown) => {
     assertTrustedSender(event)
+    const { githubUrl, since } = (request ?? {}) as Record<string, unknown>
     if (typeof githubUrl !== 'string') throw new Error('Invalid GitHub URL.')
+    const sinceIsValid = since === undefined || (typeof since === 'string' && !Number.isNaN(Date.parse(since)))
+    if (!sinceIsValid) throw new Error('Invalid since date.')
     const { owner, repo } = parseGithubRepo(githubUrl)
 
     type GithubIssueResponse = {
@@ -648,31 +651,39 @@ const registerIpc = () => {
       title: string
       body?: string | null
       html_url: string
+      state_reason?: string | null
       pull_request?: unknown
     }
 
-    // ponytail: 5 pages (500 open issues) is far past any board that stays
+    // ponytail: 5 pages (500 issues per state) is far past any board that stays
     // readable. Raise the cap if a real repo ever hits it.
     const MAX_PAGES = 5
     const PER_PAGE = 100
-    const issues: GithubIssueResponse[] = []
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const query = `state=open&per_page=${PER_PAGE}&page=${page}`
-      const batch = await requestGithub<GithubIssueResponse[]>(`/repos/${owner}/${repo}/issues?${query}`)
-      issues.push(...batch)
-      if (batch.length < PER_PAGE) break
+    const fetchIssuePages = async (stateQuery: string) => {
+      const issues: GithubIssueResponse[] = []
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const query = `${stateQuery}&per_page=${PER_PAGE}&page=${page}`
+        const batch = await requestGithub<GithubIssueResponse[]>(`/repos/${owner}/${repo}/issues?${query}`)
+        issues.push(...batch)
+        if (batch.length < PER_PAGE) break
+      }
+      // The issues endpoint returns pull requests too; only real issues become tickets.
+      return issues.filter((issue) => !issue.pull_request)
     }
+    const toIssue = (issue: GithubIssueResponse) => ({
+      number: issue.number,
+      title: issue.title,
+      body: issue.body ?? '',
+      htmlUrl: issue.html_url
+    })
 
-    // The issues endpoint returns pull requests too; only real issues become tickets.
-    const issuesOnly = issues.filter((issue) => !issue.pull_request)
-    return toPlainJson(
-      issuesOnly.map((issue) => ({
-        number: issue.number,
-        title: issue.title,
-        body: issue.body ?? '',
-        htmlUrl: issue.html_url
-      }))
-    )
+    const openIssues = await fetchIssuePages('state=open')
+    // No `since` means no imported tickets yet, so there is nothing a closed issue could update.
+    const closedIssues = since ? await fetchIssuePages(`state=closed&since=${encodeURIComponent(since)}`) : []
+    return toPlainJson({
+      open: openIssues.map(toIssue),
+      closed: closedIssues.map((issue) => ({ ...toIssue(issue), stateReason: issue.state_reason ?? null }))
+    })
   })
 
   ipcMain.handle('project:read-readme', (event, projectPath: unknown) => {

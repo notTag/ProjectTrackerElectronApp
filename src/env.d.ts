@@ -2,7 +2,7 @@
 
 import type {
   AutoRunTicketLaunch,
-  GithubIssue,
+  GithubIssueLists,
   ProjectGithubData,
   ProjectMetrics,
   ProjectTrackerState,
@@ -54,7 +54,7 @@ interface ProjectTrackerElectronApi {
     content: string
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
-  fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
+  fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>
   fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string): Promise<PullRequestStatus | null>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>

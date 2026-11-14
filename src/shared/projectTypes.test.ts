@@ -14,7 +14,10 @@ import {
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
-  addGithubIssuesToBoard,
+  syncGithubIssuesToBoard,
+  githubSyncNotice,
+  oldestImportedCreatedAt,
+  type GithubClosedIssue,
   agentMarkdownFileName,
   addScanDirectory,
   addTicketToBoard,
@@ -162,14 +165,14 @@ describe('getBoard', () => {
 })
 
 
-describe('addGithubIssuesToBoard', () => {
+describe("syncGithubIssuesToBoard", () => {
   const issues: GithubIssue[] = [
     { number: 1, title: 'Fix login', body: 'Steps to reproduce', htmlUrl: 'https://github.com/o/r/issues/1' },
     { number: 2, title: 'Add export', body: '', htmlUrl: 'https://github.com/o/r/issues/2' }
   ]
 
   it('creates the import lane at the far left and files every issue in it', () => {
-    const { board, added } = addGithubIssuesToBoard(boardWithTickets(), issues)
+    const { board, added } = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
     expect(added).toBe(2)
     expect(board.lanes[0].id).toBe(GITHUB_IMPORT_LANE_ID)
     const imported = board.tickets.filter((ticket) => ticket.externalId)
@@ -178,11 +181,107 @@ describe('addGithubIssuesToBoard', () => {
   })
 
   it('reuses the existing import lane on later pulls', () => {
-    const first = addGithubIssuesToBoard(boardWithTickets(), issues)
-    const second = addGithubIssuesToBoard(first.board, issues)
+    const first = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
+    const second = syncGithubIssuesToBoard(first.board, { open: issues, closed: [] })
     expect(second.added).toBe(0)
     expect(second.board.lanes.filter((lane) => lane.id === GITHUB_IMPORT_LANE_ID)).toHaveLength(1)
     expect(second.board.tickets).toHaveLength(first.board.tickets.length)
+  })
+})
+
+
+describe('syncing imported tickets with closed GitHub issues', () => {
+  const lanes = [
+    { id: 'github-issues', name: 'GitHub Issues', agentPrompt: '', agentFilePath: '' },
+    { id: 'in-dev', name: 'In Dev', agentPrompt: '', agentFilePath: '', closesTicket: true },
+    { id: 'in-production', name: 'In Prod Env', agentPrompt: '', agentFilePath: '', closesTicket: true }
+  ]
+  const importedTicket = (issueNumber: number, extra: Partial<Ticket> = {}): Ticket => ({
+    id: `t${issueNumber}`,
+    number: issueNumber,
+    laneId: 'github-issues',
+    title: `Issue ${issueNumber}`,
+    description: '',
+    createdAt: '2026-02-01T00:00:00.000Z',
+    externalId: `github:${issueNumber}`,
+    ...extra
+  })
+  const closed = (issueNumber: number, stateReason: string | null): GithubClosedIssue => ({
+    number: issueNumber,
+    title: 'From GitHub',
+    body: '',
+    htmlUrl: `https://github.com/o/r/issues/${issueNumber}`,
+    stateReason
+  })
+  const boardOf = (...tickets: Ticket[]): ProjectBoard => ({ lanes, tickets })
+
+  it('moves a completed issue to the rightmost closing lane', () => {
+    const result = syncGithubIssuesToBoard(boardOf(importedTicket(1)), { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(1)
+    expect(result.board.tickets[0].laneId).toBe('in-production')
+    expect(result.board.tickets[0].updatedAt).toBeDefined()
+  })
+
+  it('removes tickets closed as not planned, duplicate, or with no reason', () => {
+    const board = boardOf(importedTicket(1), importedTicket(2), importedTicket(3))
+    const closedIssues = [closed(1, 'not_planned'), closed(2, 'duplicate'), closed(3, null)]
+    const result = syncGithubIssuesToBoard(board, { open: [], closed: closedIssues })
+    expect(result.removed).toBe(3)
+    expect(result.board.tickets).toEqual([])
+  })
+
+  it('keeps a not-planned ticket that has local work and counts it', () => {
+    const withWork = importedTicket(1, { worktreePath: '/wt/t1' })
+    const withPullRequest = importedTicket(2, { pullRequestUrl: 'https://github.com/o/r/pull/9' })
+    const closedIssues = [closed(1, 'not_planned'), closed(2, 'not_planned')]
+    const result = syncGithubIssuesToBoard(boardOf(withWork, withPullRequest), { open: [], closed: closedIssues })
+    expect(result.keptWithWork).toBe(2)
+    expect(result.removed).toBe(0)
+    expect(result.board.tickets).toHaveLength(2)
+  })
+
+  it('does not re-move a ticket already in production', () => {
+    const ticket = importedTicket(1, { laneId: 'in-production' })
+    const result = syncGithubIssuesToBoard(boardOf(ticket), { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(0)
+    expect(result.board.tickets[0]).toBe(ticket)
+  })
+
+  it('leaves a completed ticket in place when no lane closes tickets', () => {
+    const board: ProjectBoard = { lanes: [lanes[0]], tickets: [importedTicket(1)] }
+    const result = syncGithubIssuesToBoard(board, { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(0)
+    expect(result.board.tickets[0].laneId).toBe('github-issues')
+  })
+
+  it('never clobbers local edits to a still-open issue', () => {
+    const edited = importedTicket(1, { title: 'Renamed locally', laneId: 'in-dev' })
+    const openIssue = { number: 1, title: 'GitHub title', body: 'GitHub body', htmlUrl: 'https://github.com/o/r/issues/1' }
+    const result = syncGithubIssuesToBoard(boardOf(edited), { open: [openIssue], closed: [] })
+    expect(result.board.tickets).toEqual([edited])
+    expect(result.added + result.moved + result.removed).toBe(0)
+  })
+
+  it('leaves a reopened issue in production untouched', () => {
+    const shipped = importedTicket(1, { laneId: 'in-production' })
+    const openIssue = { number: 1, title: 'Reopened', body: '', htmlUrl: 'https://github.com/o/r/issues/1' }
+    const result = syncGithubIssuesToBoard(boardOf(shipped), { open: [openIssue], closed: [] })
+    expect(result.board.tickets).toEqual([shipped])
+  })
+
+  it('starts the closed fetch at the oldest imported ticket, or skips it', () => {
+    const older = importedTicket(1, { createdAt: '2026-01-05T00:00:00.000Z' })
+    expect(oldestImportedCreatedAt(boardOf(importedTicket(2), older))).toBe('2026-01-05T00:00:00.000Z')
+    expect(oldestImportedCreatedAt(boardWithTickets())).toBeUndefined()
+  })
+
+  it('reports every non-zero count in the notice', () => {
+    const result = { board: boardOf(), added: 2, moved: 1, removed: 1, keptWithWork: 1 }
+    expect(githubSyncNotice(result, 2, 'In Prod Env')).toBe(
+      'Imported 2 issues, moved 1 to In Prod Env, removed 1 closed, kept 1 closed with local work.'
+    )
+    const unchanged = { board: boardOf(), added: 0, moved: 0, removed: 0, keptWithWork: 0 }
+    expect(githubSyncNotice(unchanged, 3, 'In Prod Env')).toBe('Imported 0 issues (3 already on the board).')
   })
 })
 
@@ -225,7 +324,7 @@ describe('pulling issues onto a board with every lane deleted', () => {
     const issues: GithubIssue[] = [
       { number: 7, title: 'Fix login', body: '', htmlUrl: 'https://github.com/o/r/issues/7' }
     ]
-    const { board, added } = addGithubIssuesToBoard(emptied, issues)
+    const { board, added } = syncGithubIssuesToBoard(emptied, { open: issues, closed: [] })
     expect(added).toBe(1)
     expect(board.lanes.map((lane) => lane.id)).toEqual([GITHUB_IMPORT_LANE_ID])
     expect(board.tickets.at(-1)?.laneId).toBe(GITHUB_IMPORT_LANE_ID)
@@ -245,7 +344,7 @@ describe('ticket numbering', () => {
       { number: 90, title: 'One', body: '', htmlUrl: 'https://github.com/o/r/issues/90' },
       { number: 91, title: 'Two', body: '', htmlUrl: 'https://github.com/o/r/issues/91' }
     ]
-    const { board } = addGithubIssuesToBoard(boardWithTickets(), issues)
+    const { board } = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
     expect(board.tickets.map((ticket) => ticket.number)).toEqual([1, 2, 3, 4])
   })
 

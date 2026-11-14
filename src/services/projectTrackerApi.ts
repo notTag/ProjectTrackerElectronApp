@@ -97,8 +97,8 @@ export const projectTrackerApi = {
   getMetrics(projectPaths: string[]) {
     return requireElectron().getMetrics(projectPaths)
   },
-  fetchProjectGithubIssues(githubUrl: string) {
-    return requireElectron().fetchProjectGithubIssues(githubUrl)
+  fetchProjectGithubIssues(githubUrl: string, since?: string) {
+    return requireElectron().fetchProjectGithubIssues(githubUrl, since)
   },
 
   fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string) {
