@@ -495,6 +495,19 @@ describe('ticketShellCommand', () => {
     expect(outputSection).toContain('use it as-is without asking')
   })
 
+  it('suggests models per agent, and a saved agent brings its own', () => {
+    const builtInAgents = availableAgents({})
+    const modelsOf = (agents: typeof builtInAgents, agentId: string) =>
+      agents.find((agent) => agent.id === agentId)?.models
+    expect(modelsOf(builtInAgents, 'claude-code')).toEqual(expect.arrayContaining(['fable', 'opus', 'claude-opus-5-5']))
+    expect(modelsOf(builtInAgents, 'codex')?.length).toBeGreaterThan(0)
+    expect(modelsOf(builtInAgents, 'opencode')?.every((model) => model.includes('/'))).toBe(true)
+    expect(modelsOf(builtInAgents, 'hermes')).toBeUndefined()
+
+    const savedCodex = { id: 'codex', name: 'My Codex', command: 'codex', headlessArgs: [], modelArgs: ['-m'], models: ['my-model'] }
+    expect(modelsOf(availableAgents({ agents: [savedCodex] }), 'codex')).toEqual(['my-model'])
+  })
+
   it("runs the ticket's chosen agent, falling back to the default", () => {
     const aider = { id: 'aider', name: 'Aider', command: 'aider', headlessArgs: ['--yes'] }
     const agents = availableAgents({ agents: [aider] })
