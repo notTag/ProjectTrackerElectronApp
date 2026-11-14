@@ -624,7 +624,7 @@ export const ticketShellCommand = (
   model?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, model, ticketSessionName(ticket))
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket) })
 }
 
 // Number only: a title can be edited later, and the number is what people search for.
@@ -646,7 +646,12 @@ const sessionNameWords = (agent: Agent, sessionName?: string): string[] => {
 }
 
 // Model and name go before promptArgs so a prompt flag is never split from its value.
-export const agentShellCommand = (agent: Agent, prompt: string, model?: string, sessionName?: string): string => {
+interface AgentLaunchOptions {
+  model?: string
+  sessionName?: string
+}
+
+export const agentShellCommand = (agent: Agent, prompt: string, { model, sessionName }: AgentLaunchOptions = {}): string => {
   const modelWords = agentModelWords(agent, model, shellQuote)
   const nameWords = sessionNameWords(agent, sessionName)
   const commandWords = [agent.command, ...modelWords, ...nameWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
@@ -882,7 +887,7 @@ export const buildOrchestratorLaunch = (
   if (entries.length < 2) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
   const title = orchestratorTabTitle(lane)
-  return { command: agentShellCommand(agent, prompt, model, title), title }
+  return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
 }
 
 export interface AgentChoice {

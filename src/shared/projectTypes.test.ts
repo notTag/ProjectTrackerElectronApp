@@ -458,8 +458,8 @@ describe('ticketShellCommand', () => {
   })
 
   it('shell-quotes a session name the same way as the prompt', () => {
-    expect(agentShellCommand(DEFAULT_AGENT, 'go', undefined, "Bob's run")).toBe("claude --name 'Bob'\\''s run' 'go'")
-    expect(agentShellCommand(DEFAULT_AGENT, 'go', 'opus', 'Ticket #7')).toBe("claude --model 'opus' --name 'Ticket #7' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionName: "Bob's run" })).toBe("claude --name 'Bob'\\''s run' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { model: 'opus', sessionName: 'Ticket #7' })).toBe("claude --model 'opus' --name 'Ticket #7' 'go'")
     expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
   })
 
@@ -1270,21 +1270,21 @@ describe('agent model', () => {
   })
 
   it('puts each built-in model flag before the prompt flags, model quoted', () => {
-    expect(agentShellCommand(byId('claude-code'), 'p', 'opus')).toBe("claude --model 'opus' 'p'")
-    expect(agentShellCommand(byId('codex'), 'p', 'gpt-5')).toBe("codex -m 'gpt-5' 'p'")
-    expect(agentShellCommand(byId('opencode'), 'p', 'anthropic/claude')).toBe(
+    expect(agentShellCommand(byId('claude-code'), 'p', { model: 'opus' })).toBe("claude --model 'opus' 'p'")
+    expect(agentShellCommand(byId('codex'), 'p', { model: 'gpt-5' })).toBe("codex -m 'gpt-5' 'p'")
+    expect(agentShellCommand(byId('opencode'), 'p', { model: 'anthropic/claude' })).toBe(
       "opencode -m 'anthropic/claude' --prompt 'p'"
     )
   })
 
   it('adds no flag for an empty, blank or "-"-prefixed model', () => {
     for (const model of [undefined, '', '   ', '--dangerously-skip-permissions']) {
-      expect(agentShellCommand(DEFAULT_AGENT, 'p', model)).toBe("claude 'p'")
+      expect(agentShellCommand(DEFAULT_AGENT, 'p', { model })).toBe("claude 'p'")
     }
   })
 
   it('adds no flag for an agent that cannot take a model', () => {
-    expect(agentShellCommand(byId('hermes'), 'p', 'some-model')).toBe("hermes chat -q 'p'")
+    expect(agentShellCommand(byId('hermes'), 'p', { model: 'some-model' })).toBe("hermes chat -q 'p'")
   })
 
   it('carries the model into an Auto Run launch', () => {
