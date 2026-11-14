@@ -743,8 +743,8 @@ const agentTakesModel = (agentId?: string) => {
   return modelArgs.length > 0
 }
 
-// The datalists below are keyed by agent id, so a field follows whichever agent
-// is in effect for it. No models → no list attribute → a plain text input.
+// A datalist, not a <select>: the list only suggests, so a model released after
+// this build or a custom agent's own id can still be typed in.
 const agentModelListId = (agentId?: string) => {
   const agent = findAgent(agents.value, agentId)
   const hasModels = (agent.models?.length ?? 0) > 0
@@ -1747,7 +1747,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
     <template v-for="agent in agents" :key="agent.id">
-      <datalist v-if="agent.models?.length" :id="`agent-models-${agent.id}`">
+      <datalist v-if="agent.models?.length" :id="agentModelListId(agent.id)">
         <option v-for="model in agent.models" :key="model" :value="model" />
       </datalist>
     </template>
