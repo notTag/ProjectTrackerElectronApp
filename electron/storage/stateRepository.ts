@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 
@@ -39,6 +39,11 @@ export const DATABASE_FILE_NAME = 'project-tracker.sqlite'
 // Copied once, the first time a database written by the old sql.js engine is
 // switched to WAL mode. Cheap insurance for the one-way upgrade.
 export const LEGACY_BACKUP_FILE_NAME = 'project-tracker.pre-wal-backup.sqlite'
+export const SNAPSHOTS_DIRECTORY_NAME = 'snapshots'
+export const SNAPSHOT_RETENTION_COUNT = 7
+const SNAPSHOT_PREFIX = 'project-tracker-'
+const SNAPSHOT_SUFFIX = '.sqlite'
+const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
@@ -191,6 +196,7 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
 export class StateRepository {
   private readonly db: DatabaseSync
   private readonly userId: string
+  private readonly snapshotsPath: string
   // The state this instance last handed out. saveState writes only the rows
   // that differ from it, so rows another process changed in the meantime — a
   // second app window, the sqlite3 CLI — are left alone instead of clobbered.
@@ -208,6 +214,9 @@ export class StateRepository {
 
     // busy_timeout first: switching to WAL needs a lock another process may hold.
     this.db.exec('PRAGMA busy_timeout = 5000')
+    this.snapshotsPath = path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
+    // Before migrations, so a migration bug can always be rolled back by hand.
+    if (databaseExisted) this.snapshotIfStale()
     if (databaseExisted) this.backUpLegacyDatabase(databasePath, path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))
     // WAL lets readers and one writer work at once across processes; WAL mode
     // is stored in the file, foreign_keys is per connection.
@@ -223,6 +232,54 @@ export class StateRepository {
       this.recordSchemaVersion()
       this.ensureUser()
     })
+  }
+
+  get snapshotsDirectory() {
+    return this.snapshotsPath
+  }
+
+  // VACUUM INTO reads one consistent snapshot through the WAL, so commits still
+  // in the -wal file are included; a plain file copy would miss them.
+  backUpNow(): string {
+    mkdirSync(this.snapshotsPath, { recursive: true })
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const snapshotPath = path.join(this.snapshotsPath, `${SNAPSHOT_PREFIX}${timestamp}${SNAPSHOT_SUFFIX}`)
+    try {
+      this.db.prepare('VACUUM INTO ?').run(snapshotPath)
+    } catch (error) {
+      // A half-written file would count as the newest snapshot and skip tomorrow's.
+      rmSync(snapshotPath, { force: true })
+      throw error
+    }
+    this.pruneSnapshots()
+    return snapshotPath
+  }
+
+  // Timestamped names sort lexically = chronologically, oldest first.
+  private listSnapshots(): string[] {
+    if (!existsSync(this.snapshotsPath)) return []
+    const isSnapshot = (name: string) => name.startsWith(SNAPSHOT_PREFIX) && name.endsWith(SNAPSHOT_SUFFIX)
+    return readdirSync(this.snapshotsPath).filter(isSnapshot).sort()
+  }
+
+  private snapshotIfStale() {
+    try {
+      const newestName = this.listSnapshots().at(-1)
+      if (newestName) {
+        const newestModifiedAt = statSync(path.join(this.snapshotsPath, newestName)).mtimeMs
+        const isFresh = Date.now() - newestModifiedAt < SNAPSHOT_INTERVAL_MS
+        if (isFresh) return
+      }
+      this.backUpNow()
+    } catch (error) {
+      console.warn('[snapshot] launch snapshot failed', error)
+    }
+  }
+
+  private pruneSnapshots() {
+    const snapshotNames = this.listSnapshots()
+    const expiredNames = snapshotNames.slice(0, -SNAPSHOT_RETENTION_COUNT)
+    for (const name of expiredNames) rmSync(path.join(this.snapshotsPath, name))
   }
 
   // sql.js ran with foreign keys off, so deleting a project never cascaded and
