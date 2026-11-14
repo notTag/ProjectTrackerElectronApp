@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  GITHUB_UNREACHABLE_MESSAGE,
+  isGithubUnreachableError,
   normalizeSemanticVersion,
+  boardWrites,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
+  orchestratorAgentChoice,
+  agentShellCommand,
   orchestratorPrompt,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
+  effectiveNextLaneId,
+  createUnassignedLane,
+  laneTransitions,
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
@@ -240,6 +248,12 @@ describe('ticket numbering', () => {
     expect(nextTicketNumber(board)).toBe(4)
   })
 
+  it('stores a new ticket\'s Next Lane override and armed state', () => {
+    const input = { laneId: 'idea', title: 'C', description: '', moveToLaneId: 'prd', moveOnComplete: true }
+    const board = addTicketToBoard(boardWithTickets(), input)
+    expect(board.tickets.at(-1)).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
+  })
+
   it('numbers imported issues sequentially after existing tickets', () => {
     const issues: GithubIssue[] = [
       { number: 90, title: 'One', body: '', htmlUrl: 'https://github.com/o/r/issues/90' },
@@ -421,7 +435,7 @@ describe('ticketShellCommand', () => {
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
     expect(command).toBe(
-      "claude 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+      "claude --name 'Ticket #7' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
     )
   })
 
@@ -437,9 +451,21 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('leaves agents with no session-name flag unnamed', () => {
+    const codex = availableAgents({}).find((agent) => agent.id === 'codex')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), codex)
+    expect(command).toBe("codex 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
+  it('shell-quotes a session name the same way as the prompt', () => {
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionName: "Bob's run" })).toBe("claude --name 'Bob'\\''s run' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { model: 'opus', sessionName: 'Ticket #7' })).toBe("claude --model 'opus' --name 'Ticket #7' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
   it('never starts the prompt with "-", which a CLI would parse as an option', () => {
@@ -493,6 +519,19 @@ describe('ticketShellCommand', () => {
     expect(outputSection).toContain('use it as-is without asking')
   })
 
+  it('suggests models per agent, and a saved agent brings its own', () => {
+    const builtInAgents = availableAgents({})
+    const modelsOf = (agents: typeof builtInAgents, agentId: string) =>
+      agents.find((agent) => agent.id === agentId)?.models
+    expect(modelsOf(builtInAgents, 'claude-code')).toEqual(expect.arrayContaining(['fable', 'opus', 'claude-opus-5-5']))
+    expect(modelsOf(builtInAgents, 'codex')?.length).toBeGreaterThan(0)
+    expect(modelsOf(builtInAgents, 'opencode')?.every((model) => model.includes('/'))).toBe(true)
+    expect(modelsOf(builtInAgents, 'hermes')).toBeUndefined()
+
+    const savedCodex = { id: 'codex', name: 'My Codex', command: 'codex', headlessArgs: [], modelArgs: ['-m'], models: ['my-model'] }
+    expect(modelsOf(availableAgents({ agents: [savedCodex] }), 'codex')).toEqual(['my-model'])
+  })
+
   it("runs the ticket's chosen agent, falling back to the default", () => {
     const aider = { id: 'aider', name: 'Aider', command: 'aider', headlessArgs: ['--yes'] }
     const agents = availableAgents({ agents: [aider] })
@@ -523,7 +562,7 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
   it("uses a ticket's own branch, else a short one from its number and first title words", () => {
     expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
@@ -760,10 +799,19 @@ describe('full auto', () => {
 
     const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
     const sections = onPrompt.split('\n\n')
-    expect(sections.at(-2)).toMatch(/^Full auto is on\. .*Then exit\.$/)
+    expect(sections.at(-2)).toMatch(/^Full auto is on\. /)
     expect(sections.at(-1)).toMatch(/^Output: docs\/prd\//)
     const onPromptWithoutSection = sections.filter((section) => !section.startsWith(FULL_AUTO_SECTION)).join('\n\n')
     expect(onPromptWithoutSection).toBe(offPrompt)
+  })
+
+  it('only lets a full auto agent exit when no open questions remain', () => {
+    const outputLane = lane('prd', { outputTarget: 'docs/prd/' })
+    const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
+    const fullAutoSection = onPrompt.split('\n\n').at(-2)
+    expect(fullAutoSection).toMatch(
+      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\.$/
+    )
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
@@ -815,12 +863,12 @@ describe('full auto', () => {
     const movesBetween = (before: Ticket, after: Ticket, alsoCompletedIds: string[] = [], at?: string) =>
       completionMoves(boardWith([before]), boardWith([after]), alsoCompletedIds, at)
 
-    it('moves a ticket whose checklist just went all-done and disarms it, keeping the target', () => {
+    it('moves a ticket whose checklist just went all-done, disarms it and clears the spent override', () => {
       const { board, moves } = movesBetween(armed(), completed(), [], '2026-02-02T00:00:00.000Z')
       expect(moves.map((move) => `${move.ticket.number}->${move.toLane.name}`)).toEqual(['7->DEV'])
       expect(board.tickets[0]).toMatchObject({
         laneId: 'dev',
-        moveToLaneId: 'dev',
+        moveToLaneId: undefined,
         moveOnComplete: false,
         updatedAt: '2026-02-02T00:00:00.000Z'
       })
@@ -867,6 +915,67 @@ describe('full auto', () => {
       const board = removeLaneFromBoard(boardWith([armed()]), 'dev')
       expect(board.tickets[0]).toMatchObject({ moveToLaneId: undefined, moveOnComplete: false, laneId: 'prd' })
     })
+
+    it('moves an armed ticket with no override to its lane\'s Next Lane; an override wins', () => {
+      const inheriting = { moveToLaneId: undefined }
+      const before = completionMoves(
+        boardWith([armed(inheriting)], { nextLaneId: 'empty' }),
+        boardWith([completed(inheriting)], { nextLaneId: 'empty' })
+      )
+      expect(before.moves.map((move) => move.toLane.id)).toEqual(['empty'])
+
+      const overridden = completionMoves(
+        boardWith([armed()], { nextLaneId: 'empty' }),
+        boardWith([completed()], { nextLaneId: 'empty' })
+      )
+      expect(overridden.moves.map((move) => move.toLane.id)).toEqual(['dev'])
+    })
+
+    it('does not move an unarmed ticket even when its lane has a Next Lane', () => {
+      const unarmed = { moveToLaneId: undefined, moveOnComplete: false }
+      const { moves } = completionMoves(
+        boardWith([armed(unarmed)], { nextLaneId: 'dev' }),
+        boardWith([completed(unarmed)], { nextLaneId: 'dev' })
+      )
+      expect(moves).toEqual([])
+    })
+  })
+
+  describe('effectiveNextLaneId', () => {
+    const inPrd = { laneId: 'prd' }
+    it('prefers the ticket, falls back to the lane, else undefined', () => {
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'dev' }, lane('prd', { nextLaneId: 'qa' }))).toBe('dev')
+      expect(effectiveNextLaneId(inPrd, lane('prd', { nextLaneId: 'qa' }))).toBe('qa')
+      expect(effectiveNextLaneId(inPrd, lane('prd'))).toBeUndefined()
+      expect(effectiveNextLaneId(inPrd, undefined)).toBeUndefined()
+      const unassigned = { ...createUnassignedLane(), nextLaneId: 'idea' }
+      expect(effectiveNextLaneId({ laneId: UNASSIGNED_LANE_ID }, unassigned)).toBe('idea')
+    })
+
+    it('treats an override naming the ticket\'s own lane as stale and inherits', () => {
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'prd' }, lane('prd', { nextLaneId: 'dev' }))).toBe('dev')
+    })
+  })
+
+  it('removeLaneFromBoard clears lane Next Lane pointers, the unassigned lane\'s included', () => {
+    const board: ProjectBoard = {
+      ...boardWith([], { nextLaneId: 'dev' }),
+      unassignedLane: { ...createUnassignedLane(), nextLaneId: 'dev' }
+    }
+    const removed = removeLaneFromBoard(board, 'dev')
+    expect(removed.lanes.map((each) => each.nextLaneId)).toEqual([undefined, undefined])
+    expect(removed.unassignedLane?.nextLaneId).toBeUndefined()
+  })
+
+  it('removeLaneFromBoard disarms tickets whose resolved Next Lane changed, and keeps the rest armed', () => {
+    const inheriting = ticket({ id: 'a', laneId: 'prd', moveOnComplete: true })
+    const ownTarget = ticket({ id: 'b', laneId: 'prd', moveToLaneId: 'dev', moveOnComplete: true })
+    const board: ProjectBoard = {
+      ...boardWith([inheriting, ownTarget], { nextLaneId: 'dev' }),
+      unassignedLane: { ...createUnassignedLane(), nextLaneId: 'empty' }
+    }
+    const removed = removeLaneFromBoard(board, 'prd')
+    expect(removed.tickets.map((each) => each.moveOnComplete)).toEqual([false, true])
   })
 
   it('keeps a ticket on its existing branch and drops its worktree path from the prompt when worktrees are on', () => {
@@ -1075,7 +1184,7 @@ describe('Auto Run orchestrator', () => {
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
       const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
       expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
-      expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
+      expect(launch?.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
       expect(launch?.command).toContain("it'\\''s-mine")
     })
   })
@@ -1130,5 +1239,156 @@ describe('semantic version', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
     expect(prompt).toContain("Leave it unset if it doesn't apply yet.")
     expect(prompt).not.toContain('sqlite3')
+  })
+})
+
+describe('isGithubUnreachableError', () => {
+  it('matches the unreachable message after IPC wraps it', () => {
+    const wrapped = new Error(`Error invoking remote method 'project:fetch-github': Error: ${GITHUB_UNREACHABLE_MESSAGE}`)
+    expect(isGithubUnreachableError(wrapped)).toBe(true)
+  })
+
+  it('ignores other GitHub failures and non-errors', () => {
+    expect(isGithubUnreachableError(new Error('GitHub rate limit reached. Try again in a while.'))).toBe(false)
+    expect(isGithubUnreachableError(new Error('Repository not found on GitHub.'))).toBe(false)
+    expect(isGithubUnreachableError(GITHUB_UNREACHABLE_MESSAGE)).toBe(false)
+    expect(isGithubUnreachableError(undefined)).toBe(false)
+  })
+})
+
+describe('agent model', () => {
+  const agents = availableAgents({})
+  const byId = (id: string) => agents.find((agent) => agent.id === id)!
+  const modelLane: SwimLane = { id: 'dev', name: 'Dev', agentPrompt: '', agentFilePath: '' }
+  const modelTicket = (number: number): Ticket => ({
+    id: `ticket-${number}`,
+    number,
+    laneId: 'dev',
+    title: 'Model work',
+    description: '',
+    createdAt: '2026-01-01T00:00:00.000Z'
+  })
+
+  it('puts each built-in model flag before the prompt flags, model quoted', () => {
+    expect(agentShellCommand(byId('claude-code'), 'p', { model: 'opus' })).toBe("claude --model 'opus' 'p'")
+    expect(agentShellCommand(byId('codex'), 'p', { model: 'gpt-5' })).toBe("codex -m 'gpt-5' 'p'")
+    expect(agentShellCommand(byId('opencode'), 'p', { model: 'anthropic/claude' })).toBe(
+      "opencode -m 'anthropic/claude' --prompt 'p'"
+    )
+  })
+
+  it('adds no flag for an empty, blank or "-"-prefixed model', () => {
+    for (const model of [undefined, '', '   ', '--dangerously-skip-permissions']) {
+      expect(agentShellCommand(DEFAULT_AGENT, 'p', { model })).toBe("claude 'p'")
+    }
+  })
+
+  it('adds no flag for an agent that cannot take a model', () => {
+    expect(agentShellCommand(byId('hermes'), 'p', { model: 'some-model' })).toBe("hermes chat -q 'p'")
+  })
+
+  it('carries the model into an Auto Run launch', () => {
+    const entry = buildAutoRunLaunch(modelTicket(3), modelLane, DEFAULT_AGENT, {}, false, 'sonnet')
+    expect(entry.launch.command.startsWith("claude --model 'sonnet' ")).toBe(true)
+  })
+
+  it('falls back to the ticket agent and its model when the lane names no orchestrator', () => {
+    const ticketChoice = { agent: byId('codex'), model: 'gpt-5' }
+    expect(orchestratorAgentChoice({}, ticketChoice, agents)).toEqual(ticketChoice)
+    expect(orchestratorAgentChoice({ orchestratorModel: 'gpt-5-mini' }, ticketChoice, agents)).toEqual({
+      agent: byId('codex'),
+      model: 'gpt-5-mini'
+    })
+  })
+
+  it('uses the lane orchestrator agent with its own model, not the ticket model', () => {
+    const ticketChoice = { agent: DEFAULT_AGENT, model: 'opus' }
+    const choice = orchestratorAgentChoice({ orchestratorAgentId: 'codex' }, ticketChoice, agents)
+    expect(choice).toEqual({ agent: byId('codex'), model: undefined })
+    const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
+    const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
+    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
+    expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+  })
+})
+
+describe('boardWrites', () => {
+  const baseLane = (id: string) => ({ id, name: id, agentPrompt: '', agentFilePath: '' })
+  const baseTicket = { id: 't1', number: 1, laneId: 'a', title: 'T', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
+  const board = { lanes: [baseLane('a'), baseLane('b')], tickets: [baseTicket] }
+
+  it('emits nothing for an identical board', () => {
+    expect(boardWrites(board, structuredClone(board))).toEqual([])
+  })
+
+  it('sends only the changed field of a ticket, plus its updatedAt', () => {
+    const edited = { ...board, tickets: [{ ...baseTicket, title: 'T2' }] }
+    expect(boardWrites(board, edited)).toEqual([
+      { kind: 'ticket:update', id: 't1', patch: { title: 'T2', updatedAt: undefined } }
+    ])
+  })
+
+  it('keeps a cleared field as an explicit undefined', () => {
+    const before = { ...board, tickets: [{ ...baseTicket, branchName: 'feat/x' }] }
+    const [write] = boardWrites(before, board)
+    expect(write).toEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
+    expect(write.kind === 'ticket:update' && 'branchName' in write.patch).toBe(true)
+  })
+
+  it('creates lanes before tickets and deletes last, tickets before lanes', () => {
+    const after = {
+      lanes: [baseLane('c'), baseLane('a')],
+      tickets: [{ ...baseTicket, laneId: 'c' }, { ...baseTicket, id: 't2', number: 2, laneId: 'c' }]
+    }
+    const before = { ...board, tickets: [...board.tickets, { ...baseTicket, id: 't3', number: 3, laneId: 'b' }] }
+    const kinds = boardWrites(before, after).map((write) => write.kind)
+    expect(kinds).toEqual(['lane:create', 'ticket:create', 'ticket:update', 'lane:reorder', 'ticket:delete', 'lane:delete'])
+  })
+
+  it('skips the reorder when lanes are only appended or removed', () => {
+    const after = { ...board, lanes: [baseLane('b'), baseLane('c')] }
+    expect(boardWrites(board, after).map((write) => write.kind)).toEqual(['lane:create', 'lane:delete'])
+  })
+
+  it('updates the unassigned column by its own id', () => {
+    const after = updateLaneInBoard(board, UNASSIGNED_LANE_ID, { agentPrompt: 'Triage.' })
+    expect(boardWrites(board, after)).toEqual([
+      { kind: 'lane:update', laneId: UNASSIGNED_LANE_ID, patch: { agentPrompt: 'Triage.' } }
+    ])
+  })
+})
+
+describe('laneTransitions', () => {
+  const lane = (id: string, nextLaneId?: string) => ({ id, name: id, agentPrompt: '', agentFilePath: '', nextLaneId })
+  const ticket = (id: string, laneId: string, moveToLaneId?: string) =>
+    ({ id, number: 1, laneId, title: id, description: '', createdAt: '', updatedAt: '', moveToLaneId }) as Ticket
+
+  it('draws one lane edge per Next Lane, forward and backward', () => {
+    const lanes = [lane('dev', 'mr'), lane('mr', 'dev')]
+    expect(laneTransitions(lanes, [])).toEqual([
+      { from: 'dev', to: 'mr', kind: 'lane', ticketIds: [] },
+      { from: 'mr', to: 'dev', kind: 'lane', ticketIds: [] }
+    ])
+  })
+
+  it('merges ticket overrides by source and target, and skips inherit-only tickets', () => {
+    const lanes = [lane('idea', 'prd'), lane('prd'), lane('dev')]
+    const tickets = [ticket('a', 'idea', 'dev'), ticket('b', 'idea', 'dev'), ticket('c', 'idea'), ticket('d', 'idea', 'prd')]
+    expect(laneTransitions(lanes, tickets)).toEqual([
+      { from: 'idea', to: 'prd', kind: 'lane', ticketIds: [] },
+      { from: 'idea', to: 'dev', kind: 'override', ticketIds: ['a', 'b'] }
+    ])
+  })
+
+  it('drops targets that are hidden, missing, or the lane itself', () => {
+    const lanes = [lane('idea', 'hidden'), lane('prd', 'prd')]
+    const tickets = [ticket('a', 'idea', 'gone'), ticket('b', 'prd', 'prd'), ticket('c', 'hidden', 'idea')]
+    expect(laneTransitions(lanes, tickets)).toEqual([])
+  })
+
+  it('treats the unassigned lane as a normal source', () => {
+    const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
+    const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
+    expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
   })
 })

@@ -7,6 +7,7 @@ import {
   addGithubIssuesToBoard,
   autoRunUsesWorktrees,
   availableAgents,
+  boardWrites,
   buildAutoRunLaunch,
   completionMoves,
   findAgent,
@@ -16,6 +17,7 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  isGithubUnreachableError,
   isPullRequestSettled,
   mergeScannedProjects,
   moveLaneInBoard,
@@ -24,6 +26,7 @@ import {
   ticketBranchName,
   updateLaneInBoard,
   type AutoRunTicketLaunch,
+  type BoardWrite,
   type TerminalTab,
   type CompletionMove,
   type FullAutoHandoff,
@@ -34,7 +37,8 @@ import {
   type ProjectStatus,
   type ProjectTrackerState,
   type SwimLane,
-  type Ticket
+  type Ticket,
+  UNASSIGNED_LANE_ID
 } from '@/shared/projectTypes'
 
 interface ProjectsStoreState {
@@ -149,6 +153,46 @@ const boardUpdate =
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
 
+// The board as stored, not getBoard's normalized default: a board that was
+// never saved diffs as empty, so its default lanes are written on first edit.
+const storedBoard = (state: ProjectTrackerState, projectPath: string): ProjectBoard =>
+  state.boards?.[projectPath] ?? { lanes: [], tickets: [] }
+
+type WrittenEntity = Ticket | SwimLane | void
+
+const sendBoardWrite = (projectPath: string, write: BoardWrite): Promise<WrittenEntity> => {
+  switch (write.kind) {
+    case 'lane:create':
+      return projectTrackerApi.createLane(projectPath, write.lane)
+    case 'lane:update':
+      return projectTrackerApi.updateLane(projectPath, write.laneId, write.patch)
+    case 'ticket:create':
+      return projectTrackerApi.createTicket(projectPath, write.ticket)
+    case 'ticket:update':
+      return projectTrackerApi.updateTicket(write.id, write.patch)
+    case 'lane:reorder':
+      return projectTrackerApi.reorderLanes(projectPath, write.laneIds)
+    case 'ticket:delete':
+      return projectTrackerApi.deleteTicket(write.id)
+    case 'lane:delete':
+      return projectTrackerApi.deleteLane(projectPath, write.laneId)
+  }
+}
+
+const replaceById = <T extends { id: string }>(entries: T[], written: T) => {
+  const exists = entries.some((entry) => entry.id === written.id)
+  return exists ? entries.map((entry) => (entry.id === written.id ? written : entry)) : [...entries, written]
+}
+
+// The row as stored wins over the local copy: a created ticket takes the
+// repository's number here.
+const withWrittenEntity = (board: ProjectBoard, write: BoardWrite, written: Ticket | SwimLane): ProjectBoard => {
+  if (write.kind.startsWith('ticket:')) return { ...board, tickets: replaceById(board.tickets, written as Ticket) }
+  const lane = written as SwimLane
+  if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: lane }
+  return { ...board, lanes: replaceById(board.lanes, lane) }
+}
+
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
     state: createSeedState(),
@@ -183,7 +227,7 @@ export const useProjectsStore = defineStore('projects', {
       mutate: (board: ProjectBoard) => ProjectBoard,
       alsoCompletedIds: string[] = []
     ) {
-      return this.save(boardUpdate(projectPath, mutate), undefined, alsoCompletedIds)
+      return this.persist(() => this.writeBoard(projectPath, boardUpdate(projectPath, mutate), undefined, alsoCompletedIds))
     },
 
     boardPreferences(projectPath: string): BoardPreferences {
@@ -237,17 +281,27 @@ export const useProjectsStore = defineStore('projects', {
       // save that finished in between can't drop it. The undo is anchored on
       // the old neighbour rather than restoring the old lane array, so any
       // other lane edit that landed meanwhile survives.
-      await this.save(moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
+      await this.persist(() =>
+        this.writeBoard(projectPath, moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
+      )
     },
 
     async removeLane(projectPath: string, laneId: string) {
       await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
     },
 
-    async addTicket(projectPath: string, laneId: string, title: string, description = '') {
+    async addTicket(
+      projectPath: string,
+      laneId: string,
+      title: string,
+      description = '',
+      completion: { moveToLaneId?: string; moveOnComplete?: boolean } = {}
+    ) {
       // Built inside the mutate callback so the ticket number is derived from the
       // same board revision it is appended to.
-      await this.updateBoard(projectPath, (board) => addTicketToBoard(board, { laneId, title, description }))
+      await this.updateBoard(projectPath, (board) =>
+        addTicketToBoard(board, { laneId, title, description, ...completion })
+      )
     },
 
     // Every ticket edit funnels through here — modal fields, checklist toggles,
@@ -321,6 +375,9 @@ export const useProjectsStore = defineStore('projects', {
         if (quiet && added === 0) return
         this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
       } catch (error) {
+        // A background pull while offline is not worth a banner; the caller retries later.
+        const isQuietOfflinePull = quiet && isGithubUnreachableError(error)
+        if (isQuietOfflinePull) return 'offline'
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
@@ -372,22 +429,25 @@ export const useProjectsStore = defineStore('projects', {
         } catch (error) {
           // A board load never surfaces GitHub errors; the modal does, on open.
           // One bad ticket skips only itself; a rate limit would fail every one after it.
+          // Being offline fails every one after it too.
           const isRateLimited = error instanceof Error && error.message.includes('rate limit')
-          if (isRateLimited) return
+          if (isRateLimited || isGithubUnreachableError(error)) return
         }
       }
     },
 
     // At most once per project per app launch. Marked before the await so two
     // overlapping calls can't both fetch, and a failure isn't retried: the
-    // manual button is the retry. A project without a repo isn't marked, so it
-    // still pulls if its data was just not loaded yet.
+    // manual button is the retry. Being offline is the exception: it's unmarked
+    // so the next board open after reconnecting pulls. A project without a repo
+    // isn't marked, so it still pulls if its data was just not loaded yet.
     async autoPullGithubIssues(projectPath: string) {
       if (autoPulledProjects.has(projectPath)) return
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) return
       autoPulledProjects.add(projectPath)
-      await this.pullGithubIssues(projectPath, { quiet: true })
+      const outcome = await this.pullGithubIssues(projectPath, { quiet: true })
+      if (outcome === 'offline') autoPulledProjects.delete(projectPath)
     },
 
     async removeTicket(projectPath: string, ticketId: string) {
@@ -428,9 +488,20 @@ export const useProjectsStore = defineStore('projects', {
           handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
           if (settledState === freshState) return
-          const savedState = await projectTrackerApi.saveProjectState(settledState)
-          handoffs = handoffsBetween(previousState, savedState)
-          this.state = savedState
+          // ticket:update carries the disarmed Move to along with the new lane.
+          this.state = settledState
+          try {
+            for (const projectPath of Object.keys(settledState.boards ?? {})) {
+              const freshBoard = storedBoard(freshState, projectPath)
+              const settledBoard = storedBoard(settledState, projectPath)
+              if (settledBoard === freshBoard) continue
+              await this.dispatchBoardWrites(projectPath, boardWrites(freshBoard, settledBoard))
+            }
+          } catch (error) {
+            await this.reloadAfterFailedWrite()
+            throw error
+          }
+          handoffs = handoffsBetween(previousState, this.state)
           this.notice = completionMovesNotice(moved) ?? this.notice
         })
       try {
@@ -460,7 +531,7 @@ export const useProjectsStore = defineStore('projects', {
           const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
           const useWorktrees = autoRunUsesWorktrees(toLane, laneHandoffs[0].ticket)
           const launches = laneHandoffs.map(({ ticket }) =>
-            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees)
+            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
           )
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
@@ -475,9 +546,86 @@ export const useProjectsStore = defineStore('projects', {
       return { assigneeName: assignee?.name, projectPath }
     },
 
-    // Throws on failure, unlike save(). `undo` reverts an optimistic edit and
-    // runs inside the same queue link, so a save queued behind this one can't
-    // read the edit before it is taken back and persist it.
+    // ponytail: one IPC call per entity, no transaction across them. A failed
+    // call reloads, so a multi-entity edit (GitHub import, worktree placement,
+    // completion moves) can land partly; imports dedupe on externalId and
+    // placements re-run. Add a board:apply batch channel if that bites.
+    async dispatchBoardWrites(projectPath: string, writes: BoardWrite[]) {
+      for (const write of writes) {
+        const written = await sendBoardWrite(projectPath, write)
+        if (!written) continue
+        const board = withWrittenEntity(storedBoard(this.state, projectPath), write, written)
+        this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
+      }
+    },
+
+    // Renderer state and main's baseline both reset to the DB, so neither can
+    // drift after a write that half landed.
+    async reloadAfterFailedWrite(undo?: StateUpdate) {
+      if (undo) this.state = undo(this.state)
+      try {
+        const freshState = await projectTrackerApi.getProjectState()
+        if (freshState) this.state = freshState
+      } catch {
+        // The failed write's error is the one worth showing.
+      }
+    },
+
+    // Board edits go out as per-entity writes. `undo` marks an edit that was
+    // already applied optimistically: the stored board is the state with it
+    // taken back, and that is what the edit is diffed against. Completion
+    // moves and full-auto handoffs come from the locally patched state; only
+    // refresh() looks for moves made elsewhere.
+    async writeBoard(
+      projectPath: string,
+      update: StateUpdate,
+      undo?: StateUpdate,
+      alsoCompletedIds: string[] = []
+    ): Promise<ProjectHandoffs[]> {
+      let handoffs: ProjectHandoffs[] = []
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const persistedState = undo ? undo(this.state) : this.state
+          const candidate = update(this.state)
+          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
+          this.state = ownMoves.state
+          try {
+            await this.dispatchBoardWrites(projectPath, writes)
+          } catch (error) {
+            await this.reloadAfterFailedWrite(undo)
+            throw error
+          }
+          handoffs = handoffsBetween(candidate, this.state)
+          this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
+        })
+      await saveQueue
+      return handoffs
+    },
+
+    async writeProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          let updated: ProjectRecord
+          try {
+            updated = await projectTrackerApi.updateProject(path, patch)
+          } catch (error) {
+            await this.reloadAfterFailedWrite()
+            throw error
+          }
+          const projects = this.state.snapshot.projects.map((project) => (project.path === path ? updated : project))
+          this.state = { ...this.state, snapshot: { ...this.state.snapshot, projects } }
+        })
+      await saveQueue
+      return []
+    },
+
+    // Whole-state save, kept for edits that span settings and rows: the seed,
+    // scan merges, GitHub data, scan-directory / hidden / third-party paths and
+    // board preferences. Throws on failure, unlike save(). `undo` reverts an
+    // optimistic edit inside the same queue link.
     // A save also returns a fresh read, so an agent's move can arrive here
     // instead of through refresh. Diffing against the candidate keeps this
     // save's own edits out of it — but not Move to's moves, which are applied
@@ -518,11 +666,17 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async save(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate, alsoCompletedIds: string[] = []) {
+      return this.persist(() => this.writeState(nextState, undo, alsoCompletedIds))
+    },
+
+    // Shared by every write path: the saving flag, the error banner and the
+    // full-auto launches, and a boolean callers check with `if (!saved)`.
+    async persist(write: () => Promise<ProjectHandoffs[]>) {
       this.saving = true
       this.error = null
       let handoffs: ProjectHandoffs[] = []
       try {
-        handoffs = await this.writeState(nextState, undo, alsoCompletedIds)
+        handoffs = await write()
         return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
@@ -585,15 +739,7 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {
-      await this.save((currentState) => ({
-        ...currentState,
-        snapshot: {
-          ...currentState.snapshot,
-          projects: currentState.snapshot.projects.map((project) =>
-            project.path === path ? { ...project, ...patch } : project
-          )
-        }
-      }))
+      await this.persist(() => this.writeProject(path, patch))
     },
 
     async setPriority(path: string, priority: ProjectPriority) {
@@ -758,7 +904,7 @@ export const useProjectsStore = defineStore('projects', {
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt)
+          .runTicketAgent(projectPath, agentId, prompt, ticket.model)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false

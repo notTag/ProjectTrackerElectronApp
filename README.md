@@ -207,7 +207,8 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 
 ### Known limits
 
-- Every save still sends the entire state over IPC. The main process compares it with the state it last handed out and writes only what changed: changed fields for tickets, changed rows for everything else. The renderer doesn't call the row-level repository methods yet.
+- Ordinary edits (tickets, lanes, project notes / priority) send only the entity that changed, one IPC call each. Scans, GitHub data refreshes, scan-directory / hidden / third-party edits (including setting a project's status) and board preferences still send the whole state, which the main process diffs against the state it last handed out so it writes only what changed.
+- An edit that touches several entities (a GitHub import, worktree placement after Auto Run, Move to on completion) is a sequence of per-entity writes with no transaction across them. If one fails partway the app re-reads the database, so what landed stays and the rest is dropped. Re-pulling issues skips the ones already imported.
 - Changes another process makes reach the app within about 10 seconds, when the window regains focus, or when you focus a field in a ticket. The background check skips while a field has focus, so it never replaces text you're typing.
 - When two writers edit the same ticket field, or the same lane, project or setting, the last write wins.
 - `node:sqlite` is still experimental in Node 22 and logs an `ExperimentalWarning` at startup.

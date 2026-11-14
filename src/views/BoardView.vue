@@ -24,6 +24,7 @@ import {
   availableAgents,
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
+  orchestratorAgentChoice,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -39,6 +40,8 @@ import {
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  effectiveNextLaneId,
+  boardLaneById,
   hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
@@ -87,7 +90,11 @@ const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
 
-const ticketDraft = ref<{ title: string; description: string; laneId: string } | null>(null)
+// nextLaneId stays null until the user picks one, so the field follows the
+// Status lane's default as Status changes.
+const ticketDraft = ref<{ title: string; description: string; laneId: string; nextLaneId: string | null } | null>(
+  null
+)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
 const linkDraft = ref('')
@@ -557,20 +564,40 @@ onBeforeUnmount(() => {
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
-  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId }
+  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null }
 }
+
+const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
+
+const draftNextLaneId = computed(() => {
+  const draft = ticketDraft.value
+  if (!draft) return ''
+  // A pick made before Status changed to that same lane would be a no-op target.
+  const pickIsStatusLane = draft.nextLaneId === draft.laneId
+  if (draft.nextLaneId === null || pickIsStatusLane) return laneNextLaneId(draft.laneId)
+  return draft.nextLaneId
+})
 
 const saveTicketDraft = async () => {
   const draft = ticketDraft.value
   if (!draft || !draft.title.trim()) return
   const description = draft.description.trim()
   const templateWasLeftUntouched = description === TICKET_DESCRIPTION_TEMPLATE.trim()
+  const resolvedNextLaneId = draftNextLaneId.value
+  // Matching the lane default is stored as no override, so the ticket keeps
+  // inheriting if the lane's Next Lane changes later.
+  const overridesLaneDefault = resolvedNextLaneId !== laneNextLaneId(draft.laneId)
+  const completion = {
+    moveToLaneId: overridesLaneDefault && resolvedNextLaneId ? resolvedNextLaneId : undefined,
+    moveOnComplete: Boolean(resolvedNextLaneId)
+  }
   ticketDraft.value = null
   await store.addTicket(
     projectPath.value,
     draft.laneId,
     draft.title.trim(),
-    templateWasLeftUntouched ? '' : description
+    templateWasLeftUntouched ? '' : description,
+    completion
   )
 }
 
@@ -718,9 +745,43 @@ const laneName = (laneId: string) => {
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 
-// Picking a target arms it — the checkbox starts ticked; None clears both.
-const setMoveToLane = (ticket: Ticket, laneId: string) =>
-  editTicket(ticket, { moveToLaneId: laneId || undefined, moveOnComplete: Boolean(laneId) })
+const openTicketNextLaneId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket) return undefined
+  return effectiveNextLaneId(ticket, boardLaneById(board.value, ticket.laneId))
+})
+
+// '' = inherit. A stale override naming the ticket's own lane shows as inherit
+// too, matching how effectiveNextLaneId resolves it.
+const openTicketOverrideId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket?.moveToLaneId || ticket.moveToLaneId === ticket.laneId) return ''
+  return ticket.moveToLaneId
+})
+
+const openTicketLaneDefaultLabel = computed(() => {
+  const ticket = openTicket.value
+  const laneDefaultId = ticket ? laneNextLaneId(ticket.laneId) : ''
+  return laneDefaultId ? `Lane default: ${laneName(laneDefaultId)}` : 'None'
+})
+
+// Next Lane targets for a ticket: No status and every lane, minus the lane the
+// ticket is in (moving to it is a no-op).
+const nextLaneOptionsFor = (currentLaneId: string) =>
+  laneColumns.value.filter((lane) => lane.id !== currentLaneId)
+
+// Picking a lane arms it — the checkbox starts ticked. Picking the lane default
+// (or the lane it already inherits) drops the override, so the ticket follows
+// later changes to its lane's Next Lane; it stays armed only if there is one.
+const setMoveToLane = (ticket: Ticket, laneId: string) => {
+  const laneDefaultId = laneNextLaneId(ticket.laneId)
+  const overridesLaneDefault = laneId !== '' && laneId !== laneDefaultId
+  if (overridesLaneDefault) {
+    editTicket(ticket, { moveToLaneId: laneId, moveOnComplete: true })
+    return
+  }
+  editTicket(ticket, { moveToLaneId: undefined, moveOnComplete: Boolean(laneDefaultId) })
+}
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
 // different instruction once it moves column.
@@ -734,7 +795,37 @@ const promptContext = (ticket: Ticket) => ({
 
 const ticketCommand = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
-  return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket))
+  return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket), ticket.model)
+}
+
+const agentTakesModel = (agentId?: string) => {
+  const modelArgs = findAgent(agents.value, agentId).modelArgs ?? []
+  return modelArgs.length > 0
+}
+
+// A datalist, not a <select>: the list only suggests, so a model released after
+// this build or a custom agent's own id can still be typed in.
+const agentModelListId = (agentId?: string) => {
+  const agent = findAgent(agents.value, agentId)
+  const hasModels = (agent.models?.length ?? 0) > 0
+  return hasModels ? `agent-models-${agent.id}` : undefined
+}
+
+const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
+
+// A model id belongs to one CLI ('opus' means nothing to Codex), so switching
+// the agent clears it rather than handing the new CLI a model it can't run.
+// An orchestrator left on "Same as ticket agent" follows the ticket agent, so
+// its model is cleared along with it.
+const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
+  const orchestratorFollowsTicketAgent = !lane.orchestratorAgentId
+  const orchestratorModelPatch = orchestratorFollowsTicketAgent ? { orchestratorModel: undefined } : {}
+  editLane(lane, { autoRunAgentId, autoRunModel: undefined, ...orchestratorModelPatch })
+}
+
+const changeAutoRunConfirmAgent = () => {
+  autoRunConfirmModel.value = ''
+  if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
 }
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
@@ -759,11 +850,18 @@ const autoRunTooltip = (lane: SwimLane) => {
 // one run pick a different agent or terminal without changing the lane.
 const autoRunConfirmLaneId = ref<string | null>(null)
 const autoRunConfirmAgentId = ref('')
+const autoRunConfirmModel = ref('')
+// '' = same as the ticket agent, matching an absent lane.orchestratorAgentId.
+const autoRunConfirmOrchestratorAgentId = ref('')
+const autoRunConfirmOrchestratorModel = ref('')
 const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
 const askToAutoRunLane = (lane: SwimLane) => {
   autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
+  autoRunConfirmModel.value = lane.autoRunModel ?? ''
+  autoRunConfirmOrchestratorAgentId.value = lane.orchestratorAgentId ?? ''
+  autoRunConfirmOrchestratorModel.value = lane.orchestratorModel ?? ''
   autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
   autoRunConfirmLaneId.value = lane.id
 }
@@ -773,11 +871,12 @@ const confirmAutoRunLane = () => {
   autoRunConfirmLaneId.value = null
   if (!lane) return
   const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  const model = autoRunConfirmModel.value
   const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
   const launches = autoRunTickets(lane).map((ticket) =>
-    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees)
+    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
   )
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
@@ -788,7 +887,18 @@ const confirmAutoRunLane = () => {
     terminalId: terminal.id,
     terminalLabel: terminal.label
   }
-  const orchestrator = buildOrchestratorLaunch(lane, launches, agent, orchestratorContext)
+  const orchestratorSettings = {
+    orchestratorAgentId: autoRunConfirmOrchestratorAgentId.value || undefined,
+    orchestratorModel: autoRunConfirmOrchestratorModel.value
+  }
+  const orchestratorChoice = orchestratorAgentChoice(orchestratorSettings, { agent, model }, agents.value)
+  const orchestrator = buildOrchestratorLaunch(
+    lane,
+    launches,
+    orchestratorChoice.agent,
+    orchestratorContext,
+    orchestratorChoice.model
+  )
   void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees, orchestrator)
 }
 
@@ -923,7 +1033,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1152,6 +1262,17 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <label>
+        Next Lane
+        <select :value="draftNextLaneId" @change="ticketDraft.nextLaneId = ($event.target as HTMLSelectElement).value">
+          <option value="">None</option>
+          <option v-for="lane in nextLaneOptionsFor(ticketDraft.laneId)" :key="lane.id" :value="lane.id">
+            {{ lane.name }}
+          </option>
+        </select>
+        <span class="field-hint">Defaults to the Status lane's Next Lane.</span>
+      </label>
+
+      <label>
         Description
         <textarea v-model="ticketDraft.description" placeholder="Details, acceptance criteria, links..." />
       </label>
@@ -1199,19 +1320,6 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <label>
-        Move to
-        <select
-          :value="openTicket.moveToLaneId ?? ''"
-          @change="setMoveToLane(openTicket, ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">None</option>
-          <option :value="UNASSIGNED_LANE_ID">{{ UNASSIGNED_LANE_NAME }}</option>
-          <option v-for="lane in board.lanes" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
-        </select>
-        <span class="field-hint">Where this ticket goes when its checklist is done or ▶ Run succeeds.</span>
-      </label>
-
-      <label>
         Assignee
         <select
           :value="openTicket.assigneeId ?? ''"
@@ -1251,7 +1359,7 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.branchName ?? ''"
           placeholder="feat/board-ticket-fields"
-          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() || undefined })"
+          @change="editTicket(openTicket, { branchName: trimmedInputValue($event) })"
         />
       </label>
 
@@ -1262,7 +1370,7 @@ const runTicketAgent = (ticket: Ticket) => {
           :value="openTicket.worktreePath ?? ''"
           placeholder="/Users/me/Code/my-app-board-ticket-fields"
           @change="
-            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+            editTicket(openTicket, { worktreePath: trimmedInputValue($event) })
           "
         />
       </label>
@@ -1366,10 +1474,19 @@ const runTicketAgent = (ticket: Ticket) => {
           Agent
           <select
             :value="agentForTicket(openTicket, agents).id"
-            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value })"
+            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value, model: undefined })"
           >
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
+        </label>
+        <label v-if="agentTakesModel(openTicket.agentId)">
+          Model
+          <input
+            :value="openTicket.model ?? ''"
+            :list="agentModelListId(openTicket.agentId)"
+            placeholder="CLI default"
+            @change="editTicket(openTicket, { model: trimmedInputValue($event) })"
+          />
         </label>
         <label class="checkbox-label">
           <input
@@ -1382,6 +1499,21 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">
           In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
         </span>
+        <label>
+          Next Lane
+          <select
+            :value="openTicketOverrideId"
+            @change="setMoveToLane(openTicket, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ openTicketLaneDefaultLabel }}</option>
+            <option v-for="lane in nextLaneOptionsFor(openTicket.laneId)" :key="lane.id" :value="lane.id">
+              {{ lane.name }}
+            </option>
+          </select>
+          <span class="field-hint">
+            Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane.
+          </span>
+        </label>
         <p class="agent-hint">
           The agent gets this ticket, its lane's prompt, markdown file and output location.
           Run works in the background and saves its output below — it can write files but not run
@@ -1418,13 +1550,13 @@ const runTicketAgent = (ticket: Ticket) => {
         View on GitHub ({{ openTicket.externalId?.replace('github:', '#') }})
       </a>
 
-      <label v-if="openTicket.moveToLaneId" class="checkbox-label">
+      <label v-if="openTicketNextLaneId" class="checkbox-label">
         <input
           type="checkbox"
           :checked="Boolean(openTicket.moveOnComplete)"
           @change="editTicket(openTicket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
         />
-        Move to {{ laneName(openTicket.moveToLaneId) }} swimlane
+        Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
       </label>
 
       <div class="modal-actions">
@@ -1460,14 +1592,35 @@ const runTicketAgent = (ticket: Ticket) => {
       <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
       <p id="auto-run-confirm-question" class="auto-run-question">
         Run {{ autoRunTickets(autoRunConfirmLane).length }} separate
-        <select v-model="autoRunConfirmAgentId" aria-label="Agent">
+        <select v-model="autoRunConfirmAgentId" aria-label="Agent" @change="changeAutoRunConfirmAgent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
         agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
+      <label v-if="agentTakesModel(autoRunConfirmAgentId)">
+        Model
+        <input v-model="autoRunConfirmModel" :list="agentModelListId(autoRunConfirmAgentId)" placeholder="CLI default" />
+      </label>
+      <template v-if="autoRunTickets(autoRunConfirmLane).length >= 2">
+        <label>
+          Orchestrator agent
+          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+            <option value="">Same as ticket agent</option>
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
+          Orchestrator model
+          <input
+            v-model="autoRunConfirmOrchestratorModel"
+            :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+          />
+        </label>
+      </template>
       <p class="auto-run-question">
         Each opens in its own
-        <select v-model="autoRunConfirmTerminalId" aria-label="Terminal">
+        <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
           <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
             {{ terminal.label }}
           </option>
@@ -1556,25 +1709,60 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>
+        <div class="auto-run-pickers">
+          <label>
+            Agent
+            <select
+              :value="findAgent(agents, openLane.autoRunAgentId).id"
+              @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Shell
+            <select
+              :value="autoRunTerminal(openLane).id"
+              @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+            >
+              <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+                {{ terminal.label }}
+              </option>
+            </select>
+          </label>
+        </div>
+        <label v-if="agentTakesModel(openLane.autoRunAgentId)">
+          Model
+          <input
+            :value="openLane.autoRunModel ?? ''"
+            :list="agentModelListId(openLane.autoRunAgentId)"
+            placeholder="CLI default"
+            @change="editLane(openLane, { autoRunModel: trimmedInputValue($event) })"
+          />
+        </label>
         <label>
-          Agent
+          Orchestrator agent
           <select
-            :value="findAgent(agents, openLane.autoRunAgentId).id"
-            @change="editLane(openLane, { autoRunAgentId: ($event.target as HTMLSelectElement).value })"
+            :value="openLane.orchestratorAgentId ?? ''"
+            @change="
+              editLane(openLane, {
+                orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
+                orchestratorModel: undefined
+              })
+            "
           >
+            <option value="">Same as ticket agent</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label>
-          Terminal
-          <select
-            :value="autoRunTerminal(openLane).id"
-            @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
-          >
-            <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
-              {{ terminal.label }}
-            </option>
-          </select>
+        <label v-if="agentTakesModel(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)">
+          Orchestrator model
+          <input
+            :value="openLane.orchestratorModel ?? ''"
+            :list="agentModelListId(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+            :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+            @change="editLane(openLane, { orchestratorModel: trimmedInputValue($event) })"
+          />
         </label>
         <label class="checkbox-label">
           <input
@@ -1591,6 +1779,26 @@ const runTicketAgent = (ticket: Ticket) => {
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
+        </label>
+        <label>
+          Next Lane
+          <select
+            :value="openLane.nextLaneId ?? ''"
+            @change="editLane(openLane, { nextLaneId: ($event.target as HTMLSelectElement).value || undefined })"
+          >
+            <option value="">None</option>
+            <option v-if="openLane.id !== UNASSIGNED_LANE_ID" :value="UNASSIGNED_LANE_ID">
+              {{ UNASSIGNED_LANE_NAME }}
+            </option>
+            <option
+              v-for="lane in board.lanes.filter((candidate) => candidate.id !== openLane?.id)"
+              :key="lane.id"
+              :value="lane.id"
+            >
+              {{ lane.name }}
+            </option>
+          </select>
+          <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
         </label>
         <label class="checkbox-label">
           <input
@@ -1633,5 +1841,10 @@ const runTicketAgent = (ticket: Ticket) => {
         <button @click="openLaneId = null">Done</button>
       </div>
     </section>
+    <template v-for="agent in agents" :key="agent.id">
+      <datalist v-if="agent.models?.length" :id="agentModelListId(agent.id)">
+        <option v-for="model in agent.models" :key="model" :value="model" />
+      </datalist>
+    </template>
   </div>
 </template>
