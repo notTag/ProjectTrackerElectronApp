@@ -345,13 +345,18 @@ export const useProjectsStore = defineStore('projects', {
         status.url === ticket.pullRequestUrl &&
         status.state === ticket.pullRequestState &&
         status.mergedAt === ticket.pullRequestMergedAt
-      // Skipped so a refresh that learns nothing does not bump updatedAt.
+      // Skipped so a refresh that learns nothing does not trigger a no-op save.
       if (unchanged) return
-      await this.updateTicket(projectPath, ticket.id, {
+      const pullRequestPatch = {
         pullRequestUrl: status.url,
         pullRequestState: status.state,
         pullRequestMergedAt: status.mergedAt
-      })
+      }
+      // Skips the updatedAt stamp, because a background PR sync is not a user edit.
+      // Spread over the saved ticket so an edit made meanwhile is kept.
+      const applyPullRequest = (savedTicket: Ticket): Ticket =>
+        savedTicket.id === ticket.id ? { ...savedTicket, ...pullRequestPatch } : savedTicket
+      await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(applyPullRequest) }))
     },
 
     // ponytail: sequential, one request per ticket. Fine for a board's worth of

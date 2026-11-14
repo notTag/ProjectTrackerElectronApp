@@ -9,7 +9,8 @@ const api = vi.hoisted(() => ({
   saveProjectState: vi.fn(),
   autoRunLane: vi.fn(),
   runTicketAgent: vi.fn(),
-  fetchProjectGithubIssues: vi.fn()
+  fetchProjectGithubIssues: vi.fn(),
+  fetchTicketPullRequest: vi.fn()
 }))
 vi.mock('@/services/projectTrackerApi', () => ({ projectTrackerApi: api }))
 
@@ -311,24 +312,71 @@ describe('Move to on completion', () => {
   })
 })
 
+const projectRecord = (path: string, githubUrl?: string): ProjectRecord => ({
+  path,
+  name: 'app',
+  status: 'active',
+  priority: 'none',
+  notes: '',
+  source: 'first-party',
+  githubUrl,
+  hasGit: true,
+  hasPackageJson: true,
+  hasReadme: false,
+  lastScannedAt: '2026-01-01T00:00:00.000Z'
+})
+
+describe('refreshPullRequest', () => {
+  const PULL_REQUEST_URL = 'https://github.com/o/r/pull/9'
+  const SEEDED_UPDATED_AT = '2026-01-01T00:00:00.000Z'
+
+  const storeWithOpenPullRequest = () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    Object.assign(getBoard(state, PROJECT_PATH).tickets[0], {
+      pullRequestUrl: PULL_REQUEST_URL,
+      pullRequestState: 'open',
+      updatedAt: SEEDED_UPDATED_AT
+    })
+    const projects = [projectRecord(PROJECT_PATH, 'https://github.com/o/r')]
+    store.state = { ...state, snapshot: { ...state.snapshot, projects } }
+    return store
+  }
+  const savedTicket = (store: ReturnType<typeof useProjectsStore>) => getBoard(store.state, PROJECT_PATH).tickets[0]
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  it('saves a PR state change without stamping updatedAt', async () => {
+    const mergedAt = '2026-01-05T00:00:00.000Z'
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'merged', mergedAt })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestState: 'merged', pullRequestMergedAt: mergedAt })
+    expect(savedTicket(store).updatedAt).toBe(SEEDED_UPDATED_AT)
+  })
+
+  it('writes nothing when GitHub reports no change', async () => {
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'open', mergedAt: undefined })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(api.saveProjectState).not.toHaveBeenCalled()
+  })
+})
+
 describe('autoPullGithubIssues', () => {
   // The pulled-once set lives for the module's lifetime (one app launch), so
   // each test uses its own project path.
   const storeWithProject = (path: string, githubUrl?: string) => {
     const store = useProjectsStore()
-    const project: ProjectRecord = {
-      path,
-      name: 'app',
-      status: 'active',
-      priority: 'none',
-      notes: '',
-      source: 'first-party',
-      githubUrl,
-      hasGit: true,
-      hasPackageJson: true,
-      hasReadme: false,
-      lastScannedAt: '2026-01-01T00:00:00.000Z'
-    }
+    const project = projectRecord(path, githubUrl)
     store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
     return store
   }
