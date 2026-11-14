@@ -368,24 +368,28 @@ describe('Move to on completion', () => {
   })
 })
 
-const storeWithProject = (path: string, githubUrl?: string) => {
+const projectRecord = (path: string, githubUrl?: string, name = 'app'): ProjectRecord => ({
+  path,
+  name,
+  status: 'active',
+  priority: 'none',
+  notes: '',
+  source: 'first-party',
+  githubUrl,
+  hasGit: true,
+  hasPackageJson: true,
+  hasReadme: false,
+  lastScannedAt: '2026-01-01T00:00:00.000Z'
+})
+
+const storeWithProjects = (...projects: ProjectRecord[]) => {
   const store = useProjectsStore()
-  const project: ProjectRecord = {
-    path,
-    name: 'app',
-    status: 'active',
-    priority: 'none',
-    notes: '',
-    source: 'first-party',
-    githubUrl,
-    hasGit: true,
-    hasPackageJson: true,
-    hasReadme: false,
-    lastScannedAt: '2026-01-01T00:00:00.000Z'
-  }
-  store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
+  store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects } }
   return store
 }
+
+const storeWithProject = (path: string, githubUrl?: string, name = 'app') =>
+  storeWithProjects(projectRecord(path, githubUrl, name))
 
 describe('autoPullGithubIssues', () => {
   // The pulled-once set lives for the module's lifetime (one app launch), so
@@ -410,7 +414,7 @@ describe('autoPullGithubIssues', () => {
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     const importedTitles = getBoard(store.state, '/code/pull-once').tickets.map((ticket) => ticket.title)
     expect(importedTitles).toEqual(['Crash on save'])
-    expect(store.notice).toBe('Imported 1 issue.')
+    expect(store.notice).toBe('Imported 1 issue into app.')
   })
 
   it('skips a project without a repo, with no error banner', async () => {
@@ -439,7 +443,7 @@ describe('autoPullGithubIssues', () => {
     await store.autoPullGithubIssues('/code/offline')
     await store.autoPullGithubIssues('/code/offline')
 
-    expect(store.error).toBe('GitHub rate limit exceeded')
+    expect(store.error).toBe('app: GitHub rate limit exceeded')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     expect(store.githubLoading['/code/offline']).toBe(false)
   })
@@ -451,7 +455,7 @@ describe('autoPullGithubIssues', () => {
     await store.autoPullGithubIssues('/code/missing')
     await store.autoPullGithubIssues('/code/missing')
 
-    expect(store.error).toBe('Repository not found on GitHub.')
+    expect(store.error).toBe('app: Repository not found on GitHub.')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
   })
 
@@ -465,7 +469,46 @@ describe('autoPullGithubIssues', () => {
 
     await store.autoPullGithubIssues('/code/unreachable')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(2)
-    expect(store.notice).toBe('Imported 1 issue.')
+    expect(store.notice).toBe('Imported 1 issue into app.')
+  })
+
+  it('names the pulled project, not whichever board is open when the fetch resolves', async () => {
+    let resolveFetch: (issues: (typeof issue)[]) => void = () => undefined
+    api.fetchProjectGithubIssues
+      .mockReturnValueOnce(new Promise((resolve) => (resolveFetch = resolve)))
+      .mockResolvedValueOnce([])
+    const store = storeWithProjects(
+      projectRecord('/code/board-a', 'https://github.com/o/a', 'board-a'),
+      projectRecord('/code/board-b', 'https://github.com/o/b', 'board-b')
+    )
+
+    const pullForA = store.autoPullGithubIssues('/code/board-a')
+    // the user switches to board B while A's fetch is in flight
+    await store.autoPullGithubIssues('/code/board-b')
+    resolveFetch([issue])
+    await pullForA
+
+    expect(store.notice).toBe('Imported 1 issue into board-a.')
+  })
+
+  it('names the project when saving the pulled issues fails', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue([issue])
+    api.createLane.mockRejectedValue(new Error('disk full'))
+    api.createTicket.mockRejectedValue(new Error('disk full'))
+    const store = storeWithProject('/code/save-fails', 'https://github.com/o/r')
+
+    await store.pullGithubIssues('/code/save-fails')
+
+    expect(store.error).toBe('app: disk full')
+    expect(store.notice).toBeNull()
+  })
+
+  it('names the project when a manual pull has no repo', async () => {
+    const store = storeWithProject('/code/manual-no-repo')
+
+    await store.pullGithubIssues('/code/manual-no-repo')
+
+    expect(store.error).toBe('app has no linked GitHub repository.')
   })
 })
 
