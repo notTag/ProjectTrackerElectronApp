@@ -1474,3 +1474,38 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
 
   return [...laneCreates, ...laneUpdates, ...ticketCreates, ...ticketUpdates, ...reorder, ...ticketDeletes, ...laneDeletes]
 }
+
+export interface LaneTransition {
+  from: string
+  to: string
+  // 'lane' = the source lane's own Next Lane; 'override' = tickets whose own
+  // Next Lane differs from their lane's, merged per target.
+  kind: 'lane' | 'override'
+  ticketIds: string[]
+}
+
+// Edges for the graph view's lane state diagram. Targets outside `lanes`
+// (hidden, filtered out, or deleted) and self-loops are dropped.
+export const laneTransitions = (lanes: SwimLane[], tickets: Ticket[]): LaneTransition[] => {
+  const lanesById = new Map(lanes.map((lane) => [lane.id, lane]))
+  const isDrawableTarget = (from: string, to: string | undefined): to is string =>
+    to !== undefined && to !== from && lanesById.has(to)
+
+  const laneEdges: LaneTransition[] = lanes
+    .filter((lane) => isDrawableTarget(lane.id, lane.nextLaneId))
+    .map((lane) => ({ from: lane.id, to: lane.nextLaneId!, kind: 'lane', ticketIds: [] }))
+
+  const overrideEdges = new Map<string, LaneTransition>()
+  for (const ticket of tickets) {
+    const lane = lanesById.get(ticket.laneId)
+    if (!lane) continue
+    const target = effectiveNextLaneId(ticket, lane)
+    const inheritsLaneDefault = target === lane.nextLaneId
+    if (inheritsLaneDefault || !isDrawableTarget(lane.id, target)) continue
+    const key = `${lane.id}->${target}`
+    const edge = overrideEdges.get(key) ?? { from: lane.id, to: target, kind: 'override' as const, ticketIds: [] }
+    edge.ticketIds.push(ticket.id)
+    overrideEdges.set(key, edge)
+  }
+  return [...laneEdges, ...overrideEdges.values()]
+}

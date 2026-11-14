@@ -425,11 +425,15 @@ In graph view this opens as a side panel instead of a centered modal.
 
 ### 3.12 Graph view
 
-- A three-level tree: **Project** node, then **Swim lane** nodes ("Swim lane · N"), then **Ticket** nodes (#N and title), joined by curved lines.
-- It uses the same visible lanes and filtered tickets as the swimlane view.
+- A state diagram of the board's workflow. Each **Swim lane** is a state ("Swim lane · N"), laid out left to right in board order with No status first. Its **Ticket** nodes (#N and title) stack underneath it.
+- **Transitions**: an arrow from a lane to its Next Lane. Arrows to a lane further right curve above the row; arrows back to an earlier lane curve below it.
+- **Ticket overrides**: tickets whose own Next Lane differs from their lane's add a dashed arrow to their target. Overrides with the same source and target share one arrow, labeled with the ticket count ("2 tickets"). Built by `laneTransitions` in `projectTypes.ts`.
+- **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane with no incoming arrow is dimmed. Tickets can still be dragged there, so this is only a hint.
+- Armed tickets (they move on completion) show **▶** next to their number.
+- It uses the same visible lanes and filtered tickets as the swimlane view. Arrows into hidden, filtered-out or deleted lanes are not drawn.
 - **Details sidebar**:
-  - With the project selected: the number of swim lanes, and a list of lanes with ticket counts that you can click to select.
-  - With a lane selected: its ticket count and a list of tickets you can click to open, or "No tickets match the current filters."
+  - Nothing selected: the number of swim lanes, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
+  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), and a list of tickets you can click to open, or "No tickets match the current filters."
 - Clicking a ticket node or a list entry opens the Ticket modal as a side panel, and the sidebar makes room for it.
 
 ---
