@@ -12,7 +12,10 @@ import { runAgentHeadless } from './agentRun.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
-import { StateRepository } from './storage/stateRepository.js'
+import { DATABASE_FILE_NAME, StateRepository } from './storage/stateRepository.js'
+import { createGithubRequest } from './githubRequest.js'
+import { openProjectIn } from './openIn.js'
+import { assertTrustedSenderUrl, isAppPageUrl } from './trustedSender.js'
 import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOsascriptArgs,
@@ -23,7 +26,6 @@ import {
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
-import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
@@ -39,7 +41,6 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
-const allowedDevOrigin = 'http://127.0.0.1:5173'
 const APP_NAME = 'Project Tracker'
 
 let mainWindow: BrowserWindow | null = null
@@ -51,6 +52,11 @@ let stateRepository: StateRepository
 const EXTERNAL_CHANGE_POLL_MS = 10_000
 
 app.setName(APP_NAME)
+
+// Point a test run at a throwaway database instead of the user's real one
+// (smoke test, corrupt-DB check). Must run before anything reads userData.
+const userDataOverride = process.env.PROJECT_TRACKER_USER_DATA
+if (userDataOverride) app.setPath('userData', path.resolve(userDataOverride))
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
 // rasterization (correct DOM, scrambled on-screen text). Software compositing
@@ -177,34 +183,7 @@ const parseGithubRepo = (githubUrl: string) => {
   return { owner: match[1], repo: match[2].replace(/\.git$/, '') }
 }
 
-// Single door to the GitHub REST API so auth, headers and the status-to-message
-// mapping stay identical for every caller.
-// A body makes it a JSON POST (the GraphQL endpoint); otherwise a GET.
-const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => {
-  const token = await resolveGithubToken()
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': APP_NAME
-  }
-  if (token) headers.Authorization = `Bearer ${token}`
-  const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
-
-  const response = await fetch(`https://api.github.com${apiPath}`, init)
-  if (response.status === 401 && !token) {
-    throw new Error('GitHub needs a sign-in for this. Run gh auth login or set GITHUB_TOKEN.')
-  }
-  if (response.status === 404) {
-    throw new Error(
-      token
-        ? 'Repository not found on GitHub.'
-        : 'Repository not found. If it is private, sign in with the GitHub CLI (gh auth login) or set GITHUB_TOKEN.'
-    )
-  }
-  if (response.status === 401) throw new Error('GitHub rejected the token. Re-run gh auth login or update GITHUB_TOKEN.')
-  if (response.status === 403) throw new Error('GitHub rate limit reached. Try again in a while.')
-  if (!response.ok) throw new Error(`GitHub request failed (HTTP ${response.status}).`)
-  return (await response.json()) as T
-}
+const requestGithub = createGithubRequest(fetch, resolveGithubToken, APP_NAME)
 
 const isInsideAny = (target: string, parents: string[]) =>
   parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
@@ -218,13 +197,8 @@ const assertScannedProjectPath = (projectPath: string) => {
   return normalized
 }
 
-const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) => {
-  const senderUrl = event.senderFrame?.url
-  if (!senderUrl) throw new Error('Rejected IPC call from an unknown renderer frame.')
-  if (devServerUrl && senderUrl.startsWith(allowedDevOrigin)) return
-  if (!devServerUrl && senderUrl.startsWith('file://')) return
-  throw new Error('Rejected IPC call from an unexpected renderer origin.')
-}
+const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) =>
+  assertTrustedSenderUrl(event.senderFrame?.url, devServerUrl)
 
 const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
   const candidate = value as Partial<AutoRunTicketLaunch> | null
@@ -286,9 +260,7 @@ const createWindow = async () => {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const allowedDevNavigation = !!devServerUrl && url.startsWith(allowedDevOrigin)
-    const allowedFileNavigation = !devServerUrl && url.startsWith('file://')
-    if (allowedDevNavigation || allowedFileNavigation) return
+    if (isAppPageUrl(url, devServerUrl)) return
 
     event.preventDefault()
     if (isWebUrl(url)) void shell.openExternal(url)
@@ -435,45 +407,13 @@ const registerIpc = () => {
 
   ipcMain.handle('project:open-in', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId, command, title } = (payload ?? {}) as {
-      projectPath?: unknown
-      targetId?: unknown
-      command?: unknown
-      title?: unknown
-    }
-    if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
-    if (typeof targetId !== 'string') throw new Error('Invalid open-in target.')
-    // Resolve against the shared allowlist so only known apps are ever launched.
-    const target = findOpenInTarget(targetId)
-    if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
-    const normalized = assertScannedProjectPath(projectPath)
-
-    // Terminals get the command and run it; the editors are launched with
-    // `open -a`, which takes a directory and no argv, so the clipboard remains
-    // the hand-off there. Copy either way: a launch that never reaches the
-    // shell still leaves something to paste.
-    const ticketCommand = typeof command === 'string' && command.trim() ? command : undefined
-    if (ticketCommand) clipboard.writeText(ticketCommand)
-    const runCommand = process.platform === 'darwin' ? COMMAND_RUNNERS[target.id] : undefined
-
-    try {
-      if (ticketCommand && runCommand) {
-        // A bad title is dropped, never rejected: it must not block the command.
-        const tabTitle = usableTabTitle(title)
-        await runCommand(normalized, [{ command: ticketCommand, title: tabTitle }])
-        return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
-      }
-      if (process.platform === 'darwin') {
-        await openWithApp(target.appName, normalized)
-      } else {
-        await shell.openPath(normalized)
-      }
-      return { ok: true, appLabel: target.label, copiedCommand: ticketCommand }
-    } catch {
-      const fallbackCommand = `cd ${JSON.stringify(normalized)}`
-      clipboard.writeText(fallbackCommand)
-      return { ok: true, appLabel: target.label, fallbackCommand }
-    }
+    const isMac = process.platform === 'darwin'
+    return openProjectIn(payload, {
+      assertScannedProjectPath,
+      writeClipboard: (text) => clipboard.writeText(text),
+      commandRunnerFor: (targetId) => (isMac ? COMMAND_RUNNERS[targetId] : undefined),
+      openFolder: (appName, projectPath) => (isMac ? openWithApp(appName, projectPath) : shell.openPath(projectPath))
+    })
   })
 
   // Commands come from the renderer, same trust as project:open-in: each one
@@ -721,7 +661,21 @@ app.whenReady().then(async () => {
   app.dock?.setIcon(getIconPath())
   app.setAboutPanelOptions({ applicationName: APP_NAME, iconPath: getIconPath() })
   configureApplicationMenu()
-  stateRepository = new StateRepository(app.getPath('userData'))
+  const userDataPath = app.getPath('userData')
+  try {
+    stateRepository = new StateRepository(userDataPath)
+  } catch (error) {
+    // Without this the rejection is swallowed by whenReady: no window, the app
+    // just sits in the Dock. Recovery stays manual — never move the user's file.
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const reason = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox(
+      `${APP_NAME} could not open its database`,
+      `${databasePath}\n\n${reason}\n\nThe file was left untouched. The app will quit; move the file aside to start fresh, or restore a backup, then reopen it.`
+    )
+    app.quit()
+    return
+  }
   registerIpc()
   await createWindow()
 

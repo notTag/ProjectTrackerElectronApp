@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -754,5 +754,33 @@ describe('closed_at triggers (#27)', () => {
     cli.exec(`UPDATE projects SET archived = 1`)
     expect(repository.closedTicketMetrics([projectPath], windows)).toEqual([])
     cli.close()
+  })
+})
+
+describe('StateRepository on a bad database file', () => {
+  it('a corrupt file throws on open and is left byte-identical', () => {
+    const userDataPath = freshUserDataPath()
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const garbage = Buffer.from('this is not a sqlite database, just some bytes '.repeat(200))
+    writeFileSync(databasePath, garbage)
+
+    expect(() => new StateRepository(userDataPath)).toThrow(/not a database/)
+    expect(readFileSync(databasePath).equals(garbage)).toBe(true)
+    expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(false)
+  })
+
+  // root opens files whatever their mode, so the open would succeed.
+  it.skipIf(process.getuid?.() === 0)('an unreadable file throws on open instead of being replaced', () => {
+    const userDataPath = freshUserDataPath()
+    const seeded = new StateRepository(userDataPath)
+    seeded.saveState(stateWithBoard())
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    chmodSync(databasePath, 0o000)
+    try {
+      expect(() => new StateRepository(userDataPath)).toThrow()
+    } finally {
+      chmodSync(databasePath, 0o644)
+    }
+    expect(new StateRepository(userDataPath).getState().scanDirectories).toEqual(['/Users/example/Projects'])
   })
 })

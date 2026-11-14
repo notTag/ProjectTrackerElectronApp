@@ -70,6 +70,8 @@ You'll find the files in `dist/`. To open the packaged `.app`:
 bun run start:prod
 ```
 
+Before a release, run through the [packaged app smoke test](docs/packaged-smoke-test.md).
+
 ## Releasing
 
 The packaged app updates itself from
@@ -211,6 +213,10 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 - Changes another process makes reach the app within about 10 seconds, when the window regains focus, or when you focus a field in a ticket. The background check skips while a field has focus, so it never replaces text you're typing.
 - When two writers edit the same ticket field, or the same lane, project or setting, the last write wins.
 - `node:sqlite` is still experimental in Node 22 and logs an `ExperimentalWarning` at startup.
+- If the database file is corrupt or can't be read, the app shows an error dialog naming the file and then quits. It never moves or deletes the file.
+- Set `PROJECT_TRACKER_USER_DATA=<dir>` to run the app against a different `userData` folder, for example a throwaway one for testing.
+
+[docs/storage-seam.md](docs/storage-seam.md) describes what `StateRepository` exposes and what its callers assume, for anyone replacing it with a server-backed store.
 
 ## Tech stack
 

@@ -36,12 +36,12 @@ Important current pieces:
 
 ## Milestones
 
-### Milestone 3: Hardening
+### Milestone 3: Hardening (done)
 
-- Failure states are covered with tests.
-- Packaged app smoke test is documented.
-- Large scans and missing directories are handled gracefully.
-- Storage repository boundaries are documented for future cloud/database migration.
+- [x] Failure states are covered with tests.
+- [x] Packaged app smoke test is documented (`docs/packaged-smoke-test.md`).
+- [x] Large scans and missing directories are handled gracefully.
+- [x] Storage repository boundaries are documented for future cloud/database migration (`docs/storage-seam.md`).
 
 ## Risks
 
