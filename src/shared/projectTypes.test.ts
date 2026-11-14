@@ -926,12 +926,18 @@ describe('full auto', () => {
   })
 
   describe('effectiveNextLaneId', () => {
+    const inPrd = { laneId: 'prd' }
     it('prefers the ticket, falls back to the lane, else undefined', () => {
-      expect(effectiveNextLaneId({ moveToLaneId: 'dev' }, lane('prd', { nextLaneId: 'qa' }))).toBe('dev')
-      expect(effectiveNextLaneId({}, lane('prd', { nextLaneId: 'qa' }))).toBe('qa')
-      expect(effectiveNextLaneId({}, lane('prd'))).toBeUndefined()
-      expect(effectiveNextLaneId({}, undefined)).toBeUndefined()
-      expect(effectiveNextLaneId({}, { ...createUnassignedLane(), nextLaneId: 'idea' })).toBe('idea')
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'dev' }, lane('prd', { nextLaneId: 'qa' }))).toBe('dev')
+      expect(effectiveNextLaneId(inPrd, lane('prd', { nextLaneId: 'qa' }))).toBe('qa')
+      expect(effectiveNextLaneId(inPrd, lane('prd'))).toBeUndefined()
+      expect(effectiveNextLaneId(inPrd, undefined)).toBeUndefined()
+      const unassigned = { ...createUnassignedLane(), nextLaneId: 'idea' }
+      expect(effectiveNextLaneId({ laneId: UNASSIGNED_LANE_ID }, unassigned)).toBe('idea')
+    })
+
+    it('treats an override naming the ticket\'s own lane as stale and inherits', () => {
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'prd' }, lane('prd', { nextLaneId: 'dev' }))).toBe('dev')
     })
   })
 
@@ -943,6 +949,17 @@ describe('full auto', () => {
     const removed = removeLaneFromBoard(board, 'dev')
     expect(removed.lanes.map((each) => each.nextLaneId)).toEqual([undefined, undefined])
     expect(removed.unassignedLane?.nextLaneId).toBeUndefined()
+  })
+
+  it('removeLaneFromBoard disarms tickets whose resolved Next Lane changed, and keeps the rest armed', () => {
+    const inheriting = ticket({ id: 'a', laneId: 'prd', moveOnComplete: true })
+    const ownTarget = ticket({ id: 'b', laneId: 'prd', moveToLaneId: 'dev', moveOnComplete: true })
+    const board: ProjectBoard = {
+      ...boardWith([inheriting, ownTarget], { nextLaneId: 'dev' }),
+      unassignedLane: { ...createUnassignedLane(), nextLaneId: 'empty' }
+    }
+    const removed = removeLaneFromBoard(board, 'prd')
+    expect(removed.tickets.map((each) => each.moveOnComplete)).toEqual([false, true])
   })
 
   it('keeps a ticket on its existing branch and drops its worktree path from the prompt when worktrees are on', () => {

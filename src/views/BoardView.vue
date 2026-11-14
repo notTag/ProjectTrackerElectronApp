@@ -41,6 +41,7 @@ import {
   setLaneWidth,
   getUnassignedLane,
   effectiveNextLaneId,
+  boardLaneById,
   hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
@@ -566,12 +567,15 @@ const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_I
   ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null }
 }
 
-const laneNextLaneId = (laneId: string) => laneById(laneId)?.nextLaneId ?? ''
+const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
 
 const draftNextLaneId = computed(() => {
   const draft = ticketDraft.value
   if (!draft) return ''
-  return draft.nextLaneId ?? laneNextLaneId(draft.laneId)
+  // A pick made before Status changed to that same lane would be a no-op target.
+  const pickIsStatusLane = draft.nextLaneId === draft.laneId
+  if (draft.nextLaneId === null || pickIsStatusLane) return laneNextLaneId(draft.laneId)
+  return draft.nextLaneId
 })
 
 const saveTicketDraft = async () => {
@@ -741,18 +745,42 @@ const laneName = (laneId: string) => {
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 
-const laneById = (laneId: string) => laneColumns.value.find((lane) => lane.id === laneId)
+const openTicketNextLaneId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket) return undefined
+  return effectiveNextLaneId(ticket, boardLaneById(board.value, ticket.laneId))
+})
 
-const ticketNextLaneId = (ticket: Ticket) => effectiveNextLaneId(ticket, laneById(ticket.laneId))
+// '' = inherit. A stale override naming the ticket's own lane shows as inherit
+// too, matching how effectiveNextLaneId resolves it.
+const openTicketOverrideId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket?.moveToLaneId || ticket.moveToLaneId === ticket.laneId) return ''
+  return ticket.moveToLaneId
+})
+
+const openTicketLaneDefaultLabel = computed(() => {
+  const ticket = openTicket.value
+  const laneDefaultId = ticket ? laneNextLaneId(ticket.laneId) : ''
+  return laneDefaultId ? `Lane default: ${laneName(laneDefaultId)}` : 'None'
+})
+
+// Next Lane targets for a ticket: No status and every lane, minus the lane the
+// ticket is in (moving to it is a no-op).
+const nextLaneOptionsFor = (currentLaneId: string) =>
+  laneColumns.value.filter((lane) => lane.id !== currentLaneId)
 
 // Picking a lane arms it — the checkbox starts ticked. Picking the lane default
-// drops the override and stays armed only if the lane has a Next Lane.
+// (or the lane it already inherits) drops the override, so the ticket follows
+// later changes to its lane's Next Lane; it stays armed only if there is one.
 const setMoveToLane = (ticket: Ticket, laneId: string) => {
-  if (laneId) {
+  const laneDefaultId = laneNextLaneId(ticket.laneId)
+  const overridesLaneDefault = laneId !== '' && laneId !== laneDefaultId
+  if (overridesLaneDefault) {
     editTicket(ticket, { moveToLaneId: laneId, moveOnComplete: true })
     return
   }
-  editTicket(ticket, { moveToLaneId: undefined, moveOnComplete: Boolean(laneNextLaneId(ticket.laneId)) })
+  editTicket(ticket, { moveToLaneId: undefined, moveOnComplete: Boolean(laneDefaultId) })
 }
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
@@ -1237,8 +1265,9 @@ const runTicketAgent = (ticket: Ticket) => {
         Next Lane
         <select :value="draftNextLaneId" @change="ticketDraft.nextLaneId = ($event.target as HTMLSelectElement).value">
           <option value="">None</option>
-          <option :value="UNASSIGNED_LANE_ID">{{ UNASSIGNED_LANE_NAME }}</option>
-          <option v-for="lane in board.lanes" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
+          <option v-for="lane in nextLaneOptionsFor(ticketDraft.laneId)" :key="lane.id" :value="lane.id">
+            {{ lane.name }}
+          </option>
         </select>
         <span class="field-hint">Defaults to the Status lane's Next Lane.</span>
       </label>
@@ -1473,14 +1502,13 @@ const runTicketAgent = (ticket: Ticket) => {
         <label>
           Next Lane
           <select
-            :value="openTicket.moveToLaneId ?? ''"
+            :value="openTicketOverrideId"
             @change="setMoveToLane(openTicket, ($event.target as HTMLSelectElement).value)"
           >
-            <option value="">
-              {{ laneNextLaneId(openTicket.laneId) ? `Lane default: ${laneName(laneNextLaneId(openTicket.laneId))}` : 'None' }}
+            <option value="">{{ openTicketLaneDefaultLabel }}</option>
+            <option v-for="lane in nextLaneOptionsFor(openTicket.laneId)" :key="lane.id" :value="lane.id">
+              {{ lane.name }}
             </option>
-            <option :value="UNASSIGNED_LANE_ID">{{ UNASSIGNED_LANE_NAME }}</option>
-            <option v-for="lane in board.lanes" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
           </select>
           <span class="field-hint">
             Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane.
@@ -1522,13 +1550,13 @@ const runTicketAgent = (ticket: Ticket) => {
         View on GitHub ({{ openTicket.externalId?.replace('github:', '#') }})
       </a>
 
-      <label v-if="ticketNextLaneId(openTicket)" class="checkbox-label">
+      <label v-if="openTicketNextLaneId" class="checkbox-label">
         <input
           type="checkbox"
           :checked="Boolean(openTicket.moveOnComplete)"
           @change="editTicket(openTicket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
         />
-        Move to Next Lane: {{ laneName(ticketNextLaneId(openTicket) ?? '') }}
+        Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
       </label>
 
       <div class="modal-actions">
