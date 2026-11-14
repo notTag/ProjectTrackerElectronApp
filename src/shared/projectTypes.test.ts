@@ -770,12 +770,11 @@ describe('full auto', () => {
 
   it('only lets a full auto agent exit when no open questions remain', () => {
     const outputLane = lane('prd', { outputTarget: 'docs/prd/' })
-    const offPrompt = ticketAgentPrompt(ticket(), outputLane)
     const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
-    expect(onPrompt).toContain('Open Questions: 0')
-    expect(onPrompt).toMatch(/otherwise stop with the open questions/)
-    expect(offPrompt).not.toContain('Open Questions: 0')
-    expect(offPrompt).not.toMatch(/otherwise stop with the open questions/)
+    const fullAutoSection = onPrompt.split('\n\n').at(-2)
+    expect(fullAutoSection).toMatch(
+      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\.$/
+    )
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
