@@ -399,7 +399,7 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('shows a 404 as an error and does not retry it', async () => {
-    api.fetchProjectGithubIssues.mockRejectedValue(new Error('Repository not found on GitHub.'))
+    api.fetchProjectGithubIssues.mockRejectedValueOnce(new Error('Repository not found on GitHub.'))
     const store = storeWithProject('/code/missing', 'https://github.com/o/r')
 
     await store.autoPullGithubIssues('/code/missing')
@@ -436,7 +436,7 @@ describe('refreshBoardPullRequests', () => {
     const [template] = board.tickets
     board.tickets = [1, 2, 3].map((number) => ({ ...template, id: `ticket-${number}`, number, branchName: `t${number}` }))
     store.state = { ...store.state, boards }
-    api.fetchTicketPullRequest.mockRejectedValue(offlineError)
+    api.fetchTicketPullRequest.mockRejectedValueOnce(offlineError)
 
     await store.refreshBoardPullRequests(PROJECT_PATH)
 

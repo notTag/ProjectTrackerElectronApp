@@ -188,11 +188,15 @@ const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => 
     'User-Agent': APP_NAME
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
+  // The timeout turns a stalled connection (captive portal) into a rejection.
+  const signal = AbortSignal.timeout(10_000)
+  const init: RequestInit =
+    body === undefined ? { headers, signal } : { method: 'POST', headers, signal, body: JSON.stringify(body) }
 
-  // fetch rejects only when no HTTP response arrived (DNS, no route, refused):
-  // that is "offline" to the user, whatever the underlying cause.
-  const response = await fetch(`https://api.github.com${apiPath}`, init).catch(() => {
+  // fetch rejects only when no HTTP response arrived (DNS, no route, refused,
+  // timeout): that is "offline" to the user. The real cause goes to the log.
+  const response = await fetch(`https://api.github.com${apiPath}`, init).catch((cause: unknown) => {
+    console.warn('GitHub request failed before a response:', cause)
     throw new Error(GITHUB_UNREACHABLE_MESSAGE)
   })
   if (response.status === 401 && !token) {
