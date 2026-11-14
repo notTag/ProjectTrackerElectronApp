@@ -285,7 +285,7 @@ From left to right:
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
-- **Columns**: checkboxes to show or hide No status and GitHub Issues.
+- **Columns**: a checkbox per column (No status first, then every lane in board order) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 

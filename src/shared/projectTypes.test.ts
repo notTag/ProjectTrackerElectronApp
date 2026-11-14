@@ -27,6 +27,7 @@ import {
   moveLaneInBoard,
   removeLaneFromBoard,
   getUnassignedLane,
+  boardLaneColumns,
   normalizeBoard,
   nextTicketNumber,
   updateLaneInBoard,
@@ -322,6 +323,28 @@ describe('ticketSearchText', () => {
   })
 })
 
+
+describe('boardLaneColumns', () => {
+  const columnIds = (board: ProjectBoard) => boardLaneColumns(board).map((lane) => lane.id)
+
+  it('lists No status first, then every lane in board order', () => {
+    const board = boardWithTickets()
+    const laneIds = board.lanes.map((lane) => lane.id)
+    expect(columnIds(board)).toEqual([UNASSIGNED_LANE_ID, ...laneIds])
+  })
+
+  it('includes a lane added to the board, last', () => {
+    const board = boardWithTickets()
+    const addedLane = { ...board.lanes[0], id: 'added', name: 'Added' }
+    const grown = { ...board, lanes: [...board.lanes, addedLane] }
+    expect(columnIds(grown).at(-1)).toBe('added')
+  })
+
+  it('still starts with No status when the board never stored one', () => {
+    const board = { ...boardWithTickets(), unassignedLane: undefined }
+    expect(columnIds(board)[0]).toBe(UNASSIGNED_LANE_ID)
+  })
+})
 
 describe('updateLaneInBoard', () => {
   it('stores the unassigned column\'s prompt without adding it to lanes', () => {

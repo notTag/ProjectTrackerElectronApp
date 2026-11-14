@@ -930,6 +930,10 @@ export const createUnassignedLane = (): SwimLane => ({
 export const getUnassignedLane = (board: ProjectBoard): SwimLane =>
   board.unassignedLane ?? createUnassignedLane()
 
+// Every column the board renders, in render order: No status is stored apart
+// from `lanes` but always shows first.
+export const boardLaneColumns = (board: ProjectBoard): SwimLane[] => [getUnassignedLane(board), ...board.lanes]
+
 // Routes a lane edit to wherever that lane lives: the unassigned column is
 // stored on its own field, every other lane in `lanes`.
 export const updateLaneInBoard = (
