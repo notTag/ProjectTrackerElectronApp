@@ -5,7 +5,20 @@ import { resolveAutoRunTerminal } from '@/shared/openInTargets'
 import { useOpenInStore } from '@/stores/openIn'
 import {
   addGithubIssuesToBoard,
+  agentResumeCommand,
   autoRunUsesWorktrees,
+  boardLaneById,
+  canResume,
+  isFullAuto,
+  newAgentSessionId,
+  RESUME_PROMPT,
+  runningAgentRuns,
+  runsToInterrupt,
+  ticketTabTitle,
+  type AgentRetryEvent,
+  type AutoRunLaunchEntry,
+  type TabLiveness,
+  type TicketAgentRun,
   availableAgents,
   buildAutoRunLaunch,
   completionMoves,
@@ -23,7 +36,6 @@ import {
   removeScanDirectory,
   ticketBranchName,
   updateLaneInBoard,
-  type AutoRunTicketLaunch,
   type TerminalTab,
   type CompletionMove,
   type FullAutoHandoff,
@@ -135,6 +147,39 @@ const takeDeferredHandoffs = (runKey: string): ProjectHandoffs | undefined => {
   const deferred = deferredHandoffs.get(runKey)
   deferredHandoffs.delete(runKey)
   return deferred
+}
+
+const agentRunsUpdate =
+  (runByTicketId: Map<string, TicketAgentRun>) =>
+  (board: ProjectBoard): ProjectBoard => ({
+    ...board,
+    tickets: board.tickets.map((ticket) => {
+      const agentRun = runByTicketId.get(ticket.id)
+      return agentRun ? { ...ticket, agentRun } : ticket
+    })
+  })
+
+// Only touches a run that is still the one the caller saw: a run restarted or
+// resumed in between keeps its own record.
+const isSameRun = (ticket: Ticket, run: TicketAgentRun) =>
+  ticket.agentRun?.startedAt === run.startedAt && ticket.agentRun?.sessionId === run.sessionId
+
+const INTERRUPTED_OUTPUT = 'The agent session ended before the run finished. Resume picks it back up; Run starts over.'
+
+const interruptedRun = (run: TicketAgentRun, at: string): TicketAgentRun => ({
+  ...run,
+  at,
+  status: 'interrupted',
+  succeeded: false,
+  seenAt: undefined,
+  output: run.output || INTERRUPTED_OUTPUT
+})
+
+// Fetched once: main's start time never changes while the renderer lives.
+let appStartedAtPromise: Promise<number> | undefined
+const appStartedAt = () => {
+  appStartedAtPromise ??= projectTrackerApi.appStartedAt().then((startedAt) => Date.parse(startedAt))
+  return appStartedAtPromise
 }
 
 // Outside Pinia state so it is never persisted: a fresh app launch pulls again.
@@ -402,6 +447,7 @@ export const useProjectsStore = defineStore('projects', {
       } finally {
         this.loading = false
       }
+      void this.reconcileAgentRuns().catch(() => undefined)
     },
 
     // Picks up writes from other processes. Queued behind pending saves so the
@@ -647,7 +693,7 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openIn(path: string, targetId: string, command?: string, title?: string) {
+    async openIn(path: string, targetId: string, command?: string, title?: string): Promise<boolean> {
       // Clear before awaiting so a repeat of the same text still restarts
       // MessageBanners' auto-dismiss timer (its watch skips same-value writes).
       this.notice = null
@@ -655,17 +701,19 @@ export const useProjectsStore = defineStore('projects', {
         const result = await projectTrackerApi.openProjectIn(path, targetId, command, title)
         if (result.fallbackCommand) {
           this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
-          return
+          return false
         }
         if (result.ranCommand) {
           this.notice = `Running the agent command in ${result.appLabel}.`
-          return
+          return true
         }
         this.notice = result.copiedCommand
           ? `Opening in ${result.appLabel}. The agent command is on your clipboard — paste it to run.`
           : `Opening in ${result.appLabel}.`
+        return false
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+        return false
       }
     },
 
@@ -676,7 +724,7 @@ export const useProjectsStore = defineStore('projects', {
       laneId: string,
       targetId: string,
       terminalLabel: string,
-      launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
+      launches: AutoRunLaunchEntry[],
       useWorktrees: boolean,
       orchestrator?: TerminalTab
     ): Promise<boolean> {
@@ -684,7 +732,29 @@ export const useProjectsStore = defineStore('projects', {
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
       this.notice = null
+      // Recorded before any tab opens, so a session that dies straight away
+      // still leaves its id behind to resume from.
+      const startedAt = new Date().toISOString()
+      const runByTicketId = new Map(
+        launches.map(({ ticket, agentId, sessionId }) => {
+          const cwd = useWorktrees ? ticket.worktreePath ?? path : path
+          const agentRun: TicketAgentRun = {
+            at: startedAt,
+            startedAt,
+            laneId,
+            output: '',
+            status: 'running',
+            mode: 'terminal',
+            sessionId,
+            cwd,
+            agentId,
+            terminalId: targetId
+          }
+          return [ticket.id, agentRun]
+        })
+      )
       try {
+        if (runByTicketId.size > 0) await this.updateBoard(path, agentRunsUpdate(runByTicketId))
         const ticketLaunches = launches.map((entry) => entry.launch)
         const { worktreePaths } = await projectTrackerApi.autoRunLane(
           path,
@@ -705,19 +775,46 @@ export const useProjectsStore = defineStore('projects', {
             { branchName: launch.branchName, worktreePath: worktreePaths[index] }
           ])
         )
+        // The session started inside the worktree, which is where Resume must run.
+        const withRunInWorktree = (ticket: Ticket, worktreePath: string): Ticket => {
+          const launchedRun = runByTicketId.get(ticket.id)
+          const runIsOurs = launchedRun !== undefined && isSameRun(ticket, launchedRun)
+          if (!runIsOurs || !ticket.agentRun) return ticket
+          return { ...ticket, agentRun: { ...ticket.agentRun, cwd: worktreePath } }
+        }
         await this.updateBoard(path, (board) => ({
           ...board,
           tickets: board.tickets.map((ticket) => {
             const placement = placementByTicketId.get(ticket.id)
+            if (!placement) return ticket
             const isUnchanged =
-              !placement ||
-              (ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath)
-            return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+              ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath
+            const placed = isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+            return withRunInWorktree(placed, placement.worktreePath)
           })
         }))
         return true
       } catch (error) {
-        this.error = error instanceof Error ? error.message : String(error)
+        const message = error instanceof Error ? error.message : String(error)
+        this.error = message
+        // No tab ever ran, so there is no session to resume.
+        const at = new Date().toISOString()
+        await this.updateBoard(path, (board) => ({
+          ...board,
+          tickets: board.tickets.map((ticket) => {
+            const launchedRun = runByTicketId.get(ticket.id)
+            if (!launchedRun || !isSameRun(ticket, launchedRun)) return ticket
+            const failedRun: TicketAgentRun = {
+              ...launchedRun,
+              at,
+              status: 'failed',
+              succeeded: false,
+              sessionId: undefined,
+              output: message
+            }
+            return { ...ticket, agentRun: failedRun }
+          })
+        }))
         return false
       } finally {
         this.autoRunning[runKey] = false
@@ -742,27 +839,44 @@ export const useProjectsStore = defineStore('projects', {
 
     // The lane is captured at start, not read back at the end: the ticket may be
     // dragged to another column mid-run, and the record should say which lane's
-    // prompt actually produced the output.
+    // prompt actually produced the output. Run always starts a fresh session.
     async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
       if (this.agentRunning[ticket.id]) return
       this.agentRunning[ticket.id] = true
       this.error = null
       this.notice = `Agent running on #${ticket.number}…`
-      const laneId = ticket.laneId
+      const agent = findAgent(availableAgents(this.state), agentId)
+      const startedAt = new Date().toISOString()
+      const runningRecord: TicketAgentRun = {
+        at: startedAt,
+        startedAt,
+        laneId: ticket.laneId,
+        output: '',
+        status: 'running',
+        mode: 'headless',
+        sessionId: newAgentSessionId(agent),
+        cwd: projectPath,
+        agentId: agent.id,
+        attempts: 1
+      }
       try {
+        await this.updateTicket(projectPath, ticket.id, { agentRun: runningRecord })
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt, ticket.model)
+          .runTicketAgent(projectPath, agentId, prompt, ticket.model, runningRecord.sessionId)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
-            succeeded: false
+            succeeded: false,
+            attempts: 1
           }))
-        const agentRun = {
+        const agentRun: TicketAgentRun = {
+          ...runningRecord,
           at: new Date().toISOString(),
-          laneId,
           output: result.output,
-          succeeded: result.succeeded
+          succeeded: result.succeeded,
+          status: result.succeeded ? 'succeeded' : 'failed',
+          attempts: result.attempts ?? 1
         }
         const storedTicket = () => this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
         const laneBeforeSave = storedTicket()?.laneId
@@ -779,6 +893,98 @@ export const useProjectsStore = defineStore('projects', {
       } finally {
         this.agentRunning[ticket.id] = false
       }
+    },
+
+    noteAgentRetry(retry: AgentRetryEvent) {
+      const boards = Object.values(this.state.boards ?? {})
+      const tickets = boards.flatMap((board) => board.tickets)
+      const ticket = tickets.find((entry) => retry.sessionId && entry.agentRun?.sessionId === retry.sessionId)
+      const ticketLabel = ticket ? `#${ticket.number}` : 'a ticket'
+      const delaySeconds = Math.round(retry.delayMs / 1000)
+      const delayLabel = delaySeconds >= 60 ? `${Math.round(delaySeconds / 60)} min` : `${delaySeconds} s`
+      this.notice = `Agent on ${ticketLabel} interrupted — retrying in ${delayLabel} (${retry.attempt}/${retry.of})`
+    },
+
+    // Asks each terminal once for all its candidate tabs. A terminal that
+    // can't answer leaves its runs to the stale threshold.
+    async tabLivenessFor(candidates: Ticket[]): Promise<Record<string, TabLiveness>> {
+      const terminalCandidates = candidates.filter((ticket) => ticket.agentRun?.mode === 'terminal')
+      const ticketsByTerminal = new Map<string, Ticket[]>()
+      for (const ticket of terminalCandidates) {
+        const terminalId = ticket.agentRun?.terminalId ?? ''
+        const group = ticketsByTerminal.get(terminalId) ?? []
+        group.push(ticket)
+        ticketsByTerminal.set(terminalId, group)
+      }
+      const livenessByTicketId: Record<string, TabLiveness> = {}
+      for (const [terminalId, tickets] of ticketsByTerminal) {
+        const titles = tickets.map((ticket) => ticketTabTitle(ticket))
+        const liveness = await projectTrackerApi
+          .terminalTabsAlive(terminalId, titles)
+          .catch((): TabLiveness[] => titles.map(() => 'unknown'))
+        tickets.forEach((ticket, index) => {
+          livenessByTicketId[ticket.id] = liveness[index] ?? 'unknown'
+        })
+      }
+      return livenessByTicketId
+    },
+
+    // On app start, then on a timer: a run still marked running whose process
+    // or tab is gone becomes interrupted. Full auto needs nothing else to
+    // pause — a dead agent never moves its ticket, so no handoff fires — only
+    // the notice saying why the chain stopped.
+    async reconcileAgentRuns() {
+      const startedAt = await appStartedAt()
+      for (const projectPath of Object.keys(this.state.boards ?? {})) {
+        const board = getBoard(this.state, projectPath)
+        const candidates = runningAgentRuns(board.tickets).filter((ticket) => !this.agentRunning[ticket.id])
+        if (candidates.length === 0) continue
+        const livenessByTicketId = await this.tabLivenessFor(candidates)
+        const toInterrupt = runsToInterrupt(candidates, livenessByTicketId, Date.now(), startedAt)
+        if (toInterrupt.length === 0) continue
+
+        const at = new Date().toISOString()
+        const seenRunByTicketId = new Map(toInterrupt.map((ticket) => [ticket.id, ticket.agentRun as TicketAgentRun]))
+        await this.updateBoard(projectPath, (currentBoard) => ({
+          ...currentBoard,
+          tickets: currentBoard.tickets.map((ticket) => {
+            const seenRun = seenRunByTicketId.get(ticket.id)
+            const stillRunning = seenRun && isSameRun(ticket, seenRun) && ticket.agentRun?.status === 'running'
+            return stillRunning ? { ...ticket, agentRun: interruptedRun(seenRun, at) } : ticket
+          })
+        }))
+        const pausedNumbers = toInterrupt
+          .filter((ticket) => {
+            const lane = boardLaneById(board, ticket.laneId)
+            return lane !== undefined && isFullAuto(ticket, lane)
+          })
+          .map((ticket) => `#${ticket.number}`)
+        if (pausedNumbers.length > 0) this.notice = `Full auto paused on ${pausedNumbers.join(', ')}: agent interrupted`
+      }
+    },
+
+    // Same session, same directory, in a tab someone can watch: the agent picks
+    // up its own transcript and checks git for what already landed.
+    async resumeTicketAgent(projectPath: string, ticket: Ticket) {
+      const run = ticket.agentRun
+      const agent = findAgent(availableAgents(this.state), run?.agentId ?? ticket.agentId)
+      if (!run || !canResume(ticket, agent)) return
+      const command = agentResumeCommand(agent, run, RESUME_PROMPT)
+      const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
+      const ranInTab = await this.openIn(projectPath, terminal.id, command, ticketTabTitle(ticket))
+      if (!ranInTab) return
+      const startedAt = new Date().toISOString()
+      const resumedRun: TicketAgentRun = {
+        ...run,
+        at: startedAt,
+        startedAt,
+        status: 'running',
+        mode: 'terminal',
+        succeeded: undefined,
+        seenAt: undefined,
+        terminalId: terminal.id
+      }
+      await this.updateTicket(projectPath, ticket.id, { agentRun: resumedRun })
     },
 
     async fetchGithub(path: string) {

@@ -355,6 +355,10 @@ In graph view this opens as a side panel instead of a centered modal.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
   - It keeps showing as running if you leave the board and come back.
+  - Each run starts a fresh Claude Code session under an id the app picks, saved on the ticket before the agent starts.
+  - A network drop, timeout, overload, rate limit or 5xx retries up to 2× (after 30 s, then 2 min), resuming the same session. A notice says "retrying in…". A missing CLI or the 30-minute timeout never retries.
+- **⏯ Resume** (next to ▶ Run, Claude Code only): shown when the last run in this lane was interrupted or failed. Opens a terminal tab in the directory the session started in, running `claude --resume <id>` with a "you were interrupted, check git status and continue" prompt. ▶ Run still starts over clean.
+- **Interrupted** badge (amber ⏸) on the card: a run still marked running whose app process died (headless, after an app restart) or whose terminal tab is gone (checked at launch and every 60 s; Terminal, iTerm2 and Ghostty by tab title, Warp by age only, after 45 min). Auto Run and full-auto tabs are tracked the same way. An interrupted full-auto ticket doesn't hand off; a notice says "Full auto paused on #N: agent interrupted".
 - **⌁ Run in <Open In app>**:
   - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
   - Editors open the folder and put the command on the clipboard.

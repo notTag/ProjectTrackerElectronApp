@@ -252,8 +252,12 @@ export interface ChecklistItem {
   done: boolean
 }
 
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'interrupted'
+
 // Captures what a swim lane's agent produced for a ticket. Only the most recent
 // run is kept: the board is a working surface, not an audit log.
+// Written once BEFORE the agent starts (status 'running') so a run that dies
+// mid-way still leaves its session id behind to resume from.
 export interface TicketAgentRun {
   at: string
   laneId: string
@@ -264,23 +268,41 @@ export interface TicketAgentRun {
   // When someone opened the ticket after this run finished. Absent = unseen, so
   // runs saved before it existed still surface their result once.
   seenAt?: string
+  // Authoritative when present; runs saved before it existed fall back to `succeeded`.
+  status?: AgentRunStatus
+  startedAt?: string
+  mode?: 'headless' | 'terminal'
+  // The agent CLI's own session id, picked by the app so Resume works even when
+  // the run died before printing anything.
+  sessionId?: string
+  // Claude looks sessions up per working directory, so Resume runs from here.
+  cwd?: string
+  attempts?: number
+  agentId?: string
+  // The terminal a tab run opened in, so its tab can be looked for later.
+  terminalId?: string
 }
 
-export type AgentRunBadge = 'running' | 'succeeded' | 'failed'
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
+// lane says nothing about the work in this one. A running record shows even
+// once seen: opening the ticket mid-run doesn't make the run any less live.
 export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
   if (running) return 'running'
   const lastRun = ticket.agentRun
-  if (!lastRun || lastRun.succeeded === undefined) return null
-  const alreadySeen = lastRun.seenAt !== undefined
-  const fromOtherLane = lastRun.laneId !== ticket.laneId
-  if (alreadySeen || fromOtherLane) return null
+  if (!lastRun || lastRun.laneId !== ticket.laneId) return null
+  if (lastRun.status === 'running') return 'running'
+  if (lastRun.seenAt !== undefined) return null
+  if (lastRun.status === 'interrupted') return 'interrupted'
+  if (lastRun.succeeded === undefined) return null
   return lastRun.succeeded ? 'succeeded' : 'failed'
 }
 
-export const hasUnseenAgentResult = (ticket: Ticket): boolean => agentRunBadge(ticket, false) !== null
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => {
+  const badge = agentRunBadge(ticket, false)
+  return badge !== null && badge !== 'running'
+}
 
 export interface Ticket {
   id: string
@@ -400,7 +422,14 @@ export interface Agent {
   headlessArgs: string[]
   promptArgs?: string[]
   modelArgs?: string[]
+  // `{sessionId}` is replaced with the run's session id. sessionArgs start a
+  // session under that id, resumeArgs pick it back up. No resumeArgs means the
+  // CLI can't resume: no session id is passed and Resume stays hidden.
+  sessionArgs?: string[]
+  resumeArgs?: string[]
 }
+
+const SESSION_ID_TOKEN = '{sessionId}'
 
 // acceptEdits lets a background run write its output files without a human to
 // approve them, while shell commands stay denied — the run can draft, not execute.
@@ -409,7 +438,9 @@ export const DEFAULT_AGENT: Agent = {
   name: 'Claude Code',
   command: 'claude',
   headlessArgs: ['-p', '--permission-mode', 'acceptEdits'],
-  modelArgs: ['--model']
+  modelArgs: ['--model'],
+  sessionArgs: ['--session-id', SESSION_ID_TOKEN],
+  resumeArgs: ['--resume', SESSION_ID_TOKEN]
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -589,10 +620,11 @@ export const ticketShellCommand = (
   lane: SwimLane,
   agent: Agent = DEFAULT_AGENT,
   context: TicketPromptContext = {},
-  model?: string
+  model?: string,
+  sessionId?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, model)
+  return agentShellCommand(agent, prompt, model, sessionId)
 }
 
 // A model starting with "-" would read as another flag, so it counts as empty.
@@ -604,12 +636,98 @@ export const agentModelWords = (agent: Agent, model?: string, quote = (word: str
   return [...agent.modelArgs, quote(trimmedModel)]
 }
 
-// The model goes before promptArgs so a prompt flag is never split from its value.
-export const agentShellCommand = (agent: Agent, prompt: string, model?: string): string => {
+// Strict v4: the id reaches argv and shell strings, so nothing else gets through.
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_V4_PATTERN.test(value)
+
+export const agentSupportsResume = (agent: Agent): boolean =>
+  Boolean(agent.sessionArgs?.length && agent.resumeArgs?.length)
+
+// Session ids only exist for agents that can resume them: one that can't would
+// get a flag it may not know, for nothing.
+export const newAgentSessionId = (agent: Agent): string | undefined =>
+  agentSupportsResume(agent) ? crypto.randomUUID() : undefined
+
+const withSessionId = (args: string[], sessionId: string): string[] =>
+  args.map((arg) => arg.split(SESSION_ID_TOKEN).join(sessionId))
+
+export const agentSessionWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.sessionArgs ?? [], sessionId)
+}
+
+export const agentResumeWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.resumeArgs ?? [], sessionId)
+}
+
+// The model and session go before promptArgs so a prompt flag is never split from its value.
+export const agentShellCommand = (agent: Agent, prompt: string, model?: string, sessionId?: string): string => {
   const modelWords = agentModelWords(agent, model, shellQuote)
-  const commandWords = [agent.command, ...modelWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const sessionWords = agentSessionWords(agent, sessionId)
+  const commandWords = [agent.command, ...modelWords, ...sessionWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
   return commandWords.join(' ')
 }
+
+export const RESUME_PROMPT =
+  'You were interrupted mid-task. Check `git status` and the ticket, then continue where you left off.'
+
+// Throws rather than building a half-command: callers gate on canResume first.
+export const agentResumeCommand = (agent: Agent, run: Pick<TicketAgentRun, 'sessionId' | 'cwd'>, prompt: string): string => {
+  if (!agentSupportsResume(agent)) throw new Error(`${agent.name} cannot resume a session.`)
+  if (!isUuid(run.sessionId)) throw new Error('This run has no session to resume.')
+  const resumeWords = agentResumeWords(agent, run.sessionId)
+  const agentWords = [agent.command, ...resumeWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const agentCommand = agentWords.join(' ')
+  return run.cwd ? `cd ${shellQuote(run.cwd)} && ${agentCommand}` : agentCommand
+}
+
+export const canResume = (ticket: Ticket, agent: Agent): boolean => {
+  const run = ticket.agentRun
+  if (!run || run.laneId !== ticket.laneId) return false
+  const endedUnfinished = run.status === 'interrupted' || run.status === 'failed'
+  return endedUnfinished && isUuid(run.sessionId) && agentSupportsResume(agent)
+}
+
+// Long enough for a real terminal run to be well under way; past it, a tab
+// nobody can see is presumed gone.
+export const STALE_RUN_MS = 45 * 60 * 1000
+
+export type TabLiveness = 'alive' | 'gone' | 'unknown'
+
+// Sent by main when a headless run hit a transient failure and is about to retry.
+export interface AgentRetryEvent {
+  sessionId?: string
+  attempt: number
+  of: number
+  delayMs: number
+}
+
+export const runningAgentRuns = (tickets: Ticket[]): Ticket[] =>
+  tickets.filter((ticket) => ticket.agentRun?.status === 'running' && ticket.agentRun.laneId === ticket.laneId)
+
+// A headless run lives in the main process, so one started before this app
+// launch died with the old process. A tab outlives the app, so only its
+// absence (or age, when it can't be looked for) says the run is over.
+// A tab that died this session is left to the stale threshold: it may still
+// be opening.
+export const runsToInterrupt = (
+  tickets: Ticket[],
+  livenessByTicketId: Record<string, TabLiveness>,
+  now: number,
+  appStartedAt: number
+): Ticket[] =>
+  runningAgentRuns(tickets).filter((ticket) => {
+    const run = ticket.agentRun as TicketAgentRun
+    const startedAt = Date.parse(run.startedAt ?? run.at)
+    const startedBeforeApp = startedAt < appStartedAt
+    const isStale = now - startedAt > STALE_RUN_MS
+    if (run.mode !== 'terminal') return startedBeforeApp
+    const liveness = livenessByTicketId[ticket.id] ?? 'unknown'
+    if (liveness === 'alive') return false
+    if (liveness === 'gone') return startedBeforeApp || isStale
+    return isStale
+  })
 
 // Enough of the title to recognise the ticket; the number already identifies it.
 const BRANCH_SLUG_WORD_COUNT = 3
@@ -658,6 +776,8 @@ export interface AutoRunTicketLaunch {
 export interface AutoRunLaunchEntry {
   ticket: Ticket
   launch: AutoRunTicketLaunch
+  agentId?: string
+  sessionId?: string
 }
 
 // With worktrees on, the branch goes into the ticket before its prompt is
@@ -674,8 +794,11 @@ export const buildAutoRunLaunch = (
 ): AutoRunLaunchEntry => {
   const branchName = ticketBranchName(ticket)
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model)
-  return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
+  // Fresh per launch: the CLI refuses a session id that is already in use.
+  const sessionId = newAgentSessionId(agent)
+  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
+  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) }
+  return { ticket, launch, agentId: agent.id, sessionId }
 }
 
 // A ticket that already has a worktree keeps working in it even when the next
@@ -868,7 +991,7 @@ export interface FullAutoHandoff {
   toLane: SwimLane
 }
 
-const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
+export const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
   laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
 
 // The lane a ticket LEFT decides: its agent did the work and moved the ticket.

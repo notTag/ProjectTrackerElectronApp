@@ -9,7 +9,9 @@ const api = vi.hoisted(() => ({
   saveProjectState: vi.fn(),
   autoRunLane: vi.fn(),
   runTicketAgent: vi.fn(),
-  fetchProjectGithubIssues: vi.fn()
+  fetchProjectGithubIssues: vi.fn(),
+  appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
+  terminalTabsAlive: vi.fn()
 }))
 vi.mock('@/services/projectTrackerApi', () => ({ projectTrackerApi: api }))
 
@@ -274,7 +276,8 @@ describe('Move to on completion', () => {
     await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
 
     expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: 'dev', moveOnComplete: false })
-    expect(saveProjectState).toHaveBeenCalledTimes(1)
+    // The first save is the running record; the result, move and disarm share the second.
+    expect(saveProjectState).toHaveBeenCalledTimes(2)
     expect(store.notice).toBe('Moved #7 to In Development.')
     expect(store.error).toBeNull()
   })
@@ -383,5 +386,98 @@ describe('autoPullGithubIssues', () => {
     expect(store.error).toBe('GitHub rate limit exceeded')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     expect(store.githubLoading['/code/offline']).toBe(false)
+  })
+})
+
+describe('mid-session failure recovery', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+    api.autoRunLane.mockResolvedValue({ worktreePaths: [] })
+  })
+  const storedRun = (store: ReturnType<typeof useProjectsStore>) => store.board(PROJECT_PATH).tickets[0].agentRun
+
+  it('records a running headless run with its session id before the agent starts', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    const ticket = store.board(PROJECT_PATH).tickets[0]
+    let runDuringAgent: ReturnType<typeof storedRun>
+    api.runTicketAgent.mockImplementation(async () => {
+      runDuringAgent = storedRun(store)
+      return { output: 'ok', succeeded: true, attempts: 2 }
+    })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude-code', 'prompt')
+
+    expect(runDuringAgent!).toMatchObject({ status: 'running', mode: 'headless', laneId: 'dev', cwd: PROJECT_PATH })
+    const sessionId = api.runTicketAgent.mock.calls[0][4]
+    expect(runDuringAgent!.sessionId).toBe(sessionId)
+    expect(storedRun(store)).toMatchObject({ status: 'succeeded', succeeded: true, attempts: 2, sessionId })
+  })
+
+  it('records each Auto Run tab as running before it opens, then points it at its worktree', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    const ticket = store.board(PROJECT_PATH).tickets[0]
+    let runDuringLaunch: ReturnType<typeof storedRun>
+    api.autoRunLane.mockImplementation(async () => {
+      runDuringLaunch = storedRun(store)
+      return { worktreePaths: ['/code/app/.worktrees/t7'] }
+    })
+    const launch = { number: 7, branchName: 't7-add', command: 'claude' }
+
+    await store.autoRunLane(PROJECT_PATH, 'dev', 'ghostty', 'Ghostty', [
+      { ticket, launch, agentId: 'claude-code', sessionId: '3b241101-e2bb-4255-8caf-4136c566a962' }
+    ], true)
+
+    expect(runDuringLaunch!).toMatchObject({ status: 'running', mode: 'terminal', terminalId: 'ghostty' })
+    expect(storedRun(store)).toMatchObject({ status: 'running', cwd: '/code/app/.worktrees/t7' })
+  })
+
+  it('marks a run whose tab is gone after a restart as interrupted, and says full auto paused', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('prd')
+    const ticket = getBoard(state, PROJECT_PATH).tickets[0]
+    ticket.agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'prd',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'ghostty',
+      seenAt: '2026-01-02T11:01:00.000Z'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['gone'])
+
+    await store.reconcileAgentRuns()
+
+    expect(api.terminalTabsAlive).toHaveBeenCalledWith('ghostty', ['#7 Add the thing'])
+    expect(storedRun(store)).toMatchObject({ status: 'interrupted', succeeded: false, seenAt: undefined })
+    expect(store.notice).toBe('Full auto paused on #7: agent interrupted')
+    expect(api.autoRunLane).not.toHaveBeenCalled()
+  })
+
+  it('leaves a run whose tab is still open', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    getBoard(state, PROJECT_PATH).tickets[0].agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'dev',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'ghostty'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['alive'])
+
+    await store.reconcileAgentRuns()
+
+    expect(storedRun(store)?.status).toBe('running')
+    expect(api.saveProjectState).not.toHaveBeenCalled()
   })
 })

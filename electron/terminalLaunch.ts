@@ -12,7 +12,7 @@
  * that tests can reach.
  */
 
-import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
+import { shellQuote, type TabLiveness, type TerminalTab } from '../src/shared/projectTypes.js'
 
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 
@@ -239,3 +239,53 @@ export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[], r
     ],
     [projectPath, reuseWindowId, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
   )
+
+// How each terminal names a tab the app titled: Terminal's custom title, an
+// iTerm2 session's name, a Ghostty tab's name (its name override when set).
+const TAB_TITLE_LOOPS: Record<string, { appName: string; loop: string[] }> = {
+  terminal: {
+    appName: 'Terminal',
+    loop: ['repeat with t in tabs of w', 'set end of titles to custom title of t', 'end repeat']
+  },
+  iterm2: {
+    appName: 'iTerm',
+    loop: [
+      'repeat with t in tabs of w',
+      'repeat with s in sessions of t',
+      'set end of titles to name of s',
+      'end repeat',
+      'end repeat'
+    ]
+  },
+  ghostty: {
+    appName: 'Ghostty',
+    loop: ['repeat with t in tabs of w', 'set end of titles to name of t', 'end repeat']
+  }
+}
+
+// One title per line. A terminal that isn't running has no tabs, and is
+// checked first because `tell` would launch it. Undefined = this terminal
+// can't be asked (Warp has no scripting dictionary).
+export const tabTitlesOsascriptArgs = (targetId: string): string[] | undefined => {
+  if (!Object.hasOwn(TAB_TITLE_LOOPS, targetId)) return undefined
+  const { appName, loop } = TAB_TITLE_LOOPS[targetId]
+  const scriptLines = [
+    `if application "${appName}" is not running then return ""`,
+    'set titles to {}',
+    `tell application "${appName}"`,
+    'repeat with w in windows',
+    ...loop,
+    'end repeat',
+    'end tell',
+    'set AppleScript\'s text item delimiters to linefeed',
+    'return titles as text'
+  ]
+  return scriptLines.flatMap((line) => ['-e', line])
+}
+
+// No listing (unsupported terminal, osascript error) → nobody can say.
+export const tabLiveness = (openTitles: string[] | undefined, wantedTitles: string[]): TabLiveness[] =>
+  wantedTitles.map((title) => {
+    if (!openTitles) return 'unknown'
+    return openTitles.includes(title) ? 'alive' : 'gone'
+  })

@@ -8,7 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
-import { runAgentHeadless } from './agentRun.js'
+import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
@@ -18,6 +18,8 @@ import {
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
+  tabLiveness,
+  tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   usableTabTitle,
   warpLaunchConfigYaml
@@ -27,6 +29,7 @@ import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
+  isUuid,
   isWebUrl,
   pullRequestNumber,
   shellQuote,
@@ -43,6 +46,8 @@ const allowedDevOrigin = 'http://127.0.0.1:5173'
 const APP_NAME = 'Project Tracker'
 
 let mainWindow: BrowserWindow | null = null
+// Runs recorded as running before this moment belong to a process that is gone.
+const APP_STARTED_AT = new Date().toISOString()
 let stateRepository: StateRepository
 
 // ponytail: slow fixed poll for writes from other processes (a second app
@@ -526,22 +531,46 @@ const registerIpc = () => {
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, agentId, prompt, model } = (payload ?? {}) as {
+    const { projectPath, agentId, prompt, model, sessionId } = (payload ?? {}) as {
       projectPath?: unknown
       agentId?: unknown
       prompt?: unknown
       model?: unknown
+      sessionId?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (typeof agentId !== 'string') throw new Error('Invalid agent.')
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
     if (model !== undefined && typeof model !== 'string') throw new Error('Invalid agent model.')
+    if (sessionId !== undefined && !isUuid(sessionId)) throw new Error('Invalid agent session id.')
     // Resolved by id against known agents rather than taking a command from the
     // payload, so the renderer can pick which agent runs but never what binary.
     const agent = availableAgents(stateRepository.getState()).find((entry) => entry.id === agentId)
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home'), model))
+    const sender = event.sender
+    const onRetry = (notice: { attempt: number; of: number; delayMs: number }) => {
+      if (!sender.isDestroyed()) sender.send('ticket:agent-retry', { sessionId, ...notice })
+    }
+    const options = { model, sessionId, onRetry }
+    return toPlainJson(await runAgentHeadlessWithRetry(agent, prompt, normalized, app.getPath('home'), options))
+  })
+
+  ipcMain.handle('app:started-at', (event) => {
+    assertTrustedSender(event)
+    return APP_STARTED_AT
+  })
+
+  // Read-only: lists tab titles, never launches or touches a terminal.
+  ipcMain.handle('terminal:tabs-alive', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { targetId, titles } = (payload ?? {}) as { targetId?: unknown; titles?: unknown }
+    if (typeof targetId !== 'string' || !isStringArray(titles)) throw new Error('Invalid tab check.')
+    const listArgs = process.platform === 'darwin' ? tabTitlesOsascriptArgs(targetId) : undefined
+    if (!listArgs) return tabLiveness(undefined, titles)
+    const listing = await run('osascript', listArgs).catch(() => undefined)
+    const openTitles = listing === undefined ? undefined : listing.split('\n').filter(Boolean)
+    return tabLiveness(openTitles, titles)
   })
 
   // Computed live on every call: nothing is cached or stored, so an open of the

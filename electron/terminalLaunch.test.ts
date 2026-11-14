@@ -5,6 +5,8 @@ import {
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
+  tabLiveness,
+  tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
@@ -260,5 +262,25 @@ describe('orchestratorTab', () => {
     ['an oversized title', { ...valid, title: 'A'.repeat(201) }]
   ])('rejects %s', (_label, payload) => {
     expect(() => orchestratorTab(payload)).toThrow('Invalid Auto Run orchestrator.')
+  })
+})
+
+describe('tab liveness', () => {
+  it('builds a read-only listing for each scriptable terminal, checking it is running before telling it anything', () => {
+    for (const targetId of ['terminal', 'iterm2', 'ghostty']) {
+      const lines = (tabTitlesOsascriptArgs(targetId) ?? []).filter((arg) => arg !== '-e')
+      expect(lines[0]).toMatch(/^if application ".+" is not running then return ""$/)
+      expect(lines.join('\n')).not.toMatch(/activate|launch|close|keystroke/)
+    }
+  })
+
+  it('has no listing for Warp or an unknown id', () => {
+    expect(tabTitlesOsascriptArgs('warp')).toBeUndefined()
+    expect(tabTitlesOsascriptArgs('constructor')).toBeUndefined()
+  })
+
+  it('matches whole titles, and says unknown when there is no listing', () => {
+    expect(tabLiveness(['#7 Add the thing', '#8 Other'], ['#7 Add the thing', '#7 Add'])).toEqual(['alive', 'gone'])
+    expect(tabLiveness(undefined, ['#7 Add the thing'])).toEqual(['unknown'])
   })
 })
