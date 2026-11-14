@@ -1,4 +1,6 @@
-export const GITHUB_OFFLINE_MESSAGE = 'Could not reach GitHub. Check your connection.'
+import { GITHUB_UNREACHABLE_MESSAGE } from '../src/shared/projectTypes.js'
+
+const REQUEST_TIMEOUT_MS = 10_000
 
 export type GithubRequest = <T>(apiPath: string, body?: unknown) => Promise<T>
 
@@ -18,13 +20,19 @@ export const createGithubRequest = (
       'User-Agent': userAgent
     }
     if (token) headers.Authorization = `Bearer ${token}`
-    const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
+    // The timeout turns a stalled connection (captive portal) into a rejection.
+    const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    const init: RequestInit =
+      body === undefined ? { headers, signal } : { method: 'POST', headers, signal, body: JSON.stringify(body) }
 
+    // fetch rejects only when no HTTP response arrived (DNS, no route, refused,
+    // timeout): that is "offline" to the user. The real cause goes to the log.
     let response: Response
     try {
       response = await fetchImpl(`https://api.github.com${apiPath}`, init)
     } catch (error) {
-      throw new Error(GITHUB_OFFLINE_MESSAGE, { cause: error })
+      console.warn('GitHub request failed before a response:', error)
+      throw new Error(GITHUB_UNREACHABLE_MESSAGE, { cause: error })
     }
 
     if (response.status === 401 && !token) {

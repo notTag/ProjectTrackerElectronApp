@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createGithubRequest, GITHUB_OFFLINE_MESSAGE } from './githubRequest.js'
+import { GITHUB_UNREACHABLE_MESSAGE } from '../src/shared/projectTypes.js'
+import { createGithubRequest } from './githubRequest.js'
 
 const respondWith = (status: number, body: unknown = {}) =>
   vi.fn<typeof fetch>(async () => new Response(JSON.stringify(body), { status }))
@@ -28,9 +29,10 @@ describe('requestGithub error mapping', () => {
   it('offline: a rejected fetch becomes a readable message, original error kept as cause', async () => {
     const networkError = new TypeError('fetch failed')
     const request = requestWith(vi.fn<typeof fetch>(async () => Promise.reject(networkError)))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const failure = await request('/repos/o/r').catch((error: Error) => error)
     expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toBe(GITHUB_OFFLINE_MESSAGE)
+    expect((failure as Error).message).toBe(GITHUB_UNREACHABLE_MESSAGE)
     expect((failure as Error).cause).toBe(networkError)
   })
 })
