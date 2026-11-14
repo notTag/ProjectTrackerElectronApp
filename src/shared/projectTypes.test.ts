@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  GITHUB_UNREACHABLE_MESSAGE,
+  isGithubUnreachableError,
   normalizeSemanticVersion,
   shellQuote,
   agentRunBadge,
@@ -1154,6 +1156,20 @@ describe('semantic version', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
     expect(prompt).toContain("Leave it unset if it doesn't apply yet.")
     expect(prompt).not.toContain('sqlite3')
+  })
+})
+
+describe('isGithubUnreachableError', () => {
+  it('matches the unreachable message after IPC wraps it', () => {
+    const wrapped = new Error(`Error invoking remote method 'project:fetch-github': Error: ${GITHUB_UNREACHABLE_MESSAGE}`)
+    expect(isGithubUnreachableError(wrapped)).toBe(true)
+  })
+
+  it('ignores other GitHub failures and non-errors', () => {
+    expect(isGithubUnreachableError(new Error('GitHub rate limit reached. Try again in a while.'))).toBe(false)
+    expect(isGithubUnreachableError(new Error('Repository not found on GitHub.'))).toBe(false)
+    expect(isGithubUnreachableError(GITHUB_UNREACHABLE_MESSAGE)).toBe(false)
+    expect(isGithubUnreachableError(undefined)).toBe(false)
   })
 })
 

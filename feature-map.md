@@ -180,6 +180,7 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
     - ★ stars and ⑂ forks
     - "pushed <date>"
   - GitHub errors say what to do: private repo with no token, token rejected, rate limited, other HTTP failure.
+  - **Offline**: every local feature keeps working. Manual GitHub actions say "GitHub is unreachable…"; background pulls on board open (issues, PR states) stay silent and retry on the next board open.
 - Clicking anywhere else on the card expands or collapses it. Escape collapses it.
 
 #### Expanded card, Details tab
