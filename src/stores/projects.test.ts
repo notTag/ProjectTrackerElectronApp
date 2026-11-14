@@ -325,7 +325,7 @@ describe('Move to on completion', () => {
 
     await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
 
-    expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: 'dev', moveOnComplete: false })
+    expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: undefined, moveOnComplete: false })
     expect(api.updateTicket).toHaveBeenCalledTimes(1)
     expect(saveProjectState).not.toHaveBeenCalled()
     expect(store.notice).toBe('Moved #7 to In Development.')

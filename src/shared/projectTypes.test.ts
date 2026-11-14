@@ -16,6 +16,8 @@ import {
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
+  effectiveNextLaneId,
+  createUnassignedLane,
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
@@ -243,6 +245,12 @@ describe('ticket numbering', () => {
     const board = addTicketToBoard(boardWithTickets(), { laneId: 'idea', title: 'C', description: '' })
     expect(board.tickets.at(-1)?.number).toBe(3)
     expect(nextTicketNumber(board)).toBe(4)
+  })
+
+  it('stores a new ticket\'s Next Lane override and armed state', () => {
+    const input = { laneId: 'idea', title: 'C', description: '', moveToLaneId: 'prd', moveOnComplete: true }
+    const board = addTicketToBoard(boardWithTickets(), input)
+    expect(board.tickets.at(-1)).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
   })
 
   it('numbers imported issues sequentially after existing tickets', () => {
@@ -842,12 +850,12 @@ describe('full auto', () => {
     const movesBetween = (before: Ticket, after: Ticket, alsoCompletedIds: string[] = [], at?: string) =>
       completionMoves(boardWith([before]), boardWith([after]), alsoCompletedIds, at)
 
-    it('moves a ticket whose checklist just went all-done and disarms it, keeping the target', () => {
+    it('moves a ticket whose checklist just went all-done, disarms it and clears the spent override', () => {
       const { board, moves } = movesBetween(armed(), completed(), [], '2026-02-02T00:00:00.000Z')
       expect(moves.map((move) => `${move.ticket.number}->${move.toLane.name}`)).toEqual(['7->DEV'])
       expect(board.tickets[0]).toMatchObject({
         laneId: 'dev',
-        moveToLaneId: 'dev',
+        moveToLaneId: undefined,
         moveOnComplete: false,
         updatedAt: '2026-02-02T00:00:00.000Z'
       })
@@ -894,6 +902,67 @@ describe('full auto', () => {
       const board = removeLaneFromBoard(boardWith([armed()]), 'dev')
       expect(board.tickets[0]).toMatchObject({ moveToLaneId: undefined, moveOnComplete: false, laneId: 'prd' })
     })
+
+    it('moves an armed ticket with no override to its lane\'s Next Lane; an override wins', () => {
+      const inheriting = { moveToLaneId: undefined }
+      const before = completionMoves(
+        boardWith([armed(inheriting)], { nextLaneId: 'empty' }),
+        boardWith([completed(inheriting)], { nextLaneId: 'empty' })
+      )
+      expect(before.moves.map((move) => move.toLane.id)).toEqual(['empty'])
+
+      const overridden = completionMoves(
+        boardWith([armed()], { nextLaneId: 'empty' }),
+        boardWith([completed()], { nextLaneId: 'empty' })
+      )
+      expect(overridden.moves.map((move) => move.toLane.id)).toEqual(['dev'])
+    })
+
+    it('does not move an unarmed ticket even when its lane has a Next Lane', () => {
+      const unarmed = { moveToLaneId: undefined, moveOnComplete: false }
+      const { moves } = completionMoves(
+        boardWith([armed(unarmed)], { nextLaneId: 'dev' }),
+        boardWith([completed(unarmed)], { nextLaneId: 'dev' })
+      )
+      expect(moves).toEqual([])
+    })
+  })
+
+  describe('effectiveNextLaneId', () => {
+    const inPrd = { laneId: 'prd' }
+    it('prefers the ticket, falls back to the lane, else undefined', () => {
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'dev' }, lane('prd', { nextLaneId: 'qa' }))).toBe('dev')
+      expect(effectiveNextLaneId(inPrd, lane('prd', { nextLaneId: 'qa' }))).toBe('qa')
+      expect(effectiveNextLaneId(inPrd, lane('prd'))).toBeUndefined()
+      expect(effectiveNextLaneId(inPrd, undefined)).toBeUndefined()
+      const unassigned = { ...createUnassignedLane(), nextLaneId: 'idea' }
+      expect(effectiveNextLaneId({ laneId: UNASSIGNED_LANE_ID }, unassigned)).toBe('idea')
+    })
+
+    it('treats an override naming the ticket\'s own lane as stale and inherits', () => {
+      expect(effectiveNextLaneId({ ...inPrd, moveToLaneId: 'prd' }, lane('prd', { nextLaneId: 'dev' }))).toBe('dev')
+    })
+  })
+
+  it('removeLaneFromBoard clears lane Next Lane pointers, the unassigned lane\'s included', () => {
+    const board: ProjectBoard = {
+      ...boardWith([], { nextLaneId: 'dev' }),
+      unassignedLane: { ...createUnassignedLane(), nextLaneId: 'dev' }
+    }
+    const removed = removeLaneFromBoard(board, 'dev')
+    expect(removed.lanes.map((each) => each.nextLaneId)).toEqual([undefined, undefined])
+    expect(removed.unassignedLane?.nextLaneId).toBeUndefined()
+  })
+
+  it('removeLaneFromBoard disarms tickets whose resolved Next Lane changed, and keeps the rest armed', () => {
+    const inheriting = ticket({ id: 'a', laneId: 'prd', moveOnComplete: true })
+    const ownTarget = ticket({ id: 'b', laneId: 'prd', moveToLaneId: 'dev', moveOnComplete: true })
+    const board: ProjectBoard = {
+      ...boardWith([inheriting, ownTarget], { nextLaneId: 'dev' }),
+      unassignedLane: { ...createUnassignedLane(), nextLaneId: 'empty' }
+    }
+    const removed = removeLaneFromBoard(board, 'prd')
+    expect(removed.tickets.map((each) => each.moveOnComplete)).toEqual([false, true])
   })
 
   it('keeps a ticket on its existing branch and drops its worktree path from the prompt when worktrees are on', () => {
