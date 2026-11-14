@@ -34,11 +34,14 @@ export interface AgentRunResult {
 }
 
 interface AgentAttempt extends AgentRunResult {
-  // Only what the agent printed: error.message repeats the whole argv, prompt
-  // included, and a prompt that mentions "network" must not read as an outage.
-  printed: string
+  // Where a CLI reports why it stopped: stderr plus the last stdout line. Not
+  // error.message (it repeats the argv, prompt included) and not the whole of
+  // stdout, whose real work may well mention "network" or "timed out".
+  failureReport: string
   error?: ExecFileException
 }
+
+const lastLine = (text: string): string => text.trim().split('\n').pop() ?? ''
 
 // execFile with an argv array, no shell: the prompt — which can carry text from
 // a GitHub issue — reaches the agent as one literal argument, never as code.
@@ -59,31 +62,20 @@ const runAgentProcess = (
     }
     const child = execFile(agent.command, args, options, (error, stdout, stderr) => {
       const printed = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n')
-      if (!error) return resolve({ succeeded: true, output: stdout.trim(), printed })
+      const failureReport = [stderr.trim(), lastLine(stdout)].filter(Boolean).join('\n')
+      if (!error) return resolve({ succeeded: true, output: stdout.trim(), failureReport })
 
       const commandMissing = error.code === 'ENOENT'
       const failureReason = commandMissing
         ? `${agent.name} CLI (\`${agent.command}\`) was not found. Install it or add it to your PATH.`
         : error.message
       const output = [printed, failureReason].filter(Boolean).join('\n\n')
-      resolve({ succeeded: false, output, printed, error })
+      resolve({ succeeded: false, output, failureReport, error })
     })
     // An open stdin pipe reads as "input is coming" to CLIs that accept a piped
     // prompt, and they wait on it forever. There is no input; say so.
     child.stdin?.end()
   })
-
-export const runAgentHeadless = async (
-  agent: Agent,
-  prompt: string,
-  projectPath: string,
-  homeDirectory: string,
-  model?: string
-): Promise<AgentRunResult> => {
-  const args = [...agent.headlessArgs, ...agentModelWords(agent, model), prompt]
-  const { succeeded, output } = await runAgentProcess(agent, args, projectPath, homeDirectory)
-  return { succeeded, output }
-}
 
 // Network drops and API overloads clear up on their own; a missing CLI or a
 // run killed by the 30 min timeout won't, and retrying a stuck run is a stuck
@@ -94,9 +86,9 @@ const TRANSIENT_FAILURE_PATTERN =
 
 type FailureCause = Pick<ExecFileException, 'code' | 'killed'>
 
-export const isTransientFailure = (printed: string, error?: FailureCause): boolean => {
+export const isTransientFailure = (failureReport: string, error?: FailureCause): boolean => {
   if (error?.code === 'ENOENT' || error?.killed) return false
-  return TRANSIENT_FAILURE_PATTERN.test(printed)
+  return TRANSIENT_FAILURE_PATTERN.test(failureReport)
 }
 
 export const RETRY_DELAYS_MS = [30_000, 120_000]
@@ -135,14 +127,18 @@ export const runAgentHeadlessWithRetry = async (
   const resumeArgs = [...agent.headlessArgs, ...modelWords, ...resumeWords, CONTINUE_PROMPT]
 
   let attempt = await runAgentProcess(agent, firstArgs, projectPath, homeDirectory)
+  // Every attempt's output is kept: the one that dropped often did the real work.
+  const outputs = [attempt.output]
   let attempts = 1
   const retriesLeft = () => attempts <= RETRY_DELAYS_MS.length
-  while (canRetry && !attempt.succeeded && retriesLeft() && isTransientFailure(attempt.printed, attempt.error)) {
+  while (canRetry && !attempt.succeeded && retriesLeft() && isTransientFailure(attempt.failureReport, attempt.error)) {
     const delayMs = RETRY_DELAYS_MS[attempts - 1]
     onRetry?.({ attempt: attempts, of: RETRY_DELAYS_MS.length, delayMs })
     await sleep(delayMs)
     attempt = await runAgentProcess(agent, resumeArgs, projectPath, homeDirectory)
+    outputs.push(attempt.output)
     attempts += 1
   }
-  return { succeeded: attempt.succeeded, output: attempt.output, attempts }
+  const output = outputs.filter(Boolean).join(`\n\n--- retry ---\n\n`)
+  return { succeeded: attempt.succeeded, output, attempts }
 }

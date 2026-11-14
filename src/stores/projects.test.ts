@@ -713,6 +713,37 @@ describe('mid-session failure recovery', () => {
     expect(api.autoRunLane).not.toHaveBeenCalled()
   })
 
+  it('looks for the title the tab opened with, not the ticket\'s current title', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    getBoard(state, PROJECT_PATH).tickets[0].agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'dev',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'terminal',
+      tabTitle: '#7 Old title'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['alive'])
+
+    await store.reconcileAgentRuns()
+
+    expect(api.terminalTabsAlive).toHaveBeenCalledWith('terminal', ['#7 Old title'])
+  })
+
+  it('offers no Resume for a headless run whose call never reached the agent', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    api.runTicketAgent.mockRejectedValue(new Error('Unknown agent'))
+
+    await store.runTicketAgent(PROJECT_PATH, store.board(PROJECT_PATH).tickets[0], 'claude-code', 'prompt')
+
+    expect(storedRun(store)).toMatchObject({ status: 'failed', sessionId: undefined })
+  })
+
   it('leaves a run whose tab is still open', async () => {
     const store = useProjectsStore()
     const state = stateWithTicketIn('dev')

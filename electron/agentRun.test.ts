@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 
 import { describe, expect, it } from 'vitest'
 
-import { CONTINUE_PROMPT, isTransientFailure, runAgentHeadless, runAgentHeadlessWithRetry } from './agentRun.js'
+import { CONTINUE_PROMPT, isTransientFailure, runAgentHeadlessWithRetry } from './agentRun.js'
 
 const echoLastArgument = {
   id: 'echo',
@@ -11,29 +11,29 @@ const echoLastArgument = {
   headlessArgs: ['-e', 'console.log(process.argv.at(-1))']
 }
 
-describe('runAgentHeadless', () => {
+describe('runAgentHeadlessWithRetry argv and output', () => {
   it('passes the prompt as one literal argument, never through a shell', async () => {
     const prompt = `don't $(touch pwned) \`id\` "quoted"\nsecond line`
-    const result = await runAgentHeadless(echoLastArgument, prompt, tmpdir(), tmpdir())
-    expect(result).toEqual({ succeeded: true, output: prompt })
+    const result = await runAgentHeadlessWithRetry(echoLastArgument, prompt, tmpdir(), tmpdir())
+    expect(result).toEqual({ succeeded: true, output: prompt, attempts: 1 })
   })
 
   it('puts the model flag before the prompt, which stays last', async () => {
     const echoArgs = { ...echoLastArgument, headlessArgs: ['-e', 'console.log(process.argv.slice(1).join(" "))', '--'], modelArgs: ['--model'] }
-    const result = await runAgentHeadless(echoArgs, 'prompt', tmpdir(), tmpdir(), 'opus')
-    expect(result).toEqual({ succeeded: true, output: '--model opus prompt' })
+    const result = await runAgentHeadlessWithRetry(echoArgs, 'prompt', tmpdir(), tmpdir(), { model: 'opus' })
+    expect(result).toEqual({ succeeded: true, output: '--model opus prompt', attempts: 1 })
   })
 
   it('keeps what a failing agent printed alongside why it failed', async () => {
     const failing = { ...echoLastArgument, headlessArgs: ['-e', 'console.log("partial"); process.exit(2)'] }
-    const result = await runAgentHeadless(failing, 'prompt', tmpdir(), tmpdir())
+    const result = await runAgentHeadlessWithRetry(failing, 'prompt', tmpdir(), tmpdir())
     expect(result.succeeded).toBe(false)
     expect(result.output).toContain('partial')
   })
 
   it('names the missing CLI instead of surfacing a bare ENOENT', async () => {
     const missing = { ...echoLastArgument, name: 'Ghost', command: 'definitely-not-an-agent-cli' }
-    const result = await runAgentHeadless(missing, 'prompt', tmpdir(), tmpdir())
+    const result = await runAgentHeadlessWithRetry(missing, 'prompt', tmpdir(), tmpdir())
     expect(result.output).toContain('Ghost CLI (`definitely-not-an-agent-cli`) was not found')
   })
 })
@@ -120,6 +120,21 @@ describe('runAgentHeadlessWithRetry', () => {
     })
     expect(result).toMatchObject({ succeeded: true, attempts: 2 })
     expect(delays).toEqual([30_000])
+    // The dropped attempt's output survives next to the resumed one.
+    expect(result.output).toContain(`--session-id ${SESSION_ID} do it`)
+    expect(result.output).toContain(`--resume ${SESSION_ID}`)
+  })
+
+  it('does not read outage words in the work the agent printed as an outage', async () => {
+    const failing = {
+      ...flakyAgent(),
+      headlessArgs: ['-e', 'console.log("updated network retry logic"); console.log("done"); process.exit(1)', '--']
+    }
+    const result = await runAgentHeadlessWithRetry(failing, 'do it', tmpdir(), tmpdir(), {
+      sessionId: SESSION_ID,
+      sleep: async () => undefined
+    })
+    expect(result.attempts).toBe(1)
   })
 
   it('does not retry a non-transient failure', async () => {

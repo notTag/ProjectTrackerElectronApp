@@ -266,15 +266,17 @@ describe('orchestratorTab', () => {
 })
 
 describe('tab liveness', () => {
-  it('builds a read-only listing for each scriptable terminal, checking it is running before telling it anything', () => {
-    for (const targetId of ['terminal', 'iterm2', 'ghostty']) {
-      const lines = (tabTitlesOsascriptArgs(targetId) ?? []).filter((arg) => arg !== '-e')
-      expect(lines[0]).toMatch(/^if application ".+" is not running then return ""$/)
-      expect(lines.join('\n')).not.toMatch(/activate|launch|close|keystroke/)
-    }
+  it('builds a read-only Terminal listing, checking it is running before telling it anything', () => {
+    const lines = (tabTitlesOsascriptArgs('terminal') ?? []).filter((arg) => arg !== '-e')
+    expect(lines[0]).toBe('if application "Terminal" is not running then return ""')
+    expect(lines).toContain('set end of titles to custom title of t')
+    expect(lines.join('\n')).not.toMatch(/activate|launch|close|keystroke/)
   })
 
-  it('has no listing for Warp or an unknown id', () => {
+  // Their tab names follow the agent's own title escapes, so a live tab would read as gone.
+  it('has no listing for terminals whose tab names the agent overwrites, Warp, or an unknown id', () => {
+    expect(tabTitlesOsascriptArgs('iterm2')).toBeUndefined()
+    expect(tabTitlesOsascriptArgs('ghostty')).toBeUndefined()
     expect(tabTitlesOsascriptArgs('warp')).toBeUndefined()
     expect(tabTitlesOsascriptArgs('constructor')).toBeUndefined()
   })

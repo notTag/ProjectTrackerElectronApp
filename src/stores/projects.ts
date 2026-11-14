@@ -182,7 +182,14 @@ const interruptedRun = (run: TicketAgentRun, at: string): TicketAgentRun => ({
 // Fetched once: main's start time never changes while the renderer lives.
 let appStartedAtPromise: Promise<number> | undefined
 const appStartedAt = () => {
-  appStartedAtPromise ??= projectTrackerApi.appStartedAt().then((startedAt) => Date.parse(startedAt))
+  // A failed fetch is forgotten, or one early IPC error would stop every later reconcile.
+  appStartedAtPromise ??= projectTrackerApi
+    .appStartedAt()
+    .then((startedAt) => Date.parse(startedAt))
+    .catch((error: unknown) => {
+      appStartedAtPromise = undefined
+      throw error
+    })
   return appStartedAtPromise
 }
 
@@ -890,7 +897,7 @@ export const useProjectsStore = defineStore('projects', {
       // still leaves its id behind to resume from.
       const startedAt = new Date().toISOString()
       const runByTicketId = new Map(
-        launches.map(({ ticket, agentId, sessionId }) => {
+        launches.map(({ ticket, launch, agentId, sessionId }) => {
           const cwd = useWorktrees ? ticket.worktreePath ?? path : path
           const agentRun: TicketAgentRun = {
             at: startedAt,
@@ -902,7 +909,8 @@ export const useProjectsStore = defineStore('projects', {
             sessionId,
             cwd,
             agentId,
-            terminalId: targetId
+            terminalId: targetId,
+            tabTitle: launch.title
           }
           return [ticket.id, agentRun]
         })
@@ -1022,10 +1030,14 @@ export const useProjectsStore = defineStore('projects', {
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false,
-            attempts: 1
+            attempts: 1,
+            neverStarted: true
           }))
+        // A rejected call never launched the agent, so no session exists to resume.
+        const sessionId = 'neverStarted' in result ? undefined : runningRecord.sessionId
         const agentRun: TicketAgentRun = {
           ...runningRecord,
+          sessionId,
           at: new Date().toISOString(),
           output: result.output,
           succeeded: result.succeeded,
@@ -1072,7 +1084,8 @@ export const useProjectsStore = defineStore('projects', {
       }
       const livenessByTicketId: Record<string, TabLiveness> = {}
       for (const [terminalId, tickets] of ticketsByTerminal) {
-        const titles = tickets.map((ticket) => ticketTabTitle(ticket))
+        // The title the tab opened with: a ticket renamed since would match nothing.
+        const titles = tickets.map((ticket) => ticket.agentRun?.tabTitle ?? ticketTabTitle(ticket))
         const liveness = await projectTrackerApi
           .terminalTabsAlive(terminalId, titles)
           .catch((): TabLiveness[] => titles.map(() => 'unknown'))
@@ -1122,23 +1135,32 @@ export const useProjectsStore = defineStore('projects', {
     async resumeTicketAgent(projectPath: string, ticket: Ticket) {
       const run = ticket.agentRun
       const agent = findAgent(availableAgents(this.state), run?.agentId ?? ticket.agentId)
-      if (!run || !canResume(ticket, agent)) return
-      const command = agentResumeCommand(agent, run, RESUME_PROMPT)
-      const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
-      const ranInTab = await this.openIn(projectPath, terminal.id, command, ticketTabTitle(ticket))
-      if (!ranInTab) return
-      const startedAt = new Date().toISOString()
-      const resumedRun: TicketAgentRun = {
-        ...run,
-        at: startedAt,
-        startedAt,
-        status: 'running',
-        mode: 'terminal',
-        succeeded: undefined,
-        seenAt: undefined,
-        terminalId: terminal.id
+      // Held across the openIn await (and disables Resume): a double click would
+      // otherwise open two tabs resuming the same session.
+      if (!run || !canResume(ticket, agent) || this.agentRunning[ticket.id]) return
+      this.agentRunning[ticket.id] = true
+      try {
+        const command = agentResumeCommand(agent, run, RESUME_PROMPT)
+        const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
+        const tabTitle = ticketTabTitle(ticket)
+        const ranInTab = await this.openIn(projectPath, terminal.id, command, tabTitle)
+        if (!ranInTab) return
+        const startedAt = new Date().toISOString()
+        const resumedRun: TicketAgentRun = {
+          ...run,
+          at: startedAt,
+          startedAt,
+          status: 'running',
+          mode: 'terminal',
+          succeeded: undefined,
+          seenAt: undefined,
+          terminalId: terminal.id,
+          tabTitle
+        }
+        await this.updateTicket(projectPath, ticket.id, { agentRun: resumedRun })
+      } finally {
+        this.agentRunning[ticket.id] = false
       }
-      await this.updateTicket(projectPath, ticket.id, { agentRun: resumedRun })
     },
 
     async fetchGithub(path: string) {

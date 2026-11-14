@@ -284,6 +284,8 @@ export interface TicketAgentRun {
   agentId?: string
   // The terminal a tab run opened in, so its tab can be looked for later.
   terminalId?: string
+  // The title that tab opened with, looked for as-is even if the ticket is renamed.
+  tabTitle?: string
 }
 
 export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
