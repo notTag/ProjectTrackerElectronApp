@@ -348,7 +348,11 @@ export const useProjectsStore = defineStore('projects', {
     async pullGithubIssues(projectPath: string, { quiet = false } = {}) {
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) {
-        if (!quiet) this.error = 'This project has no linked GitHub repository.'
+        if (!quiet) {
+          this.error = project
+            ? `${project.name} has no linked GitHub repository.`
+            : 'This project has no linked GitHub repository.'
+        }
         return
       }
       this.githubLoading[projectPath] = true
@@ -369,16 +373,23 @@ export const useProjectsStore = defineStore('projects', {
             added = result.added
             return result.board
           })
-          if (!saved) return
+          if (!saved) {
+            // The save already set this.error; name the project so it reads right on any board.
+            this.error = `${project.name}: ${this.error}`
+            return
+          }
         }
         const skipped = issues.length - added
         if (quiet && added === 0) return
-        this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
+        const issueWord = added === 1 ? 'issue' : 'issues'
+        const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
+        this.notice = `Imported ${added} ${issueWord} into ${project.name}${skippedNote}.`
       } catch (error) {
         // A background pull while offline is not worth a banner; the caller retries later.
         const isQuietOfflinePull = quiet && isGithubUnreachableError(error)
         if (isQuietOfflinePull) return 'offline'
-        this.error = error instanceof Error ? error.message : String(error)
+        const message = error instanceof Error ? error.message : String(error)
+        this.error = `${project.name}: ${message}`
       } finally {
         this.githubLoading[projectPath] = false
       }
