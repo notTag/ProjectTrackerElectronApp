@@ -20,6 +20,7 @@ import {
   addExternalLink,
   agentForTicket,
   agentRunBadge,
+  canResume,
   type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
@@ -907,7 +908,8 @@ const openTicketInShell = (ticket: Ticket) => {
 const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
   running: { className: 'agent-status-running', label: 'Agent running' },
   succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
-  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' }
+  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
+  interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
 }
 
 const cardAgentBadge = (ticket: Ticket) => {
@@ -933,6 +935,15 @@ watch(
   },
   { immediate: true }
 )
+
+// The run's own agent, not the ticket's current pick: only the CLI that
+// started a session can resume it.
+const ticketCanResume = (ticket: Ticket) => {
+  const runAgent = findAgent(agents.value, ticket.agentRun?.agentId ?? ticket.agentId)
+  return canResume(ticket, runAgent)
+}
+
+const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
@@ -1526,6 +1537,15 @@ const runTicketAgent = (ticket: Ticket) => {
             {{ store.agentRunning[openTicket.id] ? 'Running…' : '▶ Run' }}
           </button>
           <button
+            v-if="ticketCanResume(openTicket)"
+            class="secondary"
+            :disabled="store.agentRunning[openTicket.id]"
+            title="Resume the interrupted session in a terminal tab, in the directory it started in"
+            @click="resumeTicketAgent(openTicket)"
+          >
+            ⏯ Resume
+          </button>
+          <button
             class="secondary"
             :title="`Run in ${openInStore.selectedTarget.label} — terminals run it, editors get it on the clipboard`"
             @click="openTicketInShell(openTicket)"
@@ -1600,7 +1620,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
-      <section v-if="autoRunTickets(autoRunConfirmLane).length >= 2" class="auto-run-orchestrator">
+      <section class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
         <label>
           Agent
@@ -1705,7 +1725,7 @@ const runTicketAgent = (ticket: Ticket) => {
           placeholder="e.g. Poll every 2 minutes. Flag PRs with failing checks."
           @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
-        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs when 2+ tickets auto-run)</span>
+        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run)</span>
       </label>
 
       <section class="ticket-agent">

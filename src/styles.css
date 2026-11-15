@@ -1190,6 +1190,7 @@ code {
 .agent-status {
   --agent-status-green: #22c55e;
   --agent-status-red: #ef4444;
+  --agent-status-amber: #f59e0b;
   display: inline-block;
   margin-right: 6px;
 }
@@ -1214,6 +1215,12 @@ code {
   color: var(--agent-status-red);
   font-weight: 700;
   text-shadow: 0 0 6px var(--agent-status-red);
+}
+
+.agent-status-interrupted {
+  color: var(--agent-status-amber);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--agent-status-amber);
 }
 
 .lane-unseen-count {
