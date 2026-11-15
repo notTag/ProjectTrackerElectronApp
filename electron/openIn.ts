@@ -1,5 +1,5 @@
 import { findOpenInTarget } from '../src/shared/openInTargets.js'
-import type { TerminalTab } from '../src/shared/projectTypes.js'
+import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
 import { usableTabTitle } from './terminalLaunch.js'
 
 export type CommandRunner = (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>
@@ -54,7 +54,7 @@ export const openProjectIn = async (payload: unknown, dependencies: OpenInDepend
     await dependencies.openFolder(target.appName, normalized)
     return { ok: true, appLabel: target.label, copiedCommand: ticketCommand }
   } catch {
-    const fallbackCommand = `cd ${JSON.stringify(normalized)}`
+    const fallbackCommand = `cd ${shellQuote(normalized)}`
     dependencies.writeClipboard(fallbackCommand)
     return { ok: true, appLabel: target.label, fallbackCommand }
   }

@@ -5,7 +5,7 @@ import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadless } from './agentRun.js'
@@ -48,6 +48,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
+const bundledPagePath = path.join(app.getAppPath(), 'out/renderer/index.html')
+const appPageUrl = devServerUrl ?? pathToFileURL(bundledPagePath).href
 const APP_NAME = 'Project Tracker'
 
 let mainWindow: BrowserWindow | null = null
@@ -205,7 +207,7 @@ const assertScannedProjectPath = (projectPath: string) => {
 }
 
 const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) =>
-  assertTrustedSenderUrl(event.senderFrame?.url, devServerUrl)
+  assertTrustedSenderUrl(event.senderFrame?.url, appPageUrl)
 
 const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
   const candidate = value as Partial<AutoRunTicketLaunch> | null
@@ -326,17 +328,13 @@ const createWindow = async () => {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isAppPageUrl(url, devServerUrl)) return
+    if (isAppPageUrl(url, appPageUrl)) return
 
     event.preventDefault()
     if (isWebUrl(url)) void shell.openExternal(url)
   })
 
-  if (devServerUrl) {
-    await mainWindow.loadURL(devServerUrl)
-  } else {
-    await mainWindow.loadFile(path.join(app.getAppPath(), 'out/renderer/index.html'))
-  }
+  await mainWindow.loadURL(appPageUrl)
 }
 
 const configureApplicationMenu = () => {

@@ -48,13 +48,13 @@ describe('project:open-in payload validation', () => {
 })
 
 describe('project:open-in launch and fallback', () => {
-  it('app missing: copies cd "<path>" to the clipboard and returns it as fallbackCommand', async () => {
+  it('app missing: copies a shell-quoted cd to the clipboard and returns it as fallbackCommand', async () => {
     const { dependencies, clipboard } = fakeDependencies({
       openFolder: async () => Promise.reject(new Error('Unable to find application named Zed'))
     })
     const result = await openProjectIn({ projectPath: PROJECT, targetId: 'zed' }, dependencies)
-    expect(result).toEqual({ ok: true, appLabel: 'Zed', fallbackCommand: `cd "${PROJECT}"` })
-    expect(clipboard).toEqual([`cd "${PROJECT}"`])
+    expect(result).toEqual({ ok: true, appLabel: 'Zed', fallbackCommand: `cd '${PROJECT}'` })
+    expect(clipboard).toEqual([`cd '${PROJECT}'`])
   })
 
   it('editor + ticket command: command copied before the launch, reported as copiedCommand', async () => {
@@ -79,12 +79,21 @@ describe('project:open-in launch and fallback', () => {
     expect(result).toEqual({ ok: true, appLabel: 'Warp', ranCommand: 'claude' })
   })
 
+  it('fallback single-quotes the path so $ and backticks stay literal when pasted', async () => {
+    const { dependencies, clipboard } = fakeDependencies({
+      assertScannedProjectPath: () => '/Users/me/Code/$HOME-`id`',
+      openFolder: async () => Promise.reject(new Error('missing'))
+    })
+    await openProjectIn({ projectPath: 'x', targetId: 'zed' }, dependencies)
+    expect(clipboard).toEqual(["cd '/Users/me/Code/$HOME-`id`'"])
+  })
+
   it('terminal runner failing falls back to the clipboard too', async () => {
     const { dependencies, clipboard } = fakeDependencies({
       commandRunnerFor: () => async () => Promise.reject(new Error('osascript: not authorized'))
     })
     const result = await openProjectIn({ projectPath: PROJECT, targetId: 'warp', command: 'claude' }, dependencies)
-    expect(result.fallbackCommand).toBe(`cd "${PROJECT}"`)
-    expect(clipboard).toEqual(['claude', `cd "${PROJECT}"`])
+    expect(result.fallbackCommand).toBe(`cd '${PROJECT}'`)
+    expect(clipboard).toEqual(['claude', `cd '${PROJECT}'`])
   })
 })
