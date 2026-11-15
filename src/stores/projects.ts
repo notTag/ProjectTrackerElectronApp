@@ -5,8 +5,22 @@ import { resolveAutoRunTerminal } from '@/shared/openInTargets'
 import { useOpenInStore } from '@/stores/openIn'
 import {
   addGithubIssuesToBoard,
+  agentResumeCommand,
   autoRunUsesWorktrees,
+  boardLaneById,
+  canResume,
+  isFullAuto,
+  newAgentSessionId,
+  RESUME_PROMPT,
+  runningAgentRuns,
+  runsToInterrupt,
+  ticketTabTitle,
+  type AgentRetryEvent,
+  type AutoRunLaunchEntry,
+  type TabLiveness,
+  type TicketAgentRun,
   availableAgents,
+  boardWrites,
   buildAutoRunLaunch,
   completionMoves,
   findAgent,
@@ -16,6 +30,7 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  isGithubUnreachableError,
   isPullRequestSettled,
   mergeScannedProjects,
   moveLaneInBoard,
@@ -23,7 +38,7 @@ import {
   removeScanDirectory,
   ticketBranchName,
   updateLaneInBoard,
-  type AutoRunTicketLaunch,
+  type BoardWrite,
   type TerminalTab,
   type CompletionMove,
   type FullAutoHandoff,
@@ -34,7 +49,8 @@ import {
   type ProjectStatus,
   type ProjectTrackerState,
   type SwimLane,
-  type Ticket
+  type Ticket,
+  UNASSIGNED_LANE_ID
 } from '@/shared/projectTypes'
 
 interface ProjectsStoreState {
@@ -137,6 +153,46 @@ const takeDeferredHandoffs = (runKey: string): ProjectHandoffs | undefined => {
   return deferred
 }
 
+const agentRunsUpdate =
+  (runByTicketId: Map<string, TicketAgentRun>) =>
+  (board: ProjectBoard): ProjectBoard => ({
+    ...board,
+    tickets: board.tickets.map((ticket) => {
+      const agentRun = runByTicketId.get(ticket.id)
+      return agentRun ? { ...ticket, agentRun } : ticket
+    })
+  })
+
+// Only touches a run that is still the one the caller saw: a run restarted or
+// resumed in between keeps its own record.
+const isSameRun = (ticket: Ticket, run: TicketAgentRun) =>
+  ticket.agentRun?.startedAt === run.startedAt && ticket.agentRun?.sessionId === run.sessionId
+
+const INTERRUPTED_OUTPUT = 'The agent session ended before the run finished. Resume picks it back up; Run starts over.'
+
+const interruptedRun = (run: TicketAgentRun, at: string): TicketAgentRun => ({
+  ...run,
+  at,
+  status: 'interrupted',
+  succeeded: false,
+  seenAt: undefined,
+  output: run.output || INTERRUPTED_OUTPUT
+})
+
+// Fetched once: main's start time never changes while the renderer lives.
+let appStartedAtPromise: Promise<number> | undefined
+const appStartedAt = () => {
+  // A failed fetch is forgotten, or one early IPC error would stop every later reconcile.
+  appStartedAtPromise ??= projectTrackerApi
+    .appStartedAt()
+    .then((startedAt) => Date.parse(startedAt))
+    .catch((error: unknown) => {
+      appStartedAtPromise = undefined
+      throw error
+    })
+  return appStartedAtPromise
+}
+
 // Outside Pinia state so it is never persisted: a fresh app launch pulls again.
 const autoPulledProjects = new Set<string>()
 
@@ -148,6 +204,46 @@ const boardUpdate =
     const nextBoard = mutate(getBoard(currentState, projectPath))
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
+
+// The board as stored, not getBoard's normalized default: a board that was
+// never saved diffs as empty, so its default lanes are written on first edit.
+const storedBoard = (state: ProjectTrackerState, projectPath: string): ProjectBoard =>
+  state.boards?.[projectPath] ?? { lanes: [], tickets: [] }
+
+type WrittenEntity = Ticket | SwimLane | void
+
+const sendBoardWrite = (projectPath: string, write: BoardWrite): Promise<WrittenEntity> => {
+  switch (write.kind) {
+    case 'lane:create':
+      return projectTrackerApi.createLane(projectPath, write.lane)
+    case 'lane:update':
+      return projectTrackerApi.updateLane(projectPath, write.laneId, write.patch)
+    case 'ticket:create':
+      return projectTrackerApi.createTicket(projectPath, write.ticket)
+    case 'ticket:update':
+      return projectTrackerApi.updateTicket(write.id, write.patch)
+    case 'lane:reorder':
+      return projectTrackerApi.reorderLanes(projectPath, write.laneIds)
+    case 'ticket:delete':
+      return projectTrackerApi.deleteTicket(write.id)
+    case 'lane:delete':
+      return projectTrackerApi.deleteLane(projectPath, write.laneId)
+  }
+}
+
+const replaceById = <T extends { id: string }>(entries: T[], written: T) => {
+  const exists = entries.some((entry) => entry.id === written.id)
+  return exists ? entries.map((entry) => (entry.id === written.id ? written : entry)) : [...entries, written]
+}
+
+// The row as stored wins over the local copy: a created ticket takes the
+// repository's number here.
+const withWrittenEntity = (board: ProjectBoard, write: BoardWrite, written: Ticket | SwimLane): ProjectBoard => {
+  if (write.kind.startsWith('ticket:')) return { ...board, tickets: replaceById(board.tickets, written as Ticket) }
+  const lane = written as SwimLane
+  if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: lane }
+  return { ...board, lanes: replaceById(board.lanes, lane) }
+}
 
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
@@ -183,7 +279,7 @@ export const useProjectsStore = defineStore('projects', {
       mutate: (board: ProjectBoard) => ProjectBoard,
       alsoCompletedIds: string[] = []
     ) {
-      return this.save(boardUpdate(projectPath, mutate), undefined, alsoCompletedIds)
+      return this.persist(() => this.writeBoard(projectPath, boardUpdate(projectPath, mutate), undefined, alsoCompletedIds))
     },
 
     boardPreferences(projectPath: string): BoardPreferences {
@@ -237,17 +333,27 @@ export const useProjectsStore = defineStore('projects', {
       // save that finished in between can't drop it. The undo is anchored on
       // the old neighbour rather than restoring the old lane array, so any
       // other lane edit that landed meanwhile survives.
-      await this.save(moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
+      await this.persist(() =>
+        this.writeBoard(projectPath, moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
+      )
     },
 
     async removeLane(projectPath: string, laneId: string) {
       await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
     },
 
-    async addTicket(projectPath: string, laneId: string, title: string, description = '') {
+    async addTicket(
+      projectPath: string,
+      laneId: string,
+      title: string,
+      description = '',
+      completion: { moveToLaneId?: string; moveOnComplete?: boolean } = {}
+    ) {
       // Built inside the mutate callback so the ticket number is derived from the
       // same board revision it is appended to.
-      await this.updateBoard(projectPath, (board) => addTicketToBoard(board, { laneId, title, description }))
+      await this.updateBoard(projectPath, (board) =>
+        addTicketToBoard(board, { laneId, title, description, ...completion })
+      )
     },
 
     // Every ticket edit funnels through here — modal fields, checklist toggles,
@@ -321,6 +427,9 @@ export const useProjectsStore = defineStore('projects', {
         if (quiet && added === 0) return
         this.notice = `Imported ${added} issue${added === 1 ? '' : 's'}${skipped > 0 ? ` (${skipped} already on the board)` : ''}.`
       } catch (error) {
+        // A background pull while offline is not worth a banner; the caller retries later.
+        const isQuietOfflinePull = quiet && isGithubUnreachableError(error)
+        if (isQuietOfflinePull) return 'offline'
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
         this.githubLoading[projectPath] = false
@@ -338,20 +447,28 @@ export const useProjectsStore = defineStore('projects', {
         ticket.pullRequestUrl
       )
       if (!status) return
-      // The user may have pasted a different URL while the request was in flight.
+      // The user may have pasted a different URL (or deleted the ticket) while
+      // the request was in flight; GitHub's answer is about the old URL then.
+      const askedAbout = (savedTicket: Ticket | undefined) => savedTicket?.pullRequestUrl === ticket.pullRequestUrl
       const currentTicket = this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
-      if (currentTicket?.pullRequestUrl !== ticket.pullRequestUrl) return
+      if (!currentTicket || !askedAbout(currentTicket)) return
       const unchanged =
-        status.url === ticket.pullRequestUrl &&
-        status.state === ticket.pullRequestState &&
-        status.mergedAt === ticket.pullRequestMergedAt
-      // Skipped so a refresh that learns nothing does not bump updatedAt.
+        status.url === currentTicket.pullRequestUrl &&
+        status.state === currentTicket.pullRequestState &&
+        status.mergedAt === currentTicket.pullRequestMergedAt
+      // Skipped so a refresh that learns nothing does not trigger a no-op save.
       if (unchanged) return
-      await this.updateTicket(projectPath, ticket.id, {
+      const pullRequestPatch = {
         pullRequestUrl: status.url,
         pullRequestState: status.state,
         pullRequestMergedAt: status.mergedAt
-      })
+      }
+      // Skips the updatedAt stamp, because a background PR sync is not a user edit.
+      // Re-checked against the ticket saved at write time: a queued save ahead of
+      // this one may have changed the URL, and other fields edited meanwhile are kept.
+      const applyPullRequest = (savedTicket: Ticket): Ticket =>
+        savedTicket.id === ticket.id && askedAbout(savedTicket) ? { ...savedTicket, ...pullRequestPatch } : savedTicket
+      await this.updateBoard(projectPath, (board) => ({ ...board, tickets: board.tickets.map(applyPullRequest) }))
     },
 
     // ponytail: sequential, one request per ticket. Fine for a board's worth of
@@ -367,22 +484,25 @@ export const useProjectsStore = defineStore('projects', {
         } catch (error) {
           // A board load never surfaces GitHub errors; the modal does, on open.
           // One bad ticket skips only itself; a rate limit would fail every one after it.
+          // Being offline fails every one after it too.
           const isRateLimited = error instanceof Error && error.message.includes('rate limit')
-          if (isRateLimited) return
+          if (isRateLimited || isGithubUnreachableError(error)) return
         }
       }
     },
 
     // At most once per project per app launch. Marked before the await so two
     // overlapping calls can't both fetch, and a failure isn't retried: the
-    // manual button is the retry. A project without a repo isn't marked, so it
-    // still pulls if its data was just not loaded yet.
+    // manual button is the retry. Being offline is the exception: it's unmarked
+    // so the next board open after reconnecting pulls. A project without a repo
+    // isn't marked, so it still pulls if its data was just not loaded yet.
     async autoPullGithubIssues(projectPath: string) {
       if (autoPulledProjects.has(projectPath)) return
       const project = this.projects.find((entry) => entry.path === projectPath)
       if (!project?.githubUrl) return
       autoPulledProjects.add(projectPath)
-      await this.pullGithubIssues(projectPath, { quiet: true })
+      const outcome = await this.pullGithubIssues(projectPath, { quiet: true })
+      if (outcome === 'offline') autoPulledProjects.delete(projectPath)
     },
 
     async removeTicket(projectPath: string, ticketId: string) {
@@ -402,6 +522,7 @@ export const useProjectsStore = defineStore('projects', {
       } finally {
         this.loading = false
       }
+      void this.reconcileAgentRuns().catch(() => undefined)
     },
 
     // Picks up writes from other processes. Queued behind pending saves so the
@@ -423,9 +544,20 @@ export const useProjectsStore = defineStore('projects', {
           handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
           if (settledState === freshState) return
-          const savedState = await projectTrackerApi.saveProjectState(settledState)
-          handoffs = handoffsBetween(previousState, savedState)
-          this.state = savedState
+          // ticket:update carries the disarmed Move to along with the new lane.
+          this.state = settledState
+          try {
+            for (const projectPath of Object.keys(settledState.boards ?? {})) {
+              const freshBoard = storedBoard(freshState, projectPath)
+              const settledBoard = storedBoard(settledState, projectPath)
+              if (settledBoard === freshBoard) continue
+              await this.dispatchBoardWrites(projectPath, boardWrites(freshBoard, settledBoard))
+            }
+          } catch (error) {
+            await this.reloadAfterFailedWrite()
+            throw error
+          }
+          handoffs = handoffsBetween(previousState, this.state)
           this.notice = completionMovesNotice(moved) ?? this.notice
         })
       try {
@@ -470,9 +602,86 @@ export const useProjectsStore = defineStore('projects', {
       return { assigneeName: assignee?.name, projectPath }
     },
 
-    // Throws on failure, unlike save(). `undo` reverts an optimistic edit and
-    // runs inside the same queue link, so a save queued behind this one can't
-    // read the edit before it is taken back and persist it.
+    // ponytail: one IPC call per entity, no transaction across them. A failed
+    // call reloads, so a multi-entity edit (GitHub import, worktree placement,
+    // completion moves) can land partly; imports dedupe on externalId and
+    // placements re-run. Add a board:apply batch channel if that bites.
+    async dispatchBoardWrites(projectPath: string, writes: BoardWrite[]) {
+      for (const write of writes) {
+        const written = await sendBoardWrite(projectPath, write)
+        if (!written) continue
+        const board = withWrittenEntity(storedBoard(this.state, projectPath), write, written)
+        this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
+      }
+    },
+
+    // Renderer state and main's baseline both reset to the DB, so neither can
+    // drift after a write that half landed.
+    async reloadAfterFailedWrite(undo?: StateUpdate) {
+      if (undo) this.state = undo(this.state)
+      try {
+        const freshState = await projectTrackerApi.getProjectState()
+        if (freshState) this.state = freshState
+      } catch {
+        // The failed write's error is the one worth showing.
+      }
+    },
+
+    // Board edits go out as per-entity writes. `undo` marks an edit that was
+    // already applied optimistically: the stored board is the state with it
+    // taken back, and that is what the edit is diffed against. Completion
+    // moves and full-auto handoffs come from the locally patched state; only
+    // refresh() looks for moves made elsewhere.
+    async writeBoard(
+      projectPath: string,
+      update: StateUpdate,
+      undo?: StateUpdate,
+      alsoCompletedIds: string[] = []
+    ): Promise<ProjectHandoffs[]> {
+      let handoffs: ProjectHandoffs[] = []
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const persistedState = undo ? undo(this.state) : this.state
+          const candidate = update(this.state)
+          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
+          this.state = ownMoves.state
+          try {
+            await this.dispatchBoardWrites(projectPath, writes)
+          } catch (error) {
+            await this.reloadAfterFailedWrite(undo)
+            throw error
+          }
+          handoffs = handoffsBetween(candidate, this.state)
+          this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
+        })
+      await saveQueue
+      return handoffs
+    },
+
+    async writeProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {
+      saveQueue = saveQueue
+        .catch(() => undefined)
+        .then(async () => {
+          let updated: ProjectRecord
+          try {
+            updated = await projectTrackerApi.updateProject(path, patch)
+          } catch (error) {
+            await this.reloadAfterFailedWrite()
+            throw error
+          }
+          const projects = this.state.snapshot.projects.map((project) => (project.path === path ? updated : project))
+          this.state = { ...this.state, snapshot: { ...this.state.snapshot, projects } }
+        })
+      await saveQueue
+      return []
+    },
+
+    // Whole-state save, kept for edits that span settings and rows: the seed,
+    // scan merges, GitHub data, scan-directory / hidden / third-party paths and
+    // board preferences. Throws on failure, unlike save(). `undo` reverts an
+    // optimistic edit inside the same queue link.
     // A save also returns a fresh read, so an agent's move can arrive here
     // instead of through refresh. Diffing against the candidate keeps this
     // save's own edits out of it — but not Move to's moves, which are applied
@@ -513,11 +722,17 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async save(nextState?: ProjectTrackerState | StateUpdate, undo?: StateUpdate, alsoCompletedIds: string[] = []) {
+      return this.persist(() => this.writeState(nextState, undo, alsoCompletedIds))
+    },
+
+    // Shared by every write path: the saving flag, the error banner and the
+    // full-auto launches, and a boolean callers check with `if (!saved)`.
+    async persist(write: () => Promise<ProjectHandoffs[]>) {
       this.saving = true
       this.error = null
       let handoffs: ProjectHandoffs[] = []
       try {
-        handoffs = await this.writeState(nextState, undo, alsoCompletedIds)
+        handoffs = await write()
         return true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
@@ -580,15 +795,7 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {
-      await this.save((currentState) => ({
-        ...currentState,
-        snapshot: {
-          ...currentState.snapshot,
-          projects: currentState.snapshot.projects.map((project) =>
-            project.path === path ? { ...project, ...patch } : project
-          )
-        }
-      }))
+      await this.persist(() => this.writeProject(path, patch))
     },
 
     async setPriority(path: string, priority: ProjectPriority) {
@@ -647,7 +854,7 @@ export const useProjectsStore = defineStore('projects', {
       })
     },
 
-    async openIn(path: string, targetId: string, command?: string, title?: string) {
+    async openIn(path: string, targetId: string, command?: string, title?: string): Promise<boolean> {
       // Clear before awaiting so a repeat of the same text still restarts
       // MessageBanners' auto-dismiss timer (its watch skips same-value writes).
       this.notice = null
@@ -655,17 +862,19 @@ export const useProjectsStore = defineStore('projects', {
         const result = await projectTrackerApi.openProjectIn(path, targetId, command, title)
         if (result.fallbackCommand) {
           this.notice = `${result.appLabel} could not be opened. Copied ${result.fallbackCommand} to the clipboard.`
-          return
+          return false
         }
         if (result.ranCommand) {
           this.notice = `Running the agent command in ${result.appLabel}.`
-          return
+          return true
         }
         this.notice = result.copiedCommand
           ? `Opening in ${result.appLabel}. The agent command is on your clipboard — paste it to run.`
           : `Opening in ${result.appLabel}.`
+        return false
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+        return false
       }
     },
 
@@ -676,7 +885,7 @@ export const useProjectsStore = defineStore('projects', {
       laneId: string,
       targetId: string,
       terminalLabel: string,
-      launches: { ticket: Ticket; launch: AutoRunTicketLaunch }[],
+      launches: AutoRunLaunchEntry[],
       useWorktrees: boolean,
       orchestrator?: TerminalTab
     ): Promise<boolean> {
@@ -684,7 +893,30 @@ export const useProjectsStore = defineStore('projects', {
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
       this.notice = null
+      // Recorded before any tab opens, so a session that dies straight away
+      // still leaves its id behind to resume from.
+      const startedAt = new Date().toISOString()
+      const runByTicketId = new Map(
+        launches.map(({ ticket, launch, agentId, sessionId }) => {
+          const cwd = useWorktrees ? ticket.worktreePath ?? path : path
+          const agentRun: TicketAgentRun = {
+            at: startedAt,
+            startedAt,
+            laneId,
+            output: '',
+            status: 'running',
+            mode: 'terminal',
+            sessionId,
+            cwd,
+            agentId,
+            terminalId: targetId,
+            tabTitle: launch.title
+          }
+          return [ticket.id, agentRun]
+        })
+      )
       try {
+        if (runByTicketId.size > 0) await this.updateBoard(path, agentRunsUpdate(runByTicketId))
         const ticketLaunches = launches.map((entry) => entry.launch)
         const { worktreePaths } = await projectTrackerApi.autoRunLane(
           path,
@@ -705,19 +937,46 @@ export const useProjectsStore = defineStore('projects', {
             { branchName: launch.branchName, worktreePath: worktreePaths[index] }
           ])
         )
+        // The session started inside the worktree, which is where Resume must run.
+        const withRunInWorktree = (ticket: Ticket, worktreePath: string): Ticket => {
+          const launchedRun = runByTicketId.get(ticket.id)
+          const runIsOurs = launchedRun !== undefined && isSameRun(ticket, launchedRun)
+          if (!runIsOurs || !ticket.agentRun) return ticket
+          return { ...ticket, agentRun: { ...ticket.agentRun, cwd: worktreePath } }
+        }
         await this.updateBoard(path, (board) => ({
           ...board,
           tickets: board.tickets.map((ticket) => {
             const placement = placementByTicketId.get(ticket.id)
+            if (!placement) return ticket
             const isUnchanged =
-              !placement ||
-              (ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath)
-            return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+              ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath
+            const placed = isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+            return withRunInWorktree(placed, placement.worktreePath)
           })
         }))
         return true
       } catch (error) {
-        this.error = error instanceof Error ? error.message : String(error)
+        const message = error instanceof Error ? error.message : String(error)
+        this.error = message
+        // No tab ever ran, so there is no session to resume.
+        const at = new Date().toISOString()
+        await this.updateBoard(path, (board) => ({
+          ...board,
+          tickets: board.tickets.map((ticket) => {
+            const launchedRun = runByTicketId.get(ticket.id)
+            if (!launchedRun || !isSameRun(ticket, launchedRun)) return ticket
+            const failedRun: TicketAgentRun = {
+              ...launchedRun,
+              at,
+              status: 'failed',
+              succeeded: false,
+              sessionId: undefined,
+              output: message
+            }
+            return { ...ticket, agentRun: failedRun }
+          })
+        }))
         return false
       } finally {
         this.autoRunning[runKey] = false
@@ -742,27 +1001,48 @@ export const useProjectsStore = defineStore('projects', {
 
     // The lane is captured at start, not read back at the end: the ticket may be
     // dragged to another column mid-run, and the record should say which lane's
-    // prompt actually produced the output.
+    // prompt actually produced the output. Run always starts a fresh session.
     async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
       if (this.agentRunning[ticket.id]) return
       this.agentRunning[ticket.id] = true
       this.error = null
       this.notice = `Agent running on #${ticket.number}…`
-      const laneId = ticket.laneId
+      const agent = findAgent(availableAgents(this.state), agentId)
+      const startedAt = new Date().toISOString()
+      const runningRecord: TicketAgentRun = {
+        at: startedAt,
+        startedAt,
+        laneId: ticket.laneId,
+        output: '',
+        status: 'running',
+        mode: 'headless',
+        sessionId: newAgentSessionId(agent),
+        cwd: projectPath,
+        agentId: agent.id,
+        attempts: 1
+      }
       try {
+        await this.updateTicket(projectPath, ticket.id, { agentRun: runningRecord })
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt, ticket.model)
+          .runTicketAgent(projectPath, agentId, prompt, ticket.model, runningRecord.sessionId)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
-            succeeded: false
+            succeeded: false,
+            attempts: 1,
+            neverStarted: true
           }))
-        const agentRun = {
+        // A rejected call never launched the agent, so no session exists to resume.
+        const sessionId = 'neverStarted' in result ? undefined : runningRecord.sessionId
+        const agentRun: TicketAgentRun = {
+          ...runningRecord,
+          sessionId,
           at: new Date().toISOString(),
-          laneId,
           output: result.output,
-          succeeded: result.succeeded
+          succeeded: result.succeeded,
+          status: result.succeeded ? 'succeeded' : 'failed',
+          attempts: result.attempts ?? 1
         }
         const storedTicket = () => this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
         const laneBeforeSave = storedTicket()?.laneId
@@ -776,6 +1056,108 @@ export const useProjectsStore = defineStore('projects', {
         if (!movedOnCompletion) this.notice = `Agent finished #${ticket.number}.`
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
+      } finally {
+        this.agentRunning[ticket.id] = false
+      }
+    },
+
+    noteAgentRetry(retry: AgentRetryEvent) {
+      const boards = Object.values(this.state.boards ?? {})
+      const tickets = boards.flatMap((board) => board.tickets)
+      const ticket = tickets.find((entry) => retry.sessionId && entry.agentRun?.sessionId === retry.sessionId)
+      const ticketLabel = ticket ? `#${ticket.number}` : 'a ticket'
+      const delaySeconds = Math.round(retry.delayMs / 1000)
+      const delayLabel = delaySeconds >= 60 ? `${Math.round(delaySeconds / 60)} min` : `${delaySeconds} s`
+      this.notice = `Agent on ${ticketLabel} interrupted — retrying in ${delayLabel} (${retry.attempt}/${retry.of})`
+    },
+
+    // Asks each terminal once for all its candidate tabs. A terminal that
+    // can't answer leaves its runs to the stale threshold.
+    async tabLivenessFor(candidates: Ticket[]): Promise<Record<string, TabLiveness>> {
+      const terminalCandidates = candidates.filter((ticket) => ticket.agentRun?.mode === 'terminal')
+      const ticketsByTerminal = new Map<string, Ticket[]>()
+      for (const ticket of terminalCandidates) {
+        const terminalId = ticket.agentRun?.terminalId ?? ''
+        const group = ticketsByTerminal.get(terminalId) ?? []
+        group.push(ticket)
+        ticketsByTerminal.set(terminalId, group)
+      }
+      const livenessByTicketId: Record<string, TabLiveness> = {}
+      for (const [terminalId, tickets] of ticketsByTerminal) {
+        // The title the tab opened with: a ticket renamed since would match nothing.
+        const titles = tickets.map((ticket) => ticket.agentRun?.tabTitle ?? ticketTabTitle(ticket))
+        const liveness = await projectTrackerApi
+          .terminalTabsAlive(terminalId, titles)
+          .catch((): TabLiveness[] => titles.map(() => 'unknown'))
+        tickets.forEach((ticket, index) => {
+          livenessByTicketId[ticket.id] = liveness[index] ?? 'unknown'
+        })
+      }
+      return livenessByTicketId
+    },
+
+    // On app start, then on a timer: a run still marked running whose process
+    // or tab is gone becomes interrupted. Full auto needs nothing else to
+    // pause — a dead agent never moves its ticket, so no handoff fires — only
+    // the notice saying why the chain stopped.
+    async reconcileAgentRuns() {
+      const startedAt = await appStartedAt()
+      for (const projectPath of Object.keys(this.state.boards ?? {})) {
+        const board = getBoard(this.state, projectPath)
+        const candidates = runningAgentRuns(board.tickets).filter((ticket) => !this.agentRunning[ticket.id])
+        if (candidates.length === 0) continue
+        const livenessByTicketId = await this.tabLivenessFor(candidates)
+        const toInterrupt = runsToInterrupt(candidates, livenessByTicketId, Date.now(), startedAt)
+        if (toInterrupt.length === 0) continue
+
+        const at = new Date().toISOString()
+        const seenRunByTicketId = new Map(toInterrupt.map((ticket) => [ticket.id, ticket.agentRun as TicketAgentRun]))
+        await this.updateBoard(projectPath, (currentBoard) => ({
+          ...currentBoard,
+          tickets: currentBoard.tickets.map((ticket) => {
+            const seenRun = seenRunByTicketId.get(ticket.id)
+            const stillRunning = seenRun && isSameRun(ticket, seenRun) && ticket.agentRun?.status === 'running'
+            return stillRunning ? { ...ticket, agentRun: interruptedRun(seenRun, at) } : ticket
+          })
+        }))
+        const pausedNumbers = toInterrupt
+          .filter((ticket) => {
+            const lane = boardLaneById(board, ticket.laneId)
+            return lane !== undefined && isFullAuto(ticket, lane)
+          })
+          .map((ticket) => `#${ticket.number}`)
+        if (pausedNumbers.length > 0) this.notice = `Full auto paused on ${pausedNumbers.join(', ')}: agent interrupted`
+      }
+    },
+
+    // Same session, same directory, in a tab someone can watch: the agent picks
+    // up its own transcript and checks git for what already landed.
+    async resumeTicketAgent(projectPath: string, ticket: Ticket) {
+      const run = ticket.agentRun
+      const agent = findAgent(availableAgents(this.state), run?.agentId ?? ticket.agentId)
+      // Held across the openIn await (and disables Resume): a double click would
+      // otherwise open two tabs resuming the same session.
+      if (!run || !canResume(ticket, agent) || this.agentRunning[ticket.id]) return
+      this.agentRunning[ticket.id] = true
+      try {
+        const command = agentResumeCommand(agent, run, RESUME_PROMPT)
+        const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
+        const tabTitle = ticketTabTitle(ticket)
+        const ranInTab = await this.openIn(projectPath, terminal.id, command, tabTitle)
+        if (!ranInTab) return
+        const startedAt = new Date().toISOString()
+        const resumedRun: TicketAgentRun = {
+          ...run,
+          at: startedAt,
+          startedAt,
+          status: 'running',
+          mode: 'terminal',
+          succeeded: undefined,
+          seenAt: undefined,
+          terminalId: terminal.id,
+          tabTitle
+        }
+        await this.updateTicket(projectPath, ticket.id, { agentRun: resumedRun })
       } finally {
         this.agentRunning[ticket.id] = false
       }

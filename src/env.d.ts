@@ -1,14 +1,22 @@
 /// <reference types="vite/client" />
 
 import type {
+  AgentRetryEvent,
   AutoRunTicketLaunch,
   GithubIssue,
+  LaneWritePatch,
   ProjectGithubData,
   ProjectMetrics,
+  ProjectRecord,
   ProjectTrackerState,
+  ProjectWritePatch,
   PullRequestStatus,
   ScanResult,
-  TerminalTab
+  SwimLane,
+  TabLiveness,
+  TerminalTab,
+  Ticket,
+  TicketWritePatch
 } from './shared/projectTypes'
 
 interface ProjectTrackerElectronApi {
@@ -19,6 +27,14 @@ interface ProjectTrackerElectronApi {
   saveProjectState(state: ProjectTrackerState): Promise<ProjectTrackerState>
   // Null when nothing outside this app has written since the last read.
   refreshProjectState(): Promise<ProjectTrackerState | null>
+  createTicket(projectPath: string, ticket: Omit<Ticket, 'number'>): Promise<Ticket>
+  updateTicket(id: string, patch: TicketWritePatch): Promise<Ticket>
+  deleteTicket(id: string): Promise<void>
+  createLane(projectPath: string, lane: SwimLane): Promise<SwimLane>
+  updateLane(projectPath: string, laneId: string, patch: LaneWritePatch): Promise<SwimLane>
+  reorderLanes(projectPath: string, laneIds: string[]): Promise<void>
+  deleteLane(projectPath: string, laneId: string): Promise<void>
+  updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord>
   onExternalChange(callback: () => void): () => void
   scanProjectDirectories(
     scanDirectories: string[],
@@ -45,7 +61,16 @@ interface ProjectTrackerElectronApi {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ): Promise<{ worktreePaths: string[] }>
-  runTicketAgent(path: string, agentId: string, prompt: string, model?: string): Promise<{ succeeded: boolean; output: string }>
+  runTicketAgent(
+    path: string,
+    agentId: string,
+    prompt: string,
+    model?: string,
+    sessionId?: string
+  ): Promise<{ succeeded: boolean; output: string; attempts?: number }>
+  onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void
+  appStartedAt(): Promise<string>
+  terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   saveLaneAgentMarkdown(
     projectPath: string,
