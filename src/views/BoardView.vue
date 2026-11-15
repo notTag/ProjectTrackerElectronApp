@@ -6,6 +6,7 @@ import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
+import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
@@ -803,19 +804,6 @@ const ticketCommand = (ticket: Ticket) => {
   return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket), ticket.model)
 }
 
-const agentTakesModel = (agentId?: string) => {
-  const modelArgs = findAgent(agents.value, agentId).modelArgs ?? []
-  return modelArgs.length > 0
-}
-
-// A datalist, not a <select>: the list only suggests, so a model released after
-// this build or a custom agent's own id can still be typed in.
-const agentModelListId = (agentId?: string) => {
-  const agent = findAgent(agents.value, agentId)
-  const hasModels = (agent.models?.length ?? 0) > 0
-  return hasModels ? `agent-models-${agent.id}` : undefined
-}
-
 const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
 
 // A model id belongs to one CLI ('opus' means nothing to Codex), so switching
@@ -1495,13 +1483,13 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(openTicket.agentId)">
+        <label>
           Model
-          <input
-            :value="openTicket.model ?? ''"
-            :list="agentModelListId(openTicket.agentId)"
+          <ModelField
+            :model-value="openTicket.model ?? ''"
+            :agent="findAgent(agents, openTicket.agentId)"
             placeholder="CLI default"
-            @change="editTicket(openTicket, { model: trimmedInputValue($event) })"
+            @update:model-value="editTicket(openTicket, { model: $event || undefined })"
           />
         </label>
         <label class="checkbox-label">
@@ -1620,27 +1608,32 @@ const runTicketAgent = (ticket: Ticket) => {
         <select v-model="autoRunConfirmAgentId" aria-label="Agent" @change="changeAutoRunConfirmAgent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
-        agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
-      </p>
-      <label v-if="agentTakesModel(autoRunConfirmAgentId)">
-        Model
-        <input v-model="autoRunConfirmModel" :list="agentModelListId(autoRunConfirmAgentId)" placeholder="CLI default" />
-      </label>
-      <label>
-        Orchestrator agent
-        <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-          <option value="">Same as ticket agent</option>
-          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-        </select>
-      </label>
-      <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
-        Orchestrator model
-        <input
-          v-model="autoRunConfirmOrchestratorModel"
-          :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-          :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+        agents with
+        <ModelField
+          v-model="autoRunConfirmModel"
+          :agent="findAgent(agents, autoRunConfirmAgentId)"
+          placeholder="CLI default"
         />
-      </label>
+        for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
+      </p>
+      <section class="auto-run-orchestrator">
+        <p class="eyebrow">Orchestrator</p>
+        <label>
+          Agent
+          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+            <option value="">Same as ticket agent</option>
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label>
+          Model
+          <ModelField
+            v-model="autoRunConfirmOrchestratorModel"
+            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+          />
+        </label>
+      </section>
       <p class="auto-run-question">
         Each opens in its own
         <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
@@ -1754,13 +1747,13 @@ const runTicketAgent = (ticket: Ticket) => {
             </select>
           </label>
         </div>
-        <label v-if="agentTakesModel(openLane.autoRunAgentId)">
+        <label>
           Model
-          <input
-            :value="openLane.autoRunModel ?? ''"
-            :list="agentModelListId(openLane.autoRunAgentId)"
+          <ModelField
+            :model-value="openLane.autoRunModel ?? ''"
+            :agent="findAgent(agents, openLane.autoRunAgentId)"
             placeholder="CLI default"
-            @change="editLane(openLane, { autoRunModel: trimmedInputValue($event) })"
+            @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
           />
         </label>
         <label>
@@ -1778,13 +1771,13 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label v-if="agentTakesModel(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)">
+        <label>
           Orchestrator model
-          <input
-            :value="openLane.orchestratorModel ?? ''"
-            :list="agentModelListId(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+          <ModelField
+            :model-value="openLane.orchestratorModel ?? ''"
+            :agent="findAgent(agents, openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-            @change="editLane(openLane, { orchestratorModel: trimmedInputValue($event) })"
+            @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
           />
         </label>
         <label class="checkbox-label">
@@ -1864,10 +1857,5 @@ const runTicketAgent = (ticket: Ticket) => {
         <button @click="openLaneId = null">Done</button>
       </div>
     </section>
-    <template v-for="agent in agents" :key="agent.id">
-      <datalist v-if="agent.models?.length" :id="agentModelListId(agent.id)">
-        <option v-for="model in agent.models" :key="model" :value="model" />
-      </datalist>
-    </template>
   </div>
 </template>
