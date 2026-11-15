@@ -27,7 +27,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 | Menu | Items |
 |------|-------|
 | Project Tracker | About, Services, Hide, Hide Others, Show All, Quit |
-| File | Close |
+| File | Back Up Database Now (reveals the new snapshot in Finder), Show Backups in Finder, Close |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All |
 | View | Reload, Force Reload, Toggle DevTools, Reset Zoom, Zoom In, Zoom Out, Toggle Full Screen |
 | Window | Minimize, Zoom, Bring All to Front |
@@ -463,6 +463,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - SQLite through the built-in `node:sqlite`, at `~/Library/Application Support/Project Tracker/project-tracker.sqlite`.
 - WAL mode with a 5-second busy timeout, so other processes can read and write while the app is open.
+- Snapshots in `snapshots/` next to the DB, via `VACUUM INTO`: one on launch when the newest is over 24h old (before migrations), plus File → Back Up Database Now. Newest 7 kept. A failed snapshot logs a warning and startup continues. Restore steps in `README.md`.
 - Tables: `users`, `projects`, `project_members`, `swim_lanes`, `tickets`, `project_paths`, `user_paths`, `user_settings`, `schema_meta`.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
