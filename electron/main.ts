@@ -259,7 +259,7 @@ const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
-  nextLaneId: true
+  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
 }
 const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
 const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))

@@ -1178,7 +1178,7 @@ describe('Auto Run orchestrator', () => {
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
       const expectedSection = [
         'Lane instructions',
-        'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.',
+        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
         'Poll every 2 minutes.'
       ].join('\n')
       expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
@@ -1197,19 +1197,38 @@ describe('Auto Run orchestrator', () => {
       expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
       expect(agentPrompt).not.toContain('Poll every 2 minutes.')
     })
+
+    it("polls at the lane's rate, every 2 minutes by default", () => {
+      expect(prompt).toContain('every 2 minutes (sleep 120)')
+      expect(prompt).not.toContain('sleep 60)')
+      const slower = orchestratorPrompt({ ...inDev, orchestratorPollMinutes: 5 }, entries, context('ghostty', 'Ghostty'))
+      expect(slower).toContain('every 5 minutes (sleep 300)')
+    })
+
+    it('falls back to the default for a stored poll that is not whole minutes', () => {
+      for (const badMinutes of [0, -3, 1.5, Number.NaN]) {
+        const corrupted = { ...inDev, orchestratorPollMinutes: badMinutes }
+        expect(orchestratorPrompt(corrupted, entries, context('ghostty', 'Ghostty'))).toContain('every 2 minutes (sleep 120)')
+      }
+    })
   })
 
   describe('buildOrchestratorLaunch', () => {
     it('sends an orchestrator for a one-ticket run', () => {
       const oneTicket = entries.slice(0, 1)
-      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))
+      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))!
       expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command).toContain('#12 First thing')
       expect(launch.command).not.toContain('#13 Second thing')
     })
 
+    it('sends no orchestrator when the lane turned its orchestrator off', () => {
+      const inactive = { ...inDev, orchestratorPollActive: false }
+      expect(buildOrchestratorLaunch(inactive, entries, DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    })
+
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
-      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
+      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))!
       expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
       expect(launch.command).toContain("it'\\''s-mine")
@@ -1334,7 +1353,7 @@ describe('agent model', () => {
     expect(choice).toEqual({ agent: byId('codex'), model: undefined })
     const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
-    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
+    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')!
     expect(tab.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
   })
 })
