@@ -11,7 +11,7 @@ const GITHUB_TOKEN_NAMES = ['GITHUB_RELEASE_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']
 // Delegates to electron-builder's own resolver so precedence and messages can't
 // drift. With no credentials it returns undefined and the build only warns and
 // ships un-notarized — which macOS then refuses to install as an update.
-const notarizeProblem = (env) => {
+export const notarizeProblem = (env) => {
   // ponytail: getNotarizeOptions reads process.env directly, so swap it in for the call
   const realEnv = process.env
   process.env = env
@@ -26,6 +26,12 @@ const notarizeProblem = (env) => {
   }
 }
 
+// `dist` builds locally and never uploads, so it needs notarize creds but no GitHub token.
+export const distEnvProblems = (env) => {
+  const notarizeIssue = notarizeProblem(env)
+  return notarizeIssue ? [notarizeIssue] : []
+}
+
 export const releaseEnvProblems = (env) => {
   const problems = []
 
@@ -34,9 +40,7 @@ export const releaseEnvProblems = (env) => {
   const hasGitHubToken = GITHUB_TOKEN_NAMES.some((name) => Boolean(env[name]))
   if (!hasGitHubToken) problems.push(`No GitHub token. Set one of ${GITHUB_TOKEN_NAMES.join(', ')} (needs repo scope)`)
 
-  const notarizeIssue = notarizeProblem(env)
-  if (notarizeIssue) problems.push(notarizeIssue)
-
+  problems.push(...distEnvProblems(env))
   return problems
 }
 
@@ -45,9 +49,11 @@ const entryScriptUrl = entryScriptPath ? pathToFileURL(realpathSync(entryScriptP
 const isRunDirectly = import.meta.url === entryScriptUrl
 
 if (isRunDirectly) {
-  const problems = releaseEnvProblems(process.env)
+  const isNotarizeOnly = process.argv.includes('--notarize-only')
+  const problems = isNotarizeOnly ? distEnvProblems(process.env) : releaseEnvProblems(process.env)
+  const abortHeader = isNotarizeOnly ? 'Dist aborted before building' : 'Release aborted before building'
   if (problems.length > 0) {
-    console.error(`Release aborted before building:\n\n${problems.join('\n\n')}`)
+    console.error(`${abortHeader}:\n\n${problems.join('\n\n')}`)
     process.exit(1)
   }
 }
