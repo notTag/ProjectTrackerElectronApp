@@ -773,9 +773,13 @@ const registerIpc = () => {
       htmlUrl: issue.html_url
     })
 
-    const openIssues = await fetchIssuePages('state=open')
     // No `since` means no imported tickets yet, so there is nothing a closed issue could update.
-    const closedIssues = since ? await fetchIssuePages(`state=closed&since=${encodeURIComponent(since)}`) : []
+    // Newest-updated first, so a recently closed old issue lands inside the page cap.
+    const closedQuery = `state=closed&sort=updated&direction=desc&since=${encodeURIComponent(String(since))}`
+    const [openIssues, closedIssues] = await Promise.all([
+      fetchIssuePages('state=open'),
+      since ? fetchIssuePages(closedQuery) : []
+    ])
     return toPlainJson({
       open: openIssues.map(toIssue),
       closed: closedIssues.map((issue) => ({ ...toIssue(issue), stateReason: issue.state_reason ?? null }))

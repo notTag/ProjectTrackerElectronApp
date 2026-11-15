@@ -4,8 +4,8 @@ import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { resolveAutoRunTerminal } from '@/shared/openInTargets'
 import { useOpenInStore } from '@/stores/openIn'
 import {
+  githubSyncChangeCount,
   githubSyncNotice,
-  type GithubSyncResult,
   oldestImportedCreatedAt,
   productionLane,
   syncGithubIssuesToBoard,
@@ -418,15 +418,14 @@ export const useProjectsStore = defineStore('projects', {
         const issues = await projectTrackerApi.fetchProjectGithubIssues(project.githubUrl, since)
         // Nothing changed → no write: saving would clear whatever banner is showing.
         let result = syncGithubIssuesToBoard(boardBeforeSync, issues)
-        const changeCount = (sync: GithubSyncResult) => sync.added + sync.moved + sync.removed
-        if (changeCount(result) > 0) {
+        if (githubSyncChangeCount(result) > 0) {
           const saved = await this.updateBoard(projectPath, (board) => {
             result = syncGithubIssuesToBoard(board, issues)
             return result.board
           })
           if (!saved) return
         }
-        if (quiet && changeCount(result) === 0) return
+        if (quiet && githubSyncChangeCount(result) === 0) return
         const productionLaneName = productionLane(result.board)?.name ?? 'production'
         this.notice = githubSyncNotice(result, issues.open.length, productionLaneName)
       } catch (error) {

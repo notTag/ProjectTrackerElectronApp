@@ -1326,6 +1326,9 @@ export interface GithubSyncResult {
   keptWithWork: number
 }
 
+// Kept-with-work tickets don't count: nothing on the board changed for them.
+export const githubSyncChangeCount = (result: GithubSyncResult) => result.added + result.moved + result.removed
+
 // A GitHub issue carries no swim-lane status, so imports land in a dedicated
 // lane at the far left instead of guessing. Already-imported tickets keep every
 // local edit; only GitHub's closed state reaches them: completed → production
@@ -1407,7 +1410,7 @@ const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ?
 export const githubSyncNotice = (result: GithubSyncResult, openCount: number, productionLaneName: string): string => {
   const skipped = openCount - result.added
   const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
-  const nothingChanged = result.added + result.moved + result.removed === 0
+  const nothingChanged = githubSyncChangeCount(result) === 0
   const parts = [
     result.added > 0 || nothingChanged ? `Imported ${plural(result.added, 'issue')}${skippedNote}` : '',
     result.moved > 0 ? `moved ${result.moved} to ${productionLaneName}` : '',
