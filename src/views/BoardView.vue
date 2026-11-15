@@ -549,6 +549,8 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   // The shortcut lands people in the filter, so Escape there should only leave
   // the filter, not the board.
   if (event.target === filterQueryInput.value) {
+    // A search input's default Escape action clears its value; keep the text.
+    event.preventDefault()
     filterQueryInput.value?.blur()
     return
   }
@@ -1004,6 +1006,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <input
         ref="filterQueryInput"
         v-model="filterQuery"
+        type="search"
         class="filter-query"
         aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
         :class="{ active: filterQuery }"
