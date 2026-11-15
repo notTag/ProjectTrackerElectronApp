@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
+  AgentRetryEvent,
   AutoRunTicketLaunch,
   LaneWritePatch,
   ProjectTrackerState,
@@ -65,8 +66,15 @@ contextBridge.exposeInMainWorld('projectTracker', {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ) => invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees, orchestrator }),
-  runTicketAgent: (projectPath: string, agentId: string, prompt: string, model?: string) =>
-    invokePlain('ticket:run-agent', { projectPath, agentId, prompt, model }),
+  runTicketAgent: (projectPath: string, agentId: string, prompt: string, model?: string, sessionId?: string) =>
+    invokePlain('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId }),
+  onAgentRetry: (callback: (notice: AgentRetryEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, notice: AgentRetryEvent) => callback(notice)
+    ipcRenderer.on('ticket:agent-retry', listener)
+    return () => ipcRenderer.removeListener('ticket:agent-retry', listener)
+  },
+  appStartedAt: () => invokePlain('app:started-at'),
+  terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
   saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
     invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),

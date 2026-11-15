@@ -435,7 +435,7 @@ describe('ticketShellCommand', () => {
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
     expect(command).toBe(
-      "claude 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+      "claude --name 'Ticket #7' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
     )
   })
 
@@ -451,9 +451,21 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('leaves agents with no session-name flag unnamed', () => {
+    const codex = availableAgents({}).find((agent) => agent.id === 'codex')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), codex)
+    expect(command).toBe("codex 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
+  it('shell-quotes a session name the same way as the prompt', () => {
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionName: "Bob's run" })).toBe("claude --name 'Bob'\\''s run' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { model: 'opus', sessionName: 'Ticket #7' })).toBe("claude --model 'opus' --name 'Ticket #7' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
   it('never starts the prompt with "-", which a CLI would parse as an option', () => {
@@ -550,7 +562,7 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
   it("uses a ticket's own branch, else a short one from its number and first title words", () => {
     expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
@@ -1165,15 +1177,19 @@ describe('Auto Run orchestrator', () => {
   })
 
   describe('buildOrchestratorLaunch', () => {
-    it('sends no orchestrator for a one-ticket run', () => {
-      expect(buildOrchestratorLaunch(inDev, entries.slice(0, 1), DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    it('sends an orchestrator for a one-ticket run', () => {
+      const oneTicket = entries.slice(0, 1)
+      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command).toContain('#12 First thing')
+      expect(launch.command).not.toContain('#13 Second thing')
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
       const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
-      expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
-      expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
-      expect(launch?.command).toContain("it'\\''s-mine")
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
+      expect(launch.command).toContain("it'\\''s-mine")
     })
   })
 })
@@ -1258,21 +1274,21 @@ describe('agent model', () => {
   })
 
   it('puts each built-in model flag before the prompt flags, model quoted', () => {
-    expect(agentShellCommand(byId('claude-code'), 'p', 'opus')).toBe("claude --model 'opus' 'p'")
-    expect(agentShellCommand(byId('codex'), 'p', 'gpt-5')).toBe("codex -m 'gpt-5' 'p'")
-    expect(agentShellCommand(byId('opencode'), 'p', 'anthropic/claude')).toBe(
+    expect(agentShellCommand(byId('claude-code'), 'p', { model: 'opus' })).toBe("claude --model 'opus' 'p'")
+    expect(agentShellCommand(byId('codex'), 'p', { model: 'gpt-5' })).toBe("codex -m 'gpt-5' 'p'")
+    expect(agentShellCommand(byId('opencode'), 'p', { model: 'anthropic/claude' })).toBe(
       "opencode -m 'anthropic/claude' --prompt 'p'"
     )
   })
 
   it('adds no flag for an empty, blank or "-"-prefixed model', () => {
     for (const model of [undefined, '', '   ', '--dangerously-skip-permissions']) {
-      expect(agentShellCommand(DEFAULT_AGENT, 'p', model)).toBe("claude 'p'")
+      expect(agentShellCommand(DEFAULT_AGENT, 'p', { model })).toBe("claude 'p'")
     }
   })
 
   it('adds no flag for an agent that cannot take a model', () => {
-    expect(agentShellCommand(byId('hermes'), 'p', 'some-model')).toBe("hermes chat -q 'p'")
+    expect(agentShellCommand(byId('hermes'), 'p', { model: 'some-model' })).toBe("hermes chat -q 'p'")
   })
 
   it('carries the model into an Auto Run launch', () => {
@@ -1296,7 +1312,7 @@ describe('agent model', () => {
     const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
     const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
-    expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+    expect(tab.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
   })
 })
 
