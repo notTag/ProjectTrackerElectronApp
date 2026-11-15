@@ -426,8 +426,9 @@ export const useProjectsStore = defineStore('projects', {
             return result.board
           })
           if (!saved) {
-            // The save already set this.error; name the project so it reads right on any board.
-            this.error = `${project.name}: ${this.error}`
+            // The save set this.error; name the project so it reads right on any board.
+            // A later write may have cleared it during the await, so never print "null".
+            if (this.error) this.error = `${project.name}: ${this.error}`
             return
           }
         }
