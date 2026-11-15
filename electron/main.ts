@@ -5,28 +5,33 @@ import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
-import { runAgentHeadless } from './agentRun.js'
+import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
 import { startUpdateCheck } from './autoUpdate.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
-import { StateRepository } from './storage/stateRepository.js'
+import { DATABASE_FILE_NAME, StateRepository } from './storage/stateRepository.js'
+import { createGithubRequest } from './githubRequest.js'
+import { openProjectIn } from './openIn.js'
+import { assertTrustedSenderUrl, isAppPageUrl } from './trustedSender.js'
 import {
   WARP_LAUNCH_CONFIG_NAME,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
+  tabLiveness,
+  tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   usableTabTitle,
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
-import { findOpenInTarget } from '../src/shared/openInTargets.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
+  isUuid,
   isWebUrl,
   pullRequestNumber,
   shellQuote,
@@ -34,15 +39,25 @@ import {
   type AutoRunTicketLaunch,
   type GithubPullRequest,
   type TerminalTab,
-  type ProjectTrackerState
+  type ProjectPriority,
+  type ProjectStatus,
+  type ProjectTrackerState,
+  type SwimLane,
+  type Ticket,
+  type TicketWritePatch,
+  type LaneWritePatch,
+  type ProjectWritePatch
 } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
-const allowedDevOrigin = 'http://127.0.0.1:5173'
+const bundledPagePath = path.join(app.getAppPath(), 'out/renderer/index.html')
+const appPageUrl = devServerUrl ?? pathToFileURL(bundledPagePath).href
 const APP_NAME = 'Project Tracker'
 
 let mainWindow: BrowserWindow | null = null
+// Runs recorded as running before this moment belong to a process that is gone.
+const APP_STARTED_AT = new Date().toISOString()
 let stateRepository: StateRepository
 
 // ponytail: slow fixed poll for writes from other processes (a second app
@@ -51,6 +66,11 @@ let stateRepository: StateRepository
 const EXTERNAL_CHANGE_POLL_MS = 10_000
 
 app.setName(APP_NAME)
+
+// Point a test run at a throwaway database instead of the user's real one
+// (smoke test, corrupt-DB check). Must run before anything reads userData.
+const userDataOverride = process.env.PROJECT_TRACKER_USER_DATA
+if (userDataOverride) app.setPath('userData', path.resolve(userDataOverride))
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
 // rasterization (correct DOM, scrambled on-screen text). Software compositing
@@ -177,34 +197,7 @@ const parseGithubRepo = (githubUrl: string) => {
   return { owner: match[1], repo: match[2].replace(/\.git$/, '') }
 }
 
-// Single door to the GitHub REST API so auth, headers and the status-to-message
-// mapping stay identical for every caller.
-// A body makes it a JSON POST (the GraphQL endpoint); otherwise a GET.
-const requestGithub = async <T>(apiPath: string, body?: unknown): Promise<T> => {
-  const token = await resolveGithubToken()
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': APP_NAME
-  }
-  if (token) headers.Authorization = `Bearer ${token}`
-  const init: RequestInit = body === undefined ? { headers } : { method: 'POST', headers, body: JSON.stringify(body) }
-
-  const response = await fetch(`https://api.github.com${apiPath}`, init)
-  if (response.status === 401 && !token) {
-    throw new Error('GitHub needs a sign-in for this. Run gh auth login or set GITHUB_TOKEN.')
-  }
-  if (response.status === 404) {
-    throw new Error(
-      token
-        ? 'Repository not found on GitHub.'
-        : 'Repository not found. If it is private, sign in with the GitHub CLI (gh auth login) or set GITHUB_TOKEN.'
-    )
-  }
-  if (response.status === 401) throw new Error('GitHub rejected the token. Re-run gh auth login or update GITHUB_TOKEN.')
-  if (response.status === 403) throw new Error('GitHub rate limit reached. Try again in a while.')
-  if (!response.ok) throw new Error(`GitHub request failed (HTTP ${response.status}).`)
-  return (await response.json()) as T
-}
+const requestGithub = createGithubRequest(fetch, resolveGithubToken, APP_NAME)
 
 const isInsideAny = (target: string, parents: string[]) =>
   parents.some((parent) => target === parent || target.startsWith(`${parent}/`))
@@ -218,13 +211,8 @@ const assertScannedProjectPath = (projectPath: string) => {
   return normalized
 }
 
-const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) => {
-  const senderUrl = event.senderFrame?.url
-  if (!senderUrl) throw new Error('Rejected IPC call from an unknown renderer frame.')
-  if (devServerUrl && senderUrl.startsWith(allowedDevOrigin)) return
-  if (!devServerUrl && senderUrl.startsWith('file://')) return
-  throw new Error('Rejected IPC call from an unexpected renderer origin.')
-}
+const assertTrustedSender = (event: Electron.IpcMainInvokeEvent) =>
+  assertTrustedSenderUrl(event.senderFrame?.url, appPageUrl)
 
 const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
   const candidate = value as Partial<AutoRunTicketLaunch> | null
@@ -253,6 +241,65 @@ const isProjectTrackerState = (value: unknown): value is ProjectTrackerState => 
     !!candidate.snapshot &&
     Array.isArray(candidate.snapshot.projects)
   )
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// Every ticket field a write may set. id, number and createdAt are the repo's.
+// Typed as a full Record so a field added to Ticket / SwimLane but not listed
+// here fails typecheck instead of rejecting every write at runtime.
+const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
+  laneId: true, title: true, description: true, updatedAt: true, labels: true, branchName: true,
+  worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
+  assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
+  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true
+}
+const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
+  name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
+  autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
+  orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
+  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
+}
+const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
+const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
+// NOT NULL text columns: a patch may change them but never clear them.
+const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
+const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
+const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
+
+const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
+  if (!isPlainObject(value)) return false
+  return Object.entries(value).every(([key, fieldValue]) => {
+    if (!allowedKeys.has(key)) return false
+    return !REQUIRED_TEXT_KEYS.has(key) || typeof fieldValue === 'string'
+  })
+}
+
+const isTicketPatch = (value: unknown): value is TicketWritePatch => isPatchOf(TICKET_PATCH_KEYS, value)
+const isLanePatch = (value: unknown): value is LaneWritePatch => isPatchOf(LANE_PATCH_KEYS, value)
+
+const isTicket = (value: unknown): value is Omit<Ticket, 'number'> => {
+  if (!isPlainObject(value)) return false
+  const { id, number: _number, createdAt, ...fields } = value
+  return typeof id === 'string' && typeof createdAt === 'string' && isTicketPatch(fields) &&
+    typeof fields.laneId === 'string' && typeof fields.title === 'string' && typeof fields.description === 'string'
+}
+
+const isSwimLane = (value: unknown): value is SwimLane => {
+  if (!isPlainObject(value)) return false
+  const { id, ...fields } = value
+  return typeof id === 'string' && isLanePatch(fields) &&
+    typeof fields.name === 'string' && typeof fields.agentPrompt === 'string' && typeof fields.agentFilePath === 'string'
+}
+
+const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
+  if (!isPlainObject(value)) return false
+  const { notes, priority, status, ...rest } = value
+  return Object.keys(rest).length === 0 &&
+    (notes === undefined || typeof notes === 'string') &&
+    (priority === undefined || PROJECT_PRIORITIES.includes(priority as ProjectPriority)) &&
+    (status === undefined || PROJECT_STATUSES.includes(status as ProjectStatus))
 }
 
 const createWindow = async () => {
@@ -286,19 +333,13 @@ const createWindow = async () => {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const allowedDevNavigation = !!devServerUrl && url.startsWith(allowedDevOrigin)
-    const allowedFileNavigation = !devServerUrl && url.startsWith('file://')
-    if (allowedDevNavigation || allowedFileNavigation) return
+    if (isAppPageUrl(url, appPageUrl)) return
 
     event.preventDefault()
     if (isWebUrl(url)) void shell.openExternal(url)
   })
 
-  if (devServerUrl) {
-    await mainWindow.loadURL(devServerUrl)
-  } else {
-    await mainWindow.loadFile(path.join(app.getAppPath(), 'out/renderer/index.html'))
-  }
+  await mainWindow.loadURL(appPageUrl)
 }
 
 const configureApplicationMenu = () => {
@@ -399,6 +440,67 @@ const registerIpc = () => {
     }))
   })
 
+  // Per-entity writes: ordinary edits send only the entity they touch. Each
+  // returns the row as stored, never a state re-read; outside changes still
+  // arrive through project-state:refresh.
+  ipcMain.handle('ticket:create', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, ticket } = (payload ?? {}) as { projectPath?: unknown; ticket?: unknown }
+    if (typeof projectPath !== 'string' || !isTicket(ticket)) throw new Error('Invalid ticket create payload.')
+    return toPlainJson(stateRepository.createTicket(normalizePath(projectPath), ticket))
+  })
+
+  ipcMain.handle('ticket:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
+    if (typeof id !== 'string' || !isTicketPatch(patch)) throw new Error('Invalid ticket update payload.')
+    return toPlainJson(stateRepository.updateTicket(id, patch))
+  })
+
+  ipcMain.handle('ticket:delete', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { id } = (payload ?? {}) as { id?: unknown }
+    if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
+    stateRepository.deleteTicket(id)
+  })
+
+  ipcMain.handle('lane:create', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, lane } = (payload ?? {}) as { projectPath?: unknown; lane?: unknown }
+    if (typeof projectPath !== 'string' || !isSwimLane(lane)) throw new Error('Invalid lane create payload.')
+    return toPlainJson(stateRepository.createSwimLane(normalizePath(projectPath), lane))
+  })
+
+  ipcMain.handle('lane:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneId, patch } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown; patch?: unknown }
+    if (typeof projectPath !== 'string' || typeof laneId !== 'string' || !isLanePatch(patch)) {
+      throw new Error('Invalid lane update payload.')
+    }
+    return toPlainJson(stateRepository.updateSwimLane(normalizePath(projectPath), laneId, patch))
+  })
+
+  ipcMain.handle('lane:reorder', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneIds } = (payload ?? {}) as { projectPath?: unknown; laneIds?: unknown }
+    if (typeof projectPath !== 'string' || !isStringArray(laneIds)) throw new Error('Invalid lane reorder payload.')
+    stateRepository.reorderSwimLanes(normalizePath(projectPath), laneIds)
+  })
+
+  ipcMain.handle('lane:delete', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+    if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane delete payload.')
+    stateRepository.deleteSwimLane(normalizePath(projectPath), laneId)
+  })
+
+  ipcMain.handle('project:update', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { path: projectPath, patch } = (payload ?? {}) as { path?: unknown; patch?: unknown }
+    if (typeof projectPath !== 'string' || !isProjectPatch(patch)) throw new Error('Invalid project update payload.')
+    return toPlainJson(stateRepository.updateProject(normalizePath(projectPath), patch))
+  })
+
   ipcMain.handle('projects:scan', (event, payload: unknown) => {
     assertTrustedSender(event)
     const candidate = payload as {
@@ -435,45 +537,13 @@ const registerIpc = () => {
 
   ipcMain.handle('project:open-in', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, targetId, command, title } = (payload ?? {}) as {
-      projectPath?: unknown
-      targetId?: unknown
-      command?: unknown
-      title?: unknown
-    }
-    if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
-    if (typeof targetId !== 'string') throw new Error('Invalid open-in target.')
-    // Resolve against the shared allowlist so only known apps are ever launched.
-    const target = findOpenInTarget(targetId)
-    if (!target) throw new Error(`Unknown open-in target: ${targetId}`)
-    const normalized = assertScannedProjectPath(projectPath)
-
-    // Terminals get the command and run it; the editors are launched with
-    // `open -a`, which takes a directory and no argv, so the clipboard remains
-    // the hand-off there. Copy either way: a launch that never reaches the
-    // shell still leaves something to paste.
-    const ticketCommand = typeof command === 'string' && command.trim() ? command : undefined
-    if (ticketCommand) clipboard.writeText(ticketCommand)
-    const runCommand = process.platform === 'darwin' ? COMMAND_RUNNERS[target.id] : undefined
-
-    try {
-      if (ticketCommand && runCommand) {
-        // A bad title is dropped, never rejected: it must not block the command.
-        const tabTitle = usableTabTitle(title)
-        await runCommand(normalized, [{ command: ticketCommand, title: tabTitle }])
-        return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
-      }
-      if (process.platform === 'darwin') {
-        await openWithApp(target.appName, normalized)
-      } else {
-        await shell.openPath(normalized)
-      }
-      return { ok: true, appLabel: target.label, copiedCommand: ticketCommand }
-    } catch {
-      const fallbackCommand = `cd ${JSON.stringify(normalized)}`
-      clipboard.writeText(fallbackCommand)
-      return { ok: true, appLabel: target.label, fallbackCommand }
-    }
+    const isMac = process.platform === 'darwin'
+    return openProjectIn(payload, {
+      assertScannedProjectPath,
+      writeClipboard: (text) => clipboard.writeText(text),
+      commandRunnerFor: (targetId) => (isMac ? COMMAND_RUNNERS[targetId] : undefined),
+      openFolder: (appName, projectPath) => (isMac ? openWithApp(appName, projectPath) : shell.openPath(projectPath))
+    })
   })
 
   // Commands come from the renderer, same trust as project:open-in: each one
@@ -526,20 +596,46 @@ const registerIpc = () => {
 
   ipcMain.handle('ticket:run-agent', async (event, payload: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, agentId, prompt } = (payload ?? {}) as {
+    const { projectPath, agentId, prompt, model, sessionId } = (payload ?? {}) as {
       projectPath?: unknown
       agentId?: unknown
       prompt?: unknown
+      model?: unknown
+      sessionId?: unknown
     }
     if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
     if (typeof agentId !== 'string') throw new Error('Invalid agent.')
     if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
+    if (model !== undefined && typeof model !== 'string') throw new Error('Invalid agent model.')
+    if (sessionId !== undefined && !isUuid(sessionId)) throw new Error('Invalid agent session id.')
     // Resolved by id against known agents rather than taking a command from the
     // payload, so the renderer can pick which agent runs but never what binary.
     const agent = availableAgents(stateRepository.getState()).find((entry) => entry.id === agentId)
     if (!agent) throw new Error(`Unknown agent: ${agentId}`)
     const normalized = assertScannedProjectPath(projectPath)
-    return toPlainJson(await runAgentHeadless(agent, prompt, normalized, app.getPath('home')))
+    const sender = event.sender
+    const onRetry = (notice: { attempt: number; of: number; delayMs: number }) => {
+      if (!sender.isDestroyed()) sender.send('ticket:agent-retry', { sessionId, ...notice })
+    }
+    const options = { model, sessionId, onRetry }
+    return toPlainJson(await runAgentHeadlessWithRetry(agent, prompt, normalized, app.getPath('home'), options))
+  })
+
+  ipcMain.handle('app:started-at', (event) => {
+    assertTrustedSender(event)
+    return APP_STARTED_AT
+  })
+
+  // Read-only: lists tab titles, never launches or touches a terminal.
+  ipcMain.handle('terminal:tabs-alive', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { targetId, titles } = (payload ?? {}) as { targetId?: unknown; titles?: unknown }
+    if (typeof targetId !== 'string' || !isStringArray(titles)) throw new Error('Invalid tab check.')
+    const listArgs = process.platform === 'darwin' ? tabTitlesOsascriptArgs(targetId) : undefined
+    if (!listArgs) return tabLiveness(undefined, titles)
+    const listing = await run('osascript', listArgs).catch(() => undefined)
+    const openTitles = listing === undefined ? undefined : listing.split('\n').filter(Boolean)
+    return tabLiveness(openTitles, titles)
   })
 
   // Computed live on every call: nothing is cached or stored, so an open of the
@@ -721,7 +817,21 @@ app.whenReady().then(async () => {
   app.dock?.setIcon(getIconPath())
   app.setAboutPanelOptions({ applicationName: APP_NAME, iconPath: getIconPath() })
   configureApplicationMenu()
-  stateRepository = new StateRepository(app.getPath('userData'))
+  const userDataPath = app.getPath('userData')
+  try {
+    stateRepository = new StateRepository(userDataPath)
+  } catch (error) {
+    // Without this the rejection is swallowed by whenReady: no window, the app
+    // just sits in the Dock. Recovery stays manual — never move the user's file.
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const reason = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox(
+      `${APP_NAME} could not open its database`,
+      `${databasePath}\n\n${reason}\n\nThe file was left untouched. The app will quit; move the file aside to start fresh, or restore a backup, then reopen it.`
+    )
+    app.quit()
+    return
+  }
   registerIpc()
   await createWindow()
 

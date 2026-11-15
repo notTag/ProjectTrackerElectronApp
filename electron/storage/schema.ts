@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   agent_sets_version INTEGER NOT NULL DEFAULT 0,
   orchestrator_poll_minutes INTEGER NOT NULL DEFAULT 2,
   orchestrator_poll_active INTEGER NOT NULL DEFAULT 1,
+  auto_run_model TEXT NOT NULL DEFAULT '',
+  orchestrator_agent_id TEXT,
+  orchestrator_model TEXT NOT NULL DEFAULT '',
+  -- Not a foreign key: it may name the virtual unassigned lane.
+  next_lane_id TEXT,
   PRIMARY KEY (project_path, id)
 );
 
@@ -103,6 +108,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   -- Owned by the triggers in CLOSED_AT_TRIGGERS_SQL, never written by the app.
   closed_at TEXT,
   version TEXT,
+  agent_id TEXT,
+  model TEXT NOT NULL DEFAULT '',
   UNIQUE (project_path, number)
 );
 
@@ -157,6 +164,12 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'closed_at', definition: 'TEXT' },
   { table: 'tickets', column: 'version', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'agent_sets_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'swim_lanes', column: 'auto_run_model', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'orchestrator_agent_id', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'orchestrator_model', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'tickets', column: 'agent_id', definition: 'TEXT' },
+  { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'next_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
   { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' }
 ]
