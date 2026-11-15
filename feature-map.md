@@ -240,7 +240,7 @@ From left to right:
 
 See 1.7. Board notices include:
 
-- "Imported N issues (M already on the board)."
+- "Imported N issues into X (M already on the board)." Pull results and pull errors ("X: <message>") name the project, so a pull that finishes after you switch boards isn't mistaken for the open board's.
 - "Auto Run opened N tabs in X."
 - "Agent running on #N…" and "Agent finished #N."
 - "Running the agent command in X."
