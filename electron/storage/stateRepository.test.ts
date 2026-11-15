@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createSeedState,
@@ -15,6 +15,7 @@ import { SCHEMA_SQL } from './schema.js'
 import {
   DATABASE_FILE_NAME,
   LEGACY_BACKUP_FILE_NAME,
+  isSnapshotFileName,
   SNAPSHOT_RETENTION_COUNT,
   SNAPSHOTS_DIRECTORY_NAME,
   StateRepository
@@ -1033,8 +1034,10 @@ describe('closed_at triggers (#27)', () => {
 
 describe('snapshots', () => {
   const snapshotsIn = (userDataPath: string) => path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
-  const snapshotNames = (userDataPath: string) =>
-    readdirSync(snapshotsIn(userDataPath)).filter((name) => name.startsWith('project-tracker-')).sort()
+  const snapshotNames = (userDataPath: string) => {
+    const fileNames = readdirSync(snapshotsIn(userDataPath))
+    return fileNames.filter(isSnapshotFileName).sort()
+  }
   const integrityOf = (snapshotPath: string) => {
     const snapshot = new DatabaseSync(snapshotPath)
     const result = snapshot.prepare('PRAGMA integrity_check').get()?.integrity_check
@@ -1112,15 +1115,25 @@ describe('snapshots', () => {
   it('never blocks startup when the snapshot fails', () => {
     const userDataPath = freshUserDataPath()
     new StateRepository(userDataPath)
-    mkdirSync(snapshotsIn(userDataPath))
-    chmodSync(snapshotsIn(userDataPath), 0o500)
+    // A file where the directory should be fails for root too, unlike chmod.
+    writeFileSync(snapshotsIn(userDataPath), '')
 
+    const repository = new StateRepository(userDataPath)
+    expect(repository.getState()).toBeDefined()
+    expect(statSync(snapshotsIn(userDataPath)).isFile()).toBe(true)
+  })
+
+  it('does not delete an existing snapshot when the new one collides with its name', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
     try {
-      const repository = new StateRepository(userDataPath)
-      expect(repository.getState()).toBeDefined()
-      expect(snapshotNames(userDataPath)).toHaveLength(0)
+      const existingPath = repository.backUpNow()
+      expect(() => repository.backUpNow()).toThrow(/already exists/)
+      expect(integrityOf(existingPath)).toBe('ok')
     } finally {
-      chmodSync(snapshotsIn(userDataPath), 0o700)
+      vi.useRealTimers()
     }
   })
 })

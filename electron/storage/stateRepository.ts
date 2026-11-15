@@ -51,6 +51,8 @@ export const SNAPSHOT_RETENTION_COUNT = 7
 const SNAPSHOT_PREFIX = 'project-tracker-'
 const SNAPSHOT_SUFFIX = '.sqlite'
 const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000
+export const isSnapshotFileName = (fileName: string) =>
+  fileName.startsWith(SNAPSHOT_PREFIX) && fileName.endsWith(SNAPSHOT_SUFFIX)
 
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
@@ -239,8 +241,10 @@ export class StateRepository {
     this.db.exec('PRAGMA busy_timeout = 5000')
     this.snapshotsPath = path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
     // Before migrations, so a migration bug can always be rolled back by hand.
-    if (databaseExisted) this.snapshotIfStale()
-    if (databaseExisted) this.backUpLegacyDatabase(databasePath, path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))
+    if (databaseExisted) {
+      this.snapshotIfStale()
+      this.backUpLegacyDatabase(databasePath, path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))
+    }
     // WAL lets readers and one writer work at once across processes; WAL mode
     // is stored in the file, foreign_keys is per connection.
     this.db.exec('PRAGMA journal_mode = WAL')
@@ -266,7 +270,10 @@ export class StateRepository {
   backUpNow(): string {
     mkdirSync(this.snapshotsPath, { recursive: true })
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const snapshotPath = path.join(this.snapshotsPath, `${SNAPSHOT_PREFIX}${timestamp}${SNAPSHOT_SUFFIX}`)
+    const snapshotFileName = `${SNAPSHOT_PREFIX}${timestamp}${SNAPSHOT_SUFFIX}`
+    const snapshotPath = path.join(this.snapshotsPath, snapshotFileName)
+    // VACUUM INTO refuses an existing target; bail before the cleanup below could delete it.
+    if (existsSync(snapshotPath)) throw new Error(`Snapshot already exists: ${snapshotPath}`)
     try {
       this.db.prepare('VACUUM INTO ?').run(snapshotPath)
     } catch (error) {
@@ -281,8 +288,8 @@ export class StateRepository {
   // Timestamped names sort lexically = chronologically, oldest first.
   private listSnapshots(): string[] {
     if (!existsSync(this.snapshotsPath)) return []
-    const isSnapshot = (name: string) => name.startsWith(SNAPSHOT_PREFIX) && name.endsWith(SNAPSHOT_SUFFIX)
-    return readdirSync(this.snapshotsPath).filter(isSnapshot).sort()
+    const fileNames = readdirSync(this.snapshotsPath)
+    return fileNames.filter(isSnapshotFileName).sort()
   }
 
   private snapshotIfStale() {
@@ -290,7 +297,9 @@ export class StateRepository {
       const newestName = this.listSnapshots().at(-1)
       if (newestName) {
         const newestModifiedAt = statSync(path.join(this.snapshotsPath, newestName)).mtimeMs
-        const isFresh = Date.now() - newestModifiedAt < SNAPSHOT_INTERVAL_MS
+        const ageMs = Date.now() - newestModifiedAt
+        // A negative age means the clock moved back; treat it as stale, not fresh for days.
+        const isFresh = ageMs >= 0 && ageMs < SNAPSHOT_INTERVAL_MS
         if (isFresh) return
       }
       this.backUpNow()
@@ -302,7 +311,14 @@ export class StateRepository {
   private pruneSnapshots() {
     const snapshotNames = this.listSnapshots()
     const expiredNames = snapshotNames.slice(0, -SNAPSHOT_RETENTION_COUNT)
-    for (const name of expiredNames) rmSync(path.join(this.snapshotsPath, name))
+    for (const name of expiredNames) {
+      // The new snapshot is already written; a stuck old one must not report the backup as failed.
+      try {
+        rmSync(path.join(this.snapshotsPath, name), { force: true })
+      } catch (error) {
+        console.warn('[snapshot] could not prune', name, error)
+      }
+    }
   }
 
   // sql.js ran with foreign keys off, so deleting a project never cascaded and

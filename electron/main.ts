@@ -349,16 +349,23 @@ const backUpDatabaseNow = () => {
     const snapshotPath = stateRepository.backUpNow()
     shell.showItemInFolder(snapshotPath)
   } catch (error) {
-    dialog.showErrorBox('Backup failed', error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox('Backup failed', message)
   }
 }
 
-const showBackupsInFinder = () => {
+const showBackupsInFinder = async () => {
   if (!stateRepository) return
   const snapshotsPath = stateRepository.snapshotsDirectory
-  // openPath fails on a missing directory, and the first launch has no snapshot yet.
-  mkdirSync(snapshotsPath, { recursive: true })
-  void shell.openPath(snapshotsPath)
+  try {
+    // openPath fails on a missing directory, and the first launch has no snapshot yet.
+    mkdirSync(snapshotsPath, { recursive: true })
+    const openError = await shell.openPath(snapshotsPath)
+    if (openError) throw new Error(openError)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox('Could not show backups', message)
+  }
 }
 
 const configureApplicationMenu = () => {
