@@ -41,6 +41,7 @@ import {
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  boardLaneColumns,
   effectiveNextLaneId,
   boardLaneById,
   hasUnseenAgentResult,
@@ -118,9 +119,9 @@ const anyModalOpen = computed(
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
 // so it carries its own agent prompt without ever becoming deletable.
-const unassignedLane = computed(() => getUnassignedLane(board.value))
+const laneColumns = computed(() => boardLaneColumns(board.value))
 
-const laneColumns = computed(() => [unassignedLane.value, ...board.value.lanes])
+const unassignedLane = computed(() => laneColumns.value[0])
 
 // Widths, hidden columns and card fields are this user's view of a shared
 // board, so they persist alongside the board rather than in component state.
@@ -139,8 +140,9 @@ const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(
 const laneTicketTotal = (laneId: string) =>
   board.value.tickets.filter((ticket) => ticket.laneId === laneId).length
 
-// The columns worth an explicit show/hide chip: both arrive by import rather
-// than by choice, so they are the ones a board wants out of the way.
+// The columns worth a header quick-toggle chip: both arrive by import rather
+// than by choice, so they are the ones a board wants out of the way. The
+// Display modal lists every column instead (laneColumns).
 const githubImportLane = computed(
   () => board.value.lanes.find((lane) => lane.id === GITHUB_IMPORT_LANE_ID) ?? null
 )
@@ -1239,14 +1241,14 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <p class="eyebrow">Columns</p>
       <ul class="card-field-list">
-        <li v-for="lane in toggleableLanes" :key="lane.id">
+        <li v-for="lane in laneColumns" :key="lane.id">
           <label>
             <input
               type="checkbox"
               :checked="!laneIsHidden(lane.id)"
               @change="toggleLaneVisibility(lane.id)"
             />
-            {{ lane.name }}
+            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
           </label>
         </li>
       </ul>
