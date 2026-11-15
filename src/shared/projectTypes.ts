@@ -470,6 +470,8 @@ export interface TicketPromptContext {
   assigneeName?: string
   // The board's project path, which the version instruction's SQL filters on.
   projectPath?: string
+  // The DB the version instruction points at. Evals swap in a throwaway one.
+  databasePath?: string
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
@@ -530,14 +532,15 @@ export const normalizeSemanticVersion = (input: string): string | undefined | nu
   return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
 }
 
-const versionInstruction = (ticket: Ticket, projectPath?: string): string => {
+const versionInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
   const sentence =
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
-  if (!projectPath) return sentence
+  if (!context.projectPath) return sentence
+  const databasePath = context.databasePath ?? TRACKER_DATABASE_PATH
   const updateSql =
     "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
-    `WHERE project_path = ${sqlStringLiteral(projectPath)} AND number = ${ticket.number};`
-  const command = `sqlite3 "${TRACKER_DATABASE_PATH}" ${shellQuote(updateSql)}`
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
+  const command = `sqlite3 "${databasePath}" ${shellQuote(updateSql)}`
   return [`${sentence} To set or change it:`, command].join('\n')
 }
 
@@ -552,7 +555,7 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
-  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context.projectPath) : ''
+  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
   const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')

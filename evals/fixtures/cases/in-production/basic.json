@@ -1,0 +1,8 @@
+{
+  "ticket": {
+    "title": "Add a CONTRIBUTING.md",
+    "description": "Released. There is no matching GitHub issue for this ticket.",
+    "pullRequestUrl": "https://github.com/example/eval-fixture/pull/1"
+  },
+  "expect": { "endLane": "in-production", "fields": { "version": "nonEmpty" } }
+}

@@ -1,0 +1,7 @@
+{
+  "ticket": {
+    "title": "Show the ticket count in each swim lane header",
+    "description": "Each lane header should show how many tickets the lane holds, e.g. \"PRD (4)\". Count updates live as tickets move. Hidden/filtered tickets are not counted."
+  },
+  "expect": { "endLane": "prd", "moves": 1 }
+}

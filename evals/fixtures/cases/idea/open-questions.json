@@ -1,0 +1,7 @@
+{
+  "ticket": {
+    "title": "Sync",
+    "description": "Make it sync. Open questions: sync with what (GitHub, iCloud, another machine)? One-way or two-way? Who resolves conflicts? Nobody has answered these yet and the product owner must decide."
+  },
+  "expect": { "endLane": "idea", "moves": 0 }
+}

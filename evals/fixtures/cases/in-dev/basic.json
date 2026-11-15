@@ -1,0 +1,8 @@
+{
+  "ticket": {
+    "title": "Add a CONTRIBUTING.md",
+    "description": "Merged to main. Ready for release.",
+    "pullRequestUrl": "https://github.com/example/eval-fixture/pull/1"
+  },
+  "expect": { "endLane": "in-production", "stubCalls": ["mise run release:"] }
+}

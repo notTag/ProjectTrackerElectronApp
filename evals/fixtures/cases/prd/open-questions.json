@@ -1,0 +1,7 @@
+{
+  "ticket": {
+    "title": "Pricing tiers",
+    "description": "Add paid tiers. Open questions that only the owner can answer: how many tiers, which features are paid, what prices, which payment provider. None of these are decided."
+  },
+  "expect": { "endLane": "prd", "moves": 0 }
+}

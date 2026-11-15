@@ -1,0 +1,7 @@
+{
+  "ticket": {
+    "title": "Add a keyboard shortcut to open the new-ticket modal",
+    "description": "Pressing Cmd+N anywhere on the board opens the new-ticket modal for the current board. Esc closes it. The shortcut is shown in the app menu under File > New Ticket. No other shortcuts change."
+  },
+  "expect": { "endLane": "in-development", "fields": { "description": "changed" } }
+}

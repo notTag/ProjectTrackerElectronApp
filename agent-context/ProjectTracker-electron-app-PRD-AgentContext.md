@@ -3,4 +3,4 @@
 - Add the PRD to the ticket. 
 - If there are no open questions move the ticket, update the ticket status to 'In Development'. 
 - If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
-- Close the terminal tab this ran in when you are done.
+- As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen. 

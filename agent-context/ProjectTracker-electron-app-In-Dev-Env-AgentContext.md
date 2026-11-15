@@ -1,0 +1,2 @@
+- Run `mise run release:patch` or `mise run release:minor`, to bump the version number.  (Note, `mise run release:major` will be run manually).
+- Push tickets to the 'In Production' swimlane.

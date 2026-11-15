@@ -1,0 +1,8 @@
+{
+  "ticket": {
+    "title": "Add a CONTRIBUTING.md",
+    "description": "Add CONTRIBUTING.md at the repo root with one line: \"Open a PR against main.\" No other changes. There are no tests in this repo.",
+    "branchName": "t9046-add-contributing"
+  },
+  "expect": { "endLane": "in-pr", "fields": { "branch_name": "nonEmpty", "worktree_path": "nonEmpty" } }
+}

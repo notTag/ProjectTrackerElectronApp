@@ -1128,6 +1128,13 @@ describe('semantic version', () => {
     expect(prompt).toContain("project_path = '\\''/code/o'\\'''\\''brien'\\'' AND number = 7;")
   })
 
+  it('points the version command at a supplied database path', () => {
+    const context = { projectPath: '/code/app', databasePath: '/tmp/eval/project-tracker.sqlite' }
+    const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }), context)
+    expect(prompt).toContain(`sqlite3 "/tmp/eval/project-tracker.sqlite" 'UPDATE tickets SET version = `)
+    expect(prompt).not.toContain(TRACKER_DATABASE_PATH)
+  })
+
   it('keeps the version sentence but drops the command without a project path', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
     expect(prompt).toContain("Leave it unset if it doesn't apply yet.")

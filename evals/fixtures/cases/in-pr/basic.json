@@ -1,0 +1,9 @@
+{
+  "ticket": {
+    "title": "Add a CONTRIBUTING.md",
+    "description": "Add CONTRIBUTING.md at the repo root with one line: \"Open a PR against main.\"",
+    "branchName": "t9046-add-contributing"
+  },
+  "setup": "branch-with-commit",
+  "expect": { "endLane": "in-dev", "fields": { "pull_request_url": "nonEmpty" }, "stubCalls": ["gh pr create"] }
+}

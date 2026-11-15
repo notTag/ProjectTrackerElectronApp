@@ -1,0 +1,7 @@
+{
+  "ticket": {
+    "title": "Export a board to CSV",
+    "description": "Users want to export a board's tickets (number, title, lane, labels) to a CSV file for reporting. Nothing in this repo exports anything today."
+  },
+  "expect": { "endLane": "idea", "moves": 1 }
+}
