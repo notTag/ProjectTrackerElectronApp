@@ -342,6 +342,32 @@ const createWindow = async () => {
   await mainWindow.loadURL(appPageUrl)
 }
 
+// The menu is built before the repository exists, so both handlers guard it.
+const backUpDatabaseNow = () => {
+  if (!stateRepository) return
+  try {
+    const snapshotPath = stateRepository.backUpNow()
+    shell.showItemInFolder(snapshotPath)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox('Backup failed', message)
+  }
+}
+
+const showBackupsInFinder = async () => {
+  if (!stateRepository) return
+  const snapshotsPath = stateRepository.snapshotsDirectory
+  try {
+    // openPath fails on a missing directory, and the first launch has no snapshot yet.
+    mkdirSync(snapshotsPath, { recursive: true })
+    const openError = await shell.openPath(snapshotsPath)
+    if (openError) throw new Error(openError)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox('Could not show backups', message)
+  }
+}
+
 const configureApplicationMenu = () => {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -361,7 +387,12 @@ const configureApplicationMenu = () => {
       },
       {
         label: 'File',
-        submenu: [{ role: 'close' }]
+        submenu: [
+          { label: 'Back Up Database Now', click: backUpDatabaseNow },
+          { label: 'Show Backups in Finder', click: showBackupsInFinder },
+          { type: 'separator' },
+          { role: 'close' }
+        ]
       },
       {
         label: 'Edit',

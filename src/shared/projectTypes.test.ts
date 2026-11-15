@@ -38,6 +38,7 @@ import {
   moveLaneInBoard,
   removeLaneFromBoard,
   getUnassignedLane,
+  boardLaneColumns,
   normalizeBoard,
   nextTicketNumber,
   updateLaneInBoard,
@@ -284,12 +285,15 @@ describe('syncing imported tickets with closed GitHub issues', () => {
   })
 
   it('reports every non-zero count in the notice', () => {
+    const context = (openCount: number) => ({ openCount, productionLaneName: 'In Prod Env', projectName: 'app' })
     const result = { board: boardOf(), added: 2, moved: 1, removed: 1, keptWithWork: 1 }
-    expect(githubSyncNotice(result, 2, 'In Prod Env')).toBe(
-      'Imported 2 issues, moved 1 to In Prod Env, removed 1 closed, kept 1 closed with local work.'
+    expect(githubSyncNotice(result, context(2))).toBe(
+      'Imported 2 issues into app, moved 1 to In Prod Env, removed 1 closed, kept 1 closed with local work.'
     )
     const unchanged = { board: boardOf(), added: 0, moved: 0, removed: 0, keptWithWork: 0 }
-    expect(githubSyncNotice(unchanged, 3, 'In Prod Env')).toBe('Imported 0 issues (3 already on the board).')
+    expect(githubSyncNotice(unchanged, context(3))).toBe('Imported 0 issues into app (3 already on the board).')
+    const syncOnly = { board: boardOf(), added: 0, moved: 1, removed: 0, keptWithWork: 0 }
+    expect(githubSyncNotice(syncOnly, context(0))).toBe('app: Moved 1 to In Prod Env.')
   })
 })
 
@@ -435,6 +439,28 @@ describe('ticketSearchText', () => {
   })
 })
 
+
+describe('boardLaneColumns', () => {
+  const columnIds = (board: ProjectBoard) => boardLaneColumns(board).map((lane) => lane.id)
+
+  it('lists No status first, then every lane in board order', () => {
+    const board = boardWithTickets()
+    const laneIds = board.lanes.map((lane) => lane.id)
+    expect(columnIds(board)).toEqual([UNASSIGNED_LANE_ID, ...laneIds])
+  })
+
+  it('includes a lane added to the board, last', () => {
+    const board = boardWithTickets()
+    const addedLane = { ...board.lanes[0], id: 'added', name: 'Added' }
+    const grown = { ...board, lanes: [...board.lanes, addedLane] }
+    expect(columnIds(grown).at(-1)).toBe('added')
+  })
+
+  it('still starts with No status when the board never stored one', () => {
+    const board = { ...boardWithTickets(), unassignedLane: undefined }
+    expect(columnIds(board)[0]).toBe(UNASSIGNED_LANE_ID)
+  })
+})
 
 describe('updateLaneInBoard', () => {
   it('stores the unassigned column\'s prompt without adding it to lanes', () => {

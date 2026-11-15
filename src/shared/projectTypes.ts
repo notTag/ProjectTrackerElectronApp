@@ -1184,6 +1184,10 @@ export const createUnassignedLane = (): SwimLane => ({
 export const getUnassignedLane = (board: ProjectBoard): SwimLane =>
   board.unassignedLane ?? createUnassignedLane()
 
+// Every column the board renders, in render order: No status is stored apart
+// from `lanes` but always shows first.
+export const boardLaneColumns = (board: ProjectBoard): SwimLane[] => [getUnassignedLane(board), ...board.lanes]
+
 // Routes a lane edit to wherever that lane lives: the unassigned column is
 // stored on its own field, every other lane in `lanes`.
 export const updateLaneInBoard = (
@@ -1407,18 +1411,27 @@ export const oldestImportedCreatedAt = (board: ProjectBoard): string | undefined
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 
-export const githubSyncNotice = (result: GithubSyncResult, openCount: number, productionLaneName: string): string => {
-  const skipped = openCount - result.added
+interface GithubSyncNoticeContext {
+  openCount: number
+  productionLaneName: string
+  projectName: string
+}
+
+// Names the project, since the banner can show while another board is open.
+export const githubSyncNotice = (result: GithubSyncResult, context: GithubSyncNoticeContext): string => {
+  const skipped = context.openCount - result.added
   const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
   const nothingChanged = githubSyncChangeCount(result) === 0
+  const showsImport = result.added > 0 || nothingChanged
   const parts = [
-    result.added > 0 || nothingChanged ? `Imported ${plural(result.added, 'issue')}${skippedNote}` : '',
-    result.moved > 0 ? `moved ${result.moved} to ${productionLaneName}` : '',
+    showsImport ? `Imported ${plural(result.added, 'issue')} into ${context.projectName}${skippedNote}` : '',
+    result.moved > 0 ? `moved ${result.moved} to ${context.productionLaneName}` : '',
     result.removed > 0 ? `removed ${result.removed} closed` : '',
     result.keptWithWork > 0 ? `kept ${result.keptWithWork} closed with local work` : ''
   ].filter(Boolean)
   const sentence = parts.join(', ')
-  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`
+  const capitalized = `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`
+  return showsImport ? capitalized : `${context.projectName}: ${capitalized}`
 }
 
 // What a ticket card can show on the board. Ids are persisted, so renaming one
