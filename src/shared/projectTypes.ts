@@ -869,8 +869,13 @@ export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =
 
 export const DEFAULT_ORCHESTRATOR_POLL_MINUTES = 2
 
-export const orchestratorPollMinutes = (lane: SwimLane): number =>
-  lane.orchestratorPollMinutes ?? DEFAULT_ORCHESTRATOR_POLL_MINUTES
+// Agents write the DB with sqlite3, so a stored 0, fraction or text must not
+// reach the prompt as `sleep 0` / `sleep NaN`.
+export const orchestratorPollMinutes = (lane: SwimLane): number => {
+  const storedMinutes = lane.orchestratorPollMinutes ?? 0
+  const isWholeMinutes = Number.isInteger(storedMinutes) && storedMinutes >= 1
+  return isWholeMinutes ? storedMinutes : DEFAULT_ORCHESTRATOR_POLL_MINUTES
+}
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
@@ -989,10 +994,10 @@ export const orchestratorPrompt = (
     'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
   ].join(' ')
-  // Double quotes only around the DB path, which needs $HOME expanded; the SQL
-  // carries the project path, so it gets literal single quotes.
   const pollMinutes = orchestratorPollMinutes(lane)
   const pollSeconds = pollMinutes * 60
+  // Double quotes only around the DB path, which needs $HOME expanded; the SQL
+  // carries the project path, so it gets literal single quotes.
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
 
   return [

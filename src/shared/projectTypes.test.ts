@@ -1182,10 +1182,11 @@ describe('Auto Run orchestrator', () => {
       expect(slower).toContain('every 5 minutes (sleep 300)')
     })
 
-    it('no longer advertises the poll interval as a lane-instruction override', () => {
-      const steered = { ...inDev, orchestratorPrompt: 'Flag PRs with failing checks.' }
-      const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
-      expect(withInstructions).not.toContain('poll interval')
+    it('falls back to the default for a stored poll that is not whole minutes', () => {
+      for (const badMinutes of [0, -3, 1.5, Number.NaN]) {
+        const corrupted = { ...inDev, orchestratorPollMinutes: badMinutes }
+        expect(orchestratorPrompt(corrupted, entries, context('ghostty', 'Ghostty'))).toContain('every 2 minutes (sleep 120)')
+      }
     })
   })
 

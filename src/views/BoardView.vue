@@ -1633,21 +1633,23 @@ const runTicketAgent = (ticket: Ticket) => {
         Model
         <input v-model="autoRunConfirmModel" :list="agentModelListId(autoRunConfirmAgentId)" placeholder="CLI default" />
       </label>
-      <label>
-        Orchestrator agent
-        <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-          <option value="">Same as ticket agent</option>
-          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-        </select>
-      </label>
-      <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
-        Orchestrator model
-        <input
-          v-model="autoRunConfirmOrchestratorModel"
-          :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-          :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-        />
-      </label>
+      <template v-if="orchestratorPollActive(autoRunConfirmLane)">
+        <label>
+          Orchestrator agent
+          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+            <option value="">Same as ticket agent</option>
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label v-if="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)">
+          Orchestrator model
+          <input
+            v-model="autoRunConfirmOrchestratorModel"
+            :list="agentModelListId(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+          />
+        </label>
+      </template>
       <p class="auto-run-question">
         Each opens in its own
         <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
