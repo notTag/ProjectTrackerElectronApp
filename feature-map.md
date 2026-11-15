@@ -27,7 +27,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 | Menu | Items |
 |------|-------|
 | Project Tracker | About, Services, Hide, Hide Others, Show All, Quit |
-| File | Close |
+| File | Back Up Database Now (reveals the new snapshot in Finder), Show Backups in Finder, Close |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All |
 | View | Reload, Force Reload, Toggle DevTools, Reset Zoom, Zoom In, Zoom Out, Toggle Full Screen |
 | Window | Minimize, Zoom, Bring All to Front |
@@ -240,7 +240,7 @@ From left to right:
 
 See 1.7. Board notices include:
 
-- "Imported N issues (M already on the board)."
+- "Imported N issues into X (M already on the board)." Pull results and pull errors ("X: <message>") name the project, so a pull that finishes after you switch boards isn't mistaken for the open board's.
 - "Auto Run opened N tabs in X."
 - "Agent running on #N…" and "Agent finished #N."
 - "Running the agent command in X."
@@ -250,6 +250,7 @@ See 1.7. Board notices include:
 From left to right:
 
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
+  - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
 - **All swim lanes** select: limits the board to a single column.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
@@ -286,7 +287,7 @@ From left to right:
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
-- **Columns**: checkboxes to show or hide No status and GitHub Issues.
+- **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
@@ -349,7 +350,7 @@ In graph view this opens as a side panel instead of a centered modal.
 **Agent completion**
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
-- **Model** input (placeholder "CLI default"), shown only for agents that take a model (Claude Code `--model`, Codex and opencode `-m`; not Hermes). Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
+- **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
 - **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it.
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
@@ -402,8 +403,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
   - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
-  - **Agent** select, plus **Model** for agents that take one. Full auto handoffs into the lane use both.
-  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model**: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
+  - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
+  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
 - **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
@@ -430,7 +431,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
@@ -469,6 +470,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - SQLite through the built-in `node:sqlite`, at `~/Library/Application Support/Project Tracker/project-tracker.sqlite`.
 - WAL mode with a 5-second busy timeout, so other processes can read and write while the app is open.
+- Snapshots in `snapshots/` next to the DB, via `VACUUM INTO`: one on launch when the newest is over 24h old (before migrations), plus File → Back Up Database Now. Newest 7 kept. A failed snapshot logs a warning and startup continues. Restore steps in `README.md`.
 - Tables: `users`, `projects`, `project_members`, `swim_lanes`, `tickets`, `project_paths`, `user_paths`, `user_settings`, `schema_meta`.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
