@@ -800,13 +800,6 @@ const ticketCommand = (ticket: Ticket) => {
   return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket), ticket.model)
 }
 
-const agentTakesModel = (agentId?: string) => {
-  const modelArgs = findAgent(agents.value, agentId).modelArgs ?? []
-  return modelArgs.length > 0
-}
-
-const agentModels = (agentId?: string) => findAgent(agents.value, agentId).models
-
 const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
 
 // A model id belongs to one CLI ('opus' means nothing to Codex), so switching
@@ -1489,8 +1482,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Model
           <ModelField
             :model-value="openTicket.model ?? ''"
-            :models="agentModels(openTicket.agentId)"
-            :agent-takes-model="agentTakesModel(openTicket.agentId)"
+            :agent="findAgent(agents, openTicket.agentId)"
             placeholder="CLI default"
             @update:model-value="editTicket(openTicket, { model: $event || undefined })"
           />
@@ -1614,8 +1606,7 @@ const runTicketAgent = (ticket: Ticket) => {
         agents with
         <ModelField
           v-model="autoRunConfirmModel"
-          :models="agentModels(autoRunConfirmAgentId)"
-          :agent-takes-model="agentTakesModel(autoRunConfirmAgentId)"
+          :agent="findAgent(agents, autoRunConfirmAgentId)"
           placeholder="CLI default"
         />
         for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
@@ -1633,8 +1624,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Model
           <ModelField
             v-model="autoRunConfirmOrchestratorModel"
-            :models="agentModels(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-            :agent-takes-model="agentTakesModel(autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
             :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
           />
         </label>
@@ -1756,8 +1746,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Model
           <ModelField
             :model-value="openLane.autoRunModel ?? ''"
-            :models="agentModels(openLane.autoRunAgentId)"
-            :agent-takes-model="agentTakesModel(openLane.autoRunAgentId)"
+            :agent="findAgent(agents, openLane.autoRunAgentId)"
             placeholder="CLI default"
             @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
           />
@@ -1781,8 +1770,7 @@ const runTicketAgent = (ticket: Ticket) => {
           Orchestrator model
           <ModelField
             :model-value="openLane.orchestratorModel ?? ''"
-            :models="agentModels(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
-            :agent-takes-model="agentTakesModel(openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+            :agent="findAgent(agents, openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
             :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
             @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
           />
