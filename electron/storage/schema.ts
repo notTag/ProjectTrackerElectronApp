@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   auto_run_model TEXT NOT NULL DEFAULT '',
   orchestrator_agent_id TEXT,
   orchestrator_model TEXT NOT NULL DEFAULT '',
+  -- Not a foreign key: it may name the virtual unassigned lane.
+  next_lane_id TEXT,
   PRIMARY KEY (project_path, id)
 );
 
@@ -164,7 +166,8 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'orchestrator_agent_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'orchestrator_model', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'tickets', column: 'agent_id', definition: 'TEXT' },
-  { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" }
+  { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'next_lane_id', definition: 'TEXT' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by

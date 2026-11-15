@@ -4,8 +4,12 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 
 import {
   createSeedState,
+  changedFields,
+  createUnassignedLane,
   DEFAULT_USER_ID,
   DEFAULT_USER_NAME,
+  orderedIds,
+  sameRow,
   SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
   type BoardPreferences,
@@ -17,6 +21,9 @@ import {
   type ScanFailure,
   type SwimLane,
   type Ticket,
+  type TicketWritePatch,
+  type LaneWritePatch,
+  type ProjectWritePatch,
   type User
 } from '../../src/shared/projectTypes.js'
 import {
@@ -81,27 +88,6 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 }
 const jsonOrNull = (value: unknown) => (value ? JSON.stringify(value) : null)
 
-// Key order differs between objects read from the database and objects the
-// renderer rebuilt with a spread, so rows are compared with sorted keys.
-const canonicalJson = (value: unknown) =>
-  JSON.stringify(value, (_key, nested: unknown) => {
-    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
-    if (!isPlainObject) return nested
-    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
-    return Object.fromEntries(sortedEntries)
-  })
-const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
-
-// Includes fields present on only one side, so a cleared field (now undefined)
-// counts as a change and gets written as NULL.
-const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
-  const nextRecord = next as Record<string, unknown>
-  const previousRecord = previous as Record<string, unknown>
-  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
-  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
-  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
-  return Object.fromEntries(changedEntries) as Partial<T>
-}
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
@@ -157,6 +143,43 @@ const ticketFromRow = (row: Row): Ticket => ({
   version: asText(row.version),
   agentId: asText(row.agent_id),
   model: asNonEmptyText(row.model)
+})
+
+const laneFromRow = (row: Row): SwimLane => ({
+    id: String(row.id),
+    name: String(row.name),
+    agentPrompt: String(row.agent_prompt),
+    agentFilePath: String(row.agent_file_path),
+    outputTarget: String(row.output_target),
+    orchestratorPrompt: String(row.orchestrator_prompt),
+    autoRunAgentId: asText(row.auto_run_agent_id),
+    autoRunTerminalId: asText(row.auto_run_terminal_id),
+    autoRunWorktrees: asBool(row.auto_run_worktrees),
+    fullAuto: asBool(row.full_auto),
+    agentSetsVersion: asBool(row.agent_sets_version),
+    closesTicket: asBool(row.closes_ticket),
+    autoRunModel: asNonEmptyText(row.auto_run_model),
+    orchestratorAgentId: asText(row.orchestrator_agent_id),
+    orchestratorModel: asNonEmptyText(row.orchestrator_model),
+    nextLaneId: asText(row.next_lane_id)
+  })
+
+const projectFromRow = (row: Row): ProjectRecord => ({
+  path: String(row.path),
+  name: String(row.name),
+  status: String(row.status) as ProjectRecord['status'],
+  priority: String(row.priority) as ProjectRecord['priority'],
+  notes: String(row.notes),
+  source: String(row.source) as ProjectRecord['source'],
+  packageManager: asText(row.package_manager),
+  githubUrl: asText(row.github_url),
+  github: parseJson<ProjectRecord['github']>(row.github_json, undefined),
+  hasGit: asBool(row.has_git),
+  hasPackageJson: asBool(row.has_package_json),
+  hasReadme: asBool(row.has_readme),
+  lastModifiedAt: asText(row.last_modified_at),
+  lastScannedAt: String(row.last_scanned_at),
+  archived: asBool(row.archived)
 })
 
 // Column order shared by the ticket INSERT and UPDATE statements below.
@@ -365,85 +388,141 @@ export class StateRepository {
     return state
   }
 
-  // ponytail: the renderer still hands over the whole state (#12 moves it onto
-  // the row-level methods below). Until then each save is diffed against the
-  // baseline and only changed rows are written. Returns a fresh read, so the
-  // renderer also picks up rows other writers changed since its last load.
+  // ponytail: whole state is only sent for the seed, scan merges
+  // (mergeScannedProjects, GitHub data refresh), scan-directory / hidden /
+  // third-party path edits (incl. setStatus) and board preferences. Ordinary
+  // ticket / lane / project edits use the per-entity methods below. Each save is
+  // diffed against the baseline and only changed rows are written. Returns a
+  // fresh read, so the renderer also picks up rows other writers changed.
   saveState(state: ProjectTrackerState): ProjectTrackerState {
     const normalized = { ...state, userId: this.userId, updatedAt: new Date().toISOString() }
     this.transaction(() => this.writeChanges(normalized, this.baseline))
     return this.getState()
   }
 
+  // Per-entity writes below commit one entity each and splice what they wrote
+  // into the baseline, so a later saveState built from an older read sees no
+  // difference for that entity and cannot revert it.
+
   createTicket(projectPath: string, ticket: Omit<Ticket, 'number'>): Ticket {
     // Numbered inside the write transaction, so two writers creating at once
     // get distinct numbers. UNIQUE (project_path, number) is the backstop.
-    return this.transaction(() => {
-      const created = { ...ticket, number: this.nextTicketNumber(projectPath) }
-      this.insertTicketRow(projectPath, created)
-      return created
+    const created = this.transaction(() => {
+      const numbered = { ...ticket, number: this.nextTicketNumber(projectPath) }
+      this.insertTicketRow(projectPath, numbered)
+      return this.readTicket(ticket.id)
     })
+    this.spliceBaselineTicket(projectPath, created)
+    return created
   }
 
-  updateTicket(id: string, patch: Partial<Omit<Ticket, 'id' | 'number' | 'createdAt'>>): Ticket {
-    return this.transaction(() => {
-      const [row] = this.select('SELECT * FROM tickets WHERE id = ?', [id])
-      if (!row) throw new Error(`Ticket ${id} does not exist.`)
-      const updated = { ...ticketFromRow(row), ...patch, updatedAt: new Date().toISOString() }
-      this.updateTicketRow(String(row.project_path), updated)
-      return updated
+  // Stamps updatedAt unless the patch carries it (even as null): the renderer
+  // always sends its own value, so marking a run seen stays unstamped, while
+  // agents and the CLI get a stamp for free. A null value clears the field.
+  updateTicket(id: string, patch: TicketWritePatch): Ticket {
+    const updated = this.transaction(() => {
+      const { ticket: current, projectPath } = this.readTicketWithProject(id)
+      const stamp = 'updatedAt' in patch ? {} : { updatedAt: new Date().toISOString() }
+      const merged = { ...current, ...patch, ...stamp } as Ticket
+      this.updateTicketRow(projectPath, merged)
+      return { ticket: this.readTicket(id), projectPath }
     })
-  }
-
-  moveTicket(id: string, laneId: string): Ticket {
-    return this.updateTicket(id, { laneId })
+    this.spliceBaselineTicket(updated.projectPath, updated.ticket)
+    return updated.ticket
   }
 
   deleteTicket(id: string) {
-    this.run('DELETE FROM tickets WHERE id = ?', [id])
+    const projectPath = this.transaction(() => {
+      const [row] = this.select('SELECT project_path FROM tickets WHERE id = ?', [id])
+      this.deleteTicketRow(id)
+      return row ? String(row.project_path) : undefined
+    })
+    if (!projectPath) return
+    this.patchBaselineBoard(projectPath, (board) => ({
+      ...board,
+      tickets: board.tickets.filter((ticket) => ticket.id !== id)
+    }))
   }
 
-  upsertSwimLane(projectPath: string, lane: SwimLane, position: number) {
-    this.run(
-      `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
-         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
-         auto_run_model, orchestrator_agent_id, orchestrator_model
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(project_path, id) DO UPDATE SET
-         name = excluded.name, agent_prompt = excluded.agent_prompt,
-         agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
-         orchestrator_prompt = excluded.orchestrator_prompt,
-         auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
-         auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
-         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
-         auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
-         orchestrator_model = excluded.orchestrator_model`,
-      [
-        lane.id,
-        projectPath,
-        lane.name,
-        lane.agentPrompt,
-        lane.agentFilePath,
-        lane.outputTarget ?? '',
-        lane.orchestratorPrompt ?? '',
-        lane.autoRunAgentId ?? null,
-        lane.autoRunTerminalId ?? null,
-        lane.autoRunWorktrees === false ? 0 : 1,
-        lane.fullAuto ? 1 : 0,
-        lane.agentSetsVersion ? 1 : 0,
-        lane.closesTicket ? 1 : 0,
-        position,
-        lane.id === UNASSIGNED_LANE_ID ? 1 : 0,
-        lane.autoRunModel ?? '',
-        lane.orchestratorAgentId ?? null,
-        lane.orchestratorModel ?? ''
-      ]
-    )
+  // Appended after every lane already on the board, whatever the caller's copy
+  // says. An existing id throws rather than upserting, so a stale renderer copy
+  // can't wipe another writer's lane config; the store's failure path re-reads.
+  createSwimLane(projectPath: string, lane: SwimLane): SwimLane {
+    const created = this.transaction(() => {
+      const existing = this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, lane.id])
+      if (existing.length > 0) throw new Error(`Lane ${lane.id} already exists.`)
+      const [row] = this.select(
+        'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0',
+        [projectPath]
+      )
+      this.upsertLaneRow(projectPath, lane, Number(row.next))
+      return this.readLane(projectPath, lane.id)
+    })
+    this.spliceBaselineLane(projectPath, created)
+    return created
+  }
+
+  // The unassigned column has no row until it is first configured, so it
+  // starts from the default instead of failing.
+  updateSwimLane(projectPath: string, laneId: string, patch: LaneWritePatch): SwimLane {
+    const updated = this.transaction(() => {
+      const [row] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+      if (!row && laneId !== UNASSIGNED_LANE_ID) throw new Error(`Lane ${laneId} does not exist.`)
+      const current = row ? laneFromRow(row) : createUnassignedLane()
+      const position = row ? Number(row.position) : -1
+      const merged = { ...current, ...patch, id: laneId } as SwimLane
+      this.upsertLaneRow(projectPath, merged, position)
+      return this.readLane(projectPath, laneId)
+    })
+    this.spliceBaselineLane(projectPath, updated)
+    return updated
+  }
+
+  // Lanes on the board but not listed (another writer added them) keep their
+  // relative order after the listed ones, so nothing ever drops off the board.
+  reorderSwimLanes(projectPath: string, laneIds: string[]) {
+    this.transaction(() => {
+      const storedRows = this.select(
+        'SELECT id FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0 ORDER BY position',
+        [projectPath]
+      )
+      const storedIds = storedRows.map((row) => String(row.id))
+      const order = orderedIds(storedIds, laneIds)
+      order.forEach((laneId, position) => {
+        this.run('UPDATE swim_lanes SET position = ? WHERE project_path = ? AND id = ?', [position, projectPath, laneId])
+      })
+    })
+    this.patchBaselineBoard(projectPath, (board) => {
+      const laneById = keyBy(board.lanes, (lane) => lane.id)
+      const order = orderedIds([...laneById.keys()], laneIds)
+      return { ...board, lanes: order.map((laneId) => laneById.get(laneId)!) }
+    })
   }
 
   deleteSwimLane(projectPath: string, laneId: string) {
-    this.run('DELETE FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+    this.transaction(() => this.deleteLaneRow(projectPath, laneId))
+    this.patchBaselineBoard(projectPath, (board) => ({
+      ...board,
+      lanes: board.lanes.filter((lane) => lane.id !== laneId)
+    }))
+  }
+
+  // Only the hand-edited fields: everything else on the row belongs to the scanner.
+  updateProject(projectPath: string, patch: ProjectWritePatch): ProjectRecord {
+    const updated = this.transaction(() => {
+      const current = this.readProject(projectPath)
+      const editable = { notes: patch.notes, priority: patch.priority, status: patch.status }
+      const definedEntries = Object.entries(editable).filter(([, value]) => value !== undefined)
+      this.writeProjectRow({ ...current, ...Object.fromEntries(definedEntries) })
+      return this.readProject(projectPath)
+    })
+    if (this.baseline) {
+      const projects = this.baseline.snapshot.projects.map((project) =>
+        project.path === projectPath ? structuredClone(updated) : project
+      )
+      this.baseline = { ...this.baseline, snapshot: { ...this.baseline.snapshot, projects } }
+    }
+    return updated
   }
 
   setSetting(key: string, value: string) {
@@ -488,6 +567,106 @@ export class StateRepository {
     this.transaction(() => this.writeProjectRow(project))
   }
 
+  private upsertLaneRow(projectPath: string, lane: SwimLane, position: number) {
+    this.run(
+      `INSERT INTO swim_lanes (
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
+         auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
+         auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_path, id) DO UPDATE SET
+         name = excluded.name, agent_prompt = excluded.agent_prompt,
+         agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
+         orchestrator_prompt = excluded.orchestrator_prompt,
+         auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
+         auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
+         agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
+         auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
+         orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id`,
+      [
+        lane.id,
+        projectPath,
+        lane.name,
+        lane.agentPrompt,
+        lane.agentFilePath,
+        lane.outputTarget ?? '',
+        lane.orchestratorPrompt ?? '',
+        lane.autoRunAgentId ?? null,
+        lane.autoRunTerminalId ?? null,
+        lane.autoRunWorktrees === false ? 0 : 1,
+        lane.fullAuto ? 1 : 0,
+        lane.agentSetsVersion ? 1 : 0,
+        lane.closesTicket ? 1 : 0,
+        position,
+        lane.id === UNASSIGNED_LANE_ID ? 1 : 0,
+        lane.autoRunModel ?? '',
+        lane.orchestratorAgentId ?? null,
+        lane.orchestratorModel ?? '',
+        lane.nextLaneId ?? null
+      ]
+    )
+  }
+
+  private deleteLaneRow(projectPath: string, laneId: string) {
+    this.run('DELETE FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+  }
+
+  private deleteTicketRow(id: string) {
+    this.run('DELETE FROM tickets WHERE id = ?', [id])
+  }
+
+  private readTicketWithProject(id: string): { ticket: Ticket; projectPath: string } {
+    const [row] = this.select('SELECT * FROM tickets WHERE id = ?', [id])
+    if (!row) throw new Error(`Ticket ${id} does not exist.`)
+    return { ticket: ticketFromRow(row), projectPath: String(row.project_path) }
+  }
+
+  private readTicket(id: string): Ticket {
+    return this.readTicketWithProject(id).ticket
+  }
+
+  private readLane(projectPath: string, laneId: string): SwimLane {
+    const [row] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+    return laneFromRow(row)
+  }
+
+  private readProject(projectPath: string): ProjectRecord {
+    const [row] = this.select('SELECT * FROM projects WHERE path = ?', [projectPath])
+    if (!row) throw new Error(`Project ${projectPath} does not exist.`)
+    return projectFromRow(row)
+  }
+
+  // No baseline yet means nothing has been handed out, so nothing can be reverted.
+  private patchBaselineBoard(projectPath: string, patch: (board: ProjectBoard) => ProjectBoard) {
+    if (!this.baseline) return
+    const board = this.baseline.boards?.[projectPath] ?? { lanes: [], tickets: [] }
+    const boards = { ...this.baseline.boards, [projectPath]: patch(board) }
+    this.baseline = { ...this.baseline, boards }
+  }
+
+  private spliceBaselineTicket(projectPath: string, ticket: Ticket) {
+    const stored = structuredClone(ticket)
+    this.patchBaselineBoard(projectPath, (board) => {
+      const exists = board.tickets.some((entry) => entry.id === ticket.id)
+      const tickets = exists
+        ? board.tickets.map((entry) => (entry.id === ticket.id ? stored : entry))
+        : [...board.tickets, stored]
+      return { ...board, tickets }
+    })
+  }
+
+  private spliceBaselineLane(projectPath: string, lane: SwimLane) {
+    const stored = structuredClone(lane)
+    this.patchBaselineBoard(projectPath, (board) => {
+      if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: stored }
+      const exists = board.lanes.some((entry) => entry.id === lane.id)
+      const lanes = exists
+        ? board.lanes.map((entry) => (entry.id === lane.id ? stored : entry))
+        : [...board.lanes, stored]
+      return { ...board, lanes }
+    })
+  }
+
   private readSetting(key: string): string | undefined {
     const rows = this.select('SELECT value FROM user_settings WHERE user_id = ? AND key = ?', [this.userId, key])
     return asText(rows[0]?.value)
@@ -514,23 +693,7 @@ export class StateRepository {
        ORDER BY projects.name`,
       [this.userId]
     )
-    return rows.map((row) => ({
-      path: String(row.path),
-      name: String(row.name),
-      status: String(row.status) as ProjectRecord['status'],
-      priority: String(row.priority) as ProjectRecord['priority'],
-      notes: String(row.notes),
-      source: String(row.source) as ProjectRecord['source'],
-      packageManager: asText(row.package_manager),
-      githubUrl: asText(row.github_url),
-      github: parseJson<ProjectRecord['github']>(row.github_json, undefined),
-      hasGit: asBool(row.has_git),
-      hasPackageJson: asBool(row.has_package_json),
-      hasReadme: asBool(row.has_readme),
-      lastModifiedAt: asText(row.last_modified_at),
-      lastScannedAt: String(row.last_scanned_at),
-      archived: asBool(row.archived)
-    }))
+    return rows.map(projectFromRow)
   }
 
   private readBoards(): Record<string, ProjectBoard> {
@@ -550,23 +713,7 @@ export class StateRepository {
 
     for (const row of laneRows) {
       const board = boardFor(String(row.project_path))
-      const lane: SwimLane = {
-        id: String(row.id),
-        name: String(row.name),
-        agentPrompt: String(row.agent_prompt),
-        agentFilePath: String(row.agent_file_path),
-        outputTarget: String(row.output_target),
-        orchestratorPrompt: String(row.orchestrator_prompt),
-        autoRunAgentId: asText(row.auto_run_agent_id),
-        autoRunTerminalId: asText(row.auto_run_terminal_id),
-        autoRunWorktrees: asBool(row.auto_run_worktrees),
-        fullAuto: asBool(row.full_auto),
-        agentSetsVersion: asBool(row.agent_sets_version),
-        closesTicket: asBool(row.closes_ticket),
-        autoRunModel: asNonEmptyText(row.auto_run_model),
-        orchestratorAgentId: asText(row.orchestrator_agent_id),
-        orchestratorModel: asNonEmptyText(row.orchestrator_model)
-      }
+      const lane = laneFromRow(row)
       if (asBool(row.is_unassigned)) board.unassignedLane = lane
       else board.lanes.push(lane)
     }
@@ -627,10 +774,10 @@ export class StateRepository {
     const keptLaneIds = new Set(lanes.map((entry) => entry.lane.id))
     for (const entry of lanes) {
       const laneChanged = !sameRow(entry, baselineLanes.get(entry.lane.id))
-      if (laneChanged) this.upsertSwimLane(projectPath, entry.lane, entry.position)
+      if (laneChanged) this.upsertLaneRow(projectPath, entry.lane, entry.position)
     }
     for (const laneId of baselineLanes.keys()) {
-      if (!keptLaneIds.has(laneId)) this.deleteSwimLane(projectPath, laneId)
+      if (!keptLaneIds.has(laneId)) this.deleteLaneRow(projectPath, laneId)
     }
 
     const baselineTickets = keyBy(baselineBoard.tickets, (ticket) => ticket.id)
@@ -640,7 +787,7 @@ export class StateRepository {
       if (!sameRow(ticket, baselineTicket)) this.writeTicketRow(projectPath, ticket, baselineTicket)
     }
     for (const ticketId of baselineTickets.keys()) {
-      if (!keptTicketIds.has(ticketId)) this.deleteTicket(ticketId)
+      if (!keptTicketIds.has(ticketId)) this.deleteTicketRow(ticketId)
     }
   }
 
