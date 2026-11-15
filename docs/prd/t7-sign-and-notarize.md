@@ -31,13 +31,9 @@
 
 ### R2 Notarize + staple the DMG
 - `build.artifactBuildCompleted: "scripts/notarize-dmg.mjs"` (default export `(context) => Promise<void>`). Return early unless `context.file` ends in `.dmg`.
-- Map creds to notarytool flags, in the same precedence as `getNotarizeOptions`:
-  - `APPLE_KEYCHAIN_PROFILE` → `--keychain-profile <p>` (+ `--keychain <APPLE_KEYCHAIN>` if set)
-  - `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` → `--key --key-id --issuer`
-  - `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` → `--apple-id --password --team-id`
-- `execFile('xcrun', ['notarytool','submit',dmg,...flags,'--wait'])`, then `execFile('xcrun', ['stapler','staple',dmg])`. Use `node:child_process` + `util.promisify`, never a shell string. Throw on a non-zero exit so the build fails.
+- Resolve creds with electron-builder's `MacTargetHelper.getNotarizeOptions(dmg)` (precedence: Apple ID, then API key, then keychain profile) and pass them to `@electron/notarize`'s `notarize()`, the same notarizer electron-builder uses for the `.app`. It accepts a `.dmg` directly and handles notarytool JSON output, log fetching on rejection, secret redaction, and stapler retries.
 - With no creds: throw. The R1 preflight should already have caught that, so reaching it means a bug.
-- Pure flag-mapping fn exported and unit-tested (3 cred sets + precedence). The `xcrun` calls are not mocked.
+- Tests: non-`.dmg` is ignored; `.dmg` with no creds throws. The notarytool calls are not mocked.
 - `build.dmg`: `{ "sign": true, "writeUpdateInfo": false }`.
 
 ### R3 Credentials (one-time, local)

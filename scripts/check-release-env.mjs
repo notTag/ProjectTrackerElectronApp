@@ -26,6 +26,12 @@ export const notarizeProblem = (env) => {
   }
 }
 
+// `dist` builds locally and never uploads, so it needs notarize creds but no GitHub token.
+export const distEnvProblems = (env) => {
+  const notarizeIssue = notarizeProblem(env)
+  return notarizeIssue ? [notarizeIssue] : []
+}
+
 export const releaseEnvProblems = (env) => {
   const problems = []
 
@@ -34,21 +40,13 @@ export const releaseEnvProblems = (env) => {
   const hasGitHubToken = GITHUB_TOKEN_NAMES.some((name) => Boolean(env[name]))
   if (!hasGitHubToken) problems.push(`No GitHub token. Set one of ${GITHUB_TOKEN_NAMES.join(', ')} (needs repo scope)`)
 
-  const notarizeIssue = notarizeProblem(env)
-  if (notarizeIssue) problems.push(notarizeIssue)
-
+  problems.push(...distEnvProblems(env))
   return problems
 }
 
 const entryScriptPath = process.argv[1]
 const entryScriptUrl = entryScriptPath ? pathToFileURL(realpathSync(entryScriptPath)).href : null
 const isRunDirectly = import.meta.url === entryScriptUrl
-
-// `dist` builds locally and never uploads, so it needs notarize creds but no GitHub token.
-export const distEnvProblems = (env) => {
-  const notarizeIssue = notarizeProblem(env)
-  return notarizeIssue ? [notarizeIssue] : []
-}
 
 if (isRunDirectly) {
   const isNotarizeOnly = process.argv.includes('--notarize-only')
