@@ -1,0 +1,18 @@
+{
+  "ticket": {
+    "title": "Add a keyboard shortcut to open the new-ticket modal",
+    "description": "Pressing Cmd+N anywhere on the board opens the new-ticket modal for the current board. Esc closes it. The shortcut is shown in the app menu under File > New Ticket. No other shortcuts change."
+  },
+  "expect": {
+    "endLane": "in-development",
+    "fields": {
+      "description": "changed"
+    }
+  },
+  "rubric": [
+    "The PRD written into the description has a goal or problem statement, requirements, and acceptance criteria.",
+    "The PRD covers every behavior in the original ticket: Cmd+N opens the modal, Esc closes it, and the File > New Ticket menu shows the shortcut.",
+    "The PRD keeps scope tight: it states or respects that no other shortcuts change, and adds no unrelated features.",
+    "The acceptance criteria are specific enough to test."
+  ]
+}

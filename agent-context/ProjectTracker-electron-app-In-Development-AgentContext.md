@@ -2,5 +2,5 @@
 3. Upon completion of work, verify all original tasks have been completed. 
 4. Run all tests and test locally (when possible) 
 5. Upon completion of steps 1-5, move the ticket to the Merge request swimlane and update it's status. 
-6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree. 
-7. When your work is completely finished and you have written your final summary, check its `Open Questions` count. If it is 0, stop any background processes you started, then run sleep 3 && kill $PPID as your very last action to end this session and close the terminal tab. Never use kill -9 (or any other signal flag): plain SIGTERM lets the MCP servers and child processes shut down cleanly. If it is 1 or more, do not close the tab or end the session: stop with the open questions as the last thing on screen.
+6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
+- As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen. 

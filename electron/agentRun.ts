@@ -19,7 +19,7 @@ const AGENT_RUN_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
 // Packaged apps launched from Finder don't inherit the user's shell PATH, so a
 // CLI installed by Homebrew or a user-local installer won't resolve by name.
-const agentSearchPath = (homeDirectory: string) =>
+export const agentSearchPath = (homeDirectory: string) =>
   [
     path.join(homeDirectory, '.local', 'bin'),
     path.join(homeDirectory, '.claude', 'local'),

@@ -397,6 +397,12 @@ In graph view this opens as a side panel instead of a centered modal.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
+- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
+  - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
+  - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
+  - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
+  - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
   - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
@@ -432,7 +438,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
+- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
@@ -524,6 +531,21 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
+- `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+
+### 4.7 Lane prompt evals — `evals/`
+
+- Static tier, part of `bun run test`:
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
+- Behavioral tier, `bun run eval`:
+  - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
+  - The prompt gets the temp DB path through `TicketPromptContext.databasePath` plus an appended system prompt, so the agent never writes to the real DB.
+  - Graded on outcome (end lane, move count from a SQLite trigger, required fields, stub calls), then by an LLM judge (`evals/judge.ts`) on the case's rubric using the agent's tool-call trajectory.
+  - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
+  - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
+  - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
+  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
 
 ---
 
