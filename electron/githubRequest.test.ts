@@ -37,6 +37,26 @@ describe('requestGithub error mapping', () => {
   })
 })
 
+describe('requestGithub timeout', () => {
+  it('a stalled connection is cut after 10s and reads as unreachable', async () => {
+    const realTimeout = AbortSignal.timeout.bind(AbortSignal)
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => realTimeout(20))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Never answers; only the abort signal can end it, like a captive portal.
+    const stalledFetch = vi.fn<typeof fetch>(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+        })
+    )
+    const failure = await requestWith(stalledFetch)('/repos/o/r').catch((error: Error) => error)
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000)
+    expect((failure as Error).message).toBe(GITHUB_UNREACHABLE_MESSAGE)
+    expect(((failure as Error).cause as Error).name).toBe('TimeoutError')
+    timeoutSpy.mockRestore()
+  })
+})
+
 describe('requestGithub success', () => {
   it('GETs without a body or Authorization when there is no token', async () => {
     const fetchImpl = respondWith(200, [{ id: 1 }])
