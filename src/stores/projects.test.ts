@@ -467,7 +467,7 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('pulls once per project, however often the board is opened', async () => {
-    api.fetchProjectGithubIssues.mockResolvedValue([issue])
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [issue], closed: [] })
     const store = storeWithProject('/code/pull-once', 'https://github.com/o/r')
 
     await Promise.all([store.autoPullGithubIssues('/code/pull-once'), store.autoPullGithubIssues('/code/pull-once')])
@@ -489,13 +489,64 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('stays silent when nothing new arrived', async () => {
-    api.fetchProjectGithubIssues.mockResolvedValue([])
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [], closed: [] })
     const store = storeWithProject('/code/nothing-new', 'https://github.com/o/r')
 
     await store.autoPullGithubIssues('/code/nothing-new')
 
     expect(store.notice).toBeNull()
     expect(api.createTicket).not.toHaveBeenCalled()
+  })
+
+  it('omits the closed-issue cutoff when nothing is imported yet', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [], closed: [] })
+    const store = storeWithProject('/code/no-imports', 'https://github.com/o/r')
+
+    await store.pullGithubIssues('/code/no-imports')
+
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledWith('https://github.com/o/r', undefined)
+  })
+
+  it('moves and removes closed imports and reports both', async () => {
+    const path = '/code/sync-closed'
+    const store = storeWithProject(path, 'https://github.com/o/r')
+    const imported = (issueNumber: number): Ticket => ({
+      id: `t${issueNumber}`,
+      number: issueNumber,
+      laneId: 'github-issues',
+      title: `Issue ${issueNumber}`,
+      description: '',
+      createdAt: '2026-03-01T00:00:00.000Z',
+      externalId: `github:${issueNumber}`
+    })
+    const board = {
+      lanes: [
+        { id: 'github-issues', name: 'GitHub Issues', agentPrompt: '', agentFilePath: '' },
+        { id: 'in-production', name: 'In Prod Env', agentPrompt: '', agentFilePath: '', closesTicket: true }
+      ],
+      tickets: [imported(1), imported(2)]
+    }
+    store.state = { ...store.state, boards: { [path]: board } }
+    const closedIssue = (issueNumber: number, stateReason: string) => ({
+      number: issueNumber,
+      title: '',
+      body: '',
+      htmlUrl: '',
+      stateReason
+    })
+    api.fetchProjectGithubIssues.mockResolvedValue({
+      open: [],
+      closed: [closedIssue(1, 'completed'), closedIssue(2, 'not_planned')]
+    })
+
+    await store.pullGithubIssues(path)
+
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledWith('https://github.com/o/r', '2026-03-01T00:00:00.000Z')
+    expect(api.updateTicket).toHaveBeenCalledWith('t1', expect.objectContaining({ laneId: 'in-production' }))
+    expect(api.deleteTicket).toHaveBeenCalledWith('t2')
+    const tickets = getBoard(store.state, path).tickets
+    expect(tickets.map((ticket) => [ticket.id, ticket.laneId])).toEqual([['t1', 'in-production']])
+    expect(store.notice).toBe('app: Moved 1 to In Prod Env, removed 1 closed.')
   })
 
   it('shows a failed pull as an error and does not retry it', async () => {
@@ -522,7 +573,7 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('stays silent when GitHub is unreachable and pulls again on the next open', async () => {
-    api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce([issue])
+    api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce({ open: [issue], closed: [] })
     const store = storeWithProject('/code/unreachable', 'https://github.com/o/r')
 
     await store.autoPullGithubIssues('/code/unreachable')
@@ -535,10 +586,10 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('names the pulled project, not whichever board is open when the fetch resolves', async () => {
-    let resolveFetch: (issues: (typeof issue)[]) => void = () => undefined
+    let resolveFetch: (issues: { open: (typeof issue)[]; closed: [] }) => void = () => undefined
     api.fetchProjectGithubIssues
       .mockReturnValueOnce(new Promise((resolve) => (resolveFetch = resolve)))
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ open: [], closed: [] })
     const store = storeWithProjects(
       projectRecord('/code/board-a', 'https://github.com/o/a', 'board-a'),
       projectRecord('/code/board-b', 'https://github.com/o/b', 'board-b')
@@ -547,14 +598,14 @@ describe('autoPullGithubIssues', () => {
     const pullForA = store.autoPullGithubIssues('/code/board-a')
     // the user switches to board B while A's fetch is in flight
     await store.autoPullGithubIssues('/code/board-b')
-    resolveFetch([issue])
+    resolveFetch({ open: [issue], closed: [] })
     await pullForA
 
     expect(store.notice).toBe('Imported 1 issue into board-a.')
   })
 
   it('names the project when saving the pulled issues fails', async () => {
-    api.fetchProjectGithubIssues.mockResolvedValue([issue])
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [issue], closed: [] })
     api.createLane.mockRejectedValue(new Error('disk full'))
     api.createTicket.mockRejectedValue(new Error('disk full'))
     const store = storeWithProject('/code/save-fails', 'https://github.com/o/r')

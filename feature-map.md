@@ -241,6 +241,7 @@ From left to right:
 See 1.7. Board notices include:
 
 - "Imported N issues into X (M already on the board)." Pull results and pull errors ("X: <message>") name the project, so a pull that finishes after you switch boards isn't mistaken for the open board's.
+- "Imported N issues into X, moved N to <lane>, removed N closed, kept N closed with local work." (only non-zero parts); a sync with no imports reads "X: Moved N to <lane>, …"
 - "Auto Run opened N tabs in X."
 - "Agent running on #N…" and "Agent finished #N."
 - "Running the agent command in X."
@@ -421,6 +422,12 @@ In graph view this opens as a side panel instead of a centered modal.
   - title from the issue title, description from the issue body
   - `externalId` set to `github:<n>`, and a link back to the issue
 - Running it again is safe: issues already on the board are skipped, and edits to imported tickets are never overwritten.
+- Each pull (manual or the auto pull on board open) also syncs imported tickets with GitHub's closed state:
+  - closed as completed → moved to the rightmost lane that closes tickets; stays put if no lane does or it's already there
+  - closed for any other reason (not planned, duplicate, none) → removed from the board, unless the ticket has a worktree or PR, then kept and reported
+  - still open, reopened, or missing from GitHub → untouched
+  - closed issues are fetched with `since` = the oldest imported ticket's creation time; no imported tickets → no closed fetch
+- Nothing added, moved or removed → no DB write; the auto pull stays silent.
 
 ### 3.11 Auto Run (▶ on a lane)
 
