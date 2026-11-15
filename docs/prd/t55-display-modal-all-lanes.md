@@ -57,8 +57,3 @@ The ⚙ Display modal's **Columns** section only offers No status and GitHub Iss
 
 ## Open questions
 - None. Defaults above are low-risk; D1 (modal reuses `laneColumns`) is the only real call.
-
-## Branch / worktree
-- Branch: `t55-add-the-swimlane`
-- Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t55`
-- PRD file: `docs/prd/t55-display-modal-all-lanes.md` (uncommitted in worktree)
