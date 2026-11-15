@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "rm -rf out && vue-tsc --noEmit && vite build && tsc -p tsconfig.electron.json",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && tsc -p evals/tsconfig.json",
     "test": "vitest run --passWithNoTests",
     "eval": "vitest run --config evals/vitest.config.ts",
     "dist": "node scripts/check-release-env.mjs --notarize-only && bun run build && electron-builder --mac",

@@ -126,6 +126,8 @@ Put your work there. Paths are relative to the project directory unless absolute
 
 exports[`assembled prompt: in-dev > bare 1`] = `
 "Instructions:
+- Add each feature to the feature map. 
+- Verify that each feature for each ticket indeed exists in our application. If a ticket does not exist in our application then do not move give it a fix version and leave it in this swim lane (In Dev Env). 
 - Run \`mise run release:patch\` or \`mise run release:minor\`, to bump the version number.  (Note, \`mise run release:major\` will be run manually).
 - Push tickets to the 'In Production' swimlane.
 
@@ -137,6 +139,8 @@ Make it work."
 
 exports[`assembled prompt: in-dev > branch + worktree 1`] = `
 "Instructions:
+- Add each feature to the feature map. 
+- Verify that each feature for each ticket indeed exists in our application. If a ticket does not exist in our application then do not move give it a fix version and leave it in this swim lane (In Dev Env). 
 - Run \`mise run release:patch\` or \`mise run release:minor\`, to bump the version number.  (Note, \`mise run release:major\` will be run manually).
 - Push tickets to the 'In Production' swimlane.
 
@@ -150,6 +154,8 @@ Make it work."
 
 exports[`assembled prompt: in-dev > checklist 1`] = `
 "Instructions:
+- Add each feature to the feature map. 
+- Verify that each feature for each ticket indeed exists in our application. If a ticket does not exist in our application then do not move give it a fix version and leave it in this swim lane (In Dev Env). 
 - Run \`mise run release:patch\` or \`mise run release:minor\`, to bump the version number.  (Note, \`mise run release:major\` will be run manually).
 - Push tickets to the 'In Production' swimlane.
 
@@ -164,6 +170,8 @@ Make it work."
 
 exports[`assembled prompt: in-dev > full auto 1`] = `
 "Instructions:
+- Add each feature to the feature map. 
+- Verify that each feature for each ticket indeed exists in our application. If a ticket does not exist in our application then do not move give it a fix version and leave it in this swim lane (In Dev Env). 
 - Run \`mise run release:patch\` or \`mise run release:minor\`, to bump the version number.  (Note, \`mise run release:major\` will be run manually).
 - Push tickets to the 'In Production' swimlane.
 

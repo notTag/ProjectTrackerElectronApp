@@ -601,11 +601,12 @@ const versionInstruction = (ticket: Ticket, context: TicketPromptContext): strin
   const sentence =
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
   if (!context.projectPath) return sentence
-  const databasePath = context.databasePath ?? TRACKER_DATABASE_PATH
+  // The default keeps double quotes so $HOME expands; an injected path is literal.
+  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
   const updateSql =
     "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
-  const command = `sqlite3 "${databasePath}" ${shellQuote(updateSql)}`
+  const command = `sqlite3 ${quotedDatabasePath} ${shellQuote(updateSql)}`
   return [`${sentence} To set or change it:`, command].join('\n')
 }
 

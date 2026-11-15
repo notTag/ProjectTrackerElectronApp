@@ -5,7 +5,7 @@
 
 import { homedir } from 'node:os'
 
-import { runAgentHeadless } from '../electron/agentRun.js'
+import { runAgentHeadlessWithRetry } from '../electron/agentRun.js'
 import { DEFAULT_AGENT } from '../src/shared/projectTypes.js'
 
 export interface CriterionVerdict {
@@ -42,8 +42,9 @@ const judgeJsonText = (judgeOutput: string): string | undefined => {
   return start === -1 || end <= start ? undefined : judgeOutput.slice(start, end + 1)
 }
 
-// Every rubric criterion gets a verdict, matched by position: a judge that
-// skips or garbles one fails that criterion instead of silently passing it.
+// Every rubric criterion gets a verdict, matched by its echoed text and by
+// position only as a fallback, so a reordered reply can't swap verdicts. A
+// judge that skips or garbles one fails that criterion instead of passing it.
 export const parseVerdicts = (rubric: string[], judgeOutput: string): CriterionVerdict[] => {
   const jsonText = judgeJsonText(judgeOutput)
   let parsedVerdicts: Partial<CriterionVerdict>[] = []
@@ -53,7 +54,8 @@ export const parseVerdicts = (rubric: string[], judgeOutput: string): CriterionV
     parsedVerdicts = []
   }
   return rubric.map((criterion, index) => {
-    const verdict = parsedVerdicts[index]
+    const verdictForCriterion = parsedVerdicts.find((candidate) => candidate?.criterion === criterion)
+    const verdict = verdictForCriterion ?? parsedVerdicts[index]
     if (!verdict || typeof verdict.pass !== 'boolean') {
       return { criterion, pass: false, reason: 'judge gave no usable verdict' }
     }
@@ -66,7 +68,7 @@ export const parseVerdicts = (rubric: string[], judgeOutput: string): CriterionV
 export const runJudge = async (rubric: string[], evidence: string, cwd: string): Promise<CriterionVerdict[]> => {
   const modelArgs = process.env.EVAL_JUDGE_MODEL ? ['--model', process.env.EVAL_JUDGE_MODEL] : []
   const judgeAgent = { ...DEFAULT_AGENT, headlessArgs: ['-p', '--append-system-prompt', JUDGE_SYSTEM_PROMPT, ...modelArgs] }
-  const judgeRun = await runAgentHeadless(judgeAgent, judgePrompt(rubric, evidence), cwd, homedir())
+  const judgeRun = await runAgentHeadlessWithRetry(judgeAgent, judgePrompt(rubric, evidence), cwd, homedir())
   return parseVerdicts(rubric, judgeRun.output)
 }
 

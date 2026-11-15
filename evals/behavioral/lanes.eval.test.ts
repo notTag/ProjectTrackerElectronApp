@@ -16,6 +16,8 @@ import {
 import { runJudge, type CriterionVerdict } from '../judge.js'
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3)
+// 0 would pass every case with no run at all.
+if (!Number.isInteger(RUNS) || RUNS < 1) throw new Error(`EVAL_RUNS must be a positive integer, got "${process.env.EVAL_RUNS}"`)
 const PASS_THRESHOLD = Math.ceil((2 * RUNS) / 3)
 const KEEP_SANDBOXES = process.env.EVAL_KEEP === '1'
 const AGENT_RUN_TIMEOUT_MS = 30 * 60 * 1000
@@ -79,6 +81,8 @@ const runOnce = async (evalCase: EvalCase, run: number): Promise<RunFailure | un
     const strayRowsAfter = realDatabaseStrayRows()
     if (strayRowsAfter !== strayRowsBefore) {
       reasons.unshift(`REAL DB TOUCHED: stray eval rows ${strayRowsBefore} → ${strayRowsAfter}`)
+      // Re-baseline so only the run that wrote gets blamed, not every later one.
+      strayRowsBefore = strayRowsAfter
     }
     if (!reasons.length) return undefined
     return {
@@ -102,7 +106,11 @@ for (const [laneId, laneCases] of casesByLane) {
           const failures: RunFailure[] = []
           runVerdicts = []
           for (let run = 1; run <= RUNS; run++) {
-            const failure = await runOnce(evalCase, run)
+            // A run that throws (sandbox setup, DB open) counts as one failed
+            // run instead of dropping the case's other runs and its report row.
+            const failure = await runOnce(evalCase, run).catch(
+              (error: unknown): RunFailure => ({ run, reason: `run threw: ${String(error)}`, agentOutputTail: '', trajectory: [] })
+            )
             if (failure) failures.push(failure)
           }
           const passes = RUNS - failures.length

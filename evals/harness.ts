@@ -10,7 +10,7 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { runAgentHeadless } from '../electron/agentRun.js'
+import { agentSearchPath, runAgentHeadlessWithRetry } from '../electron/agentRun.js'
 import { DATABASE_FILE_NAME, StateRepository } from '../electron/storage/stateRepository.js'
 import {
   availableAgents,
@@ -136,7 +136,8 @@ const MOVE_LOG_SQL = `
 const seedDatabase = (userDataPath: string, repoPath: string, evalCase: EvalCase): string => {
   const repository = new StateRepository(userDataPath)
   repository.upsertProject(fixtureProject(repoPath))
-  fixtureLanes.forEach((lane, position) => repository.upsertSwimLane(repoPath, lane, position))
+  // createSwimLane appends, so creating in fixture order keeps the board's positions.
+  fixtureLanes.forEach((lane) => repository.createSwimLane(repoPath, lane))
   const { number: _number, ...ticket } = ticketFromCase(evalCase)
   repository.createTicket(repoPath, ticket)
 
@@ -172,9 +173,8 @@ const evalPreamble = (sandbox: Sandbox) =>
 // The sandbox replaces the search path's home, so the agent's own CLI —
 // usually in the real ~/.local/bin — is resolved up front.
 const resolveCommand = (command: string): string => {
-  const realSearchDirectories = [path.join(homedir(), '.local', 'bin'), path.join(homedir(), '.claude', 'local'), '/opt/homebrew/bin', '/usr/local/bin']
-  const pathDirectories = (process.env.PATH ?? '').split(':')
-  const candidates = [...realSearchDirectories, ...pathDirectories].map((directory) => path.join(directory, command))
+  const searchDirectories = agentSearchPath(homedir()).split(':').filter(Boolean)
+  const candidates = searchDirectories.map((directory) => path.join(directory, command))
   return candidates.find((candidate) => existsSync(candidate)) ?? command
 }
 
@@ -200,7 +200,7 @@ export const runCaseAgent = async (sandbox: Sandbox, evalCase: EvalCase) => {
   const headlessArgs = usesClaudeFlags ? [...productionArgs, ...claudeArgs] : productionArgs
   const prompt = usesClaudeFlags ? lanePrompt : `${preamble}\n\n${lanePrompt}`
   const resolvedAgent = { ...agent, command: resolveCommand(agent.command), headlessArgs }
-  const agentRun = await runAgentHeadless(resolvedAgent, prompt, sandbox.repoPath, sandbox.searchHome)
+  const agentRun = await runAgentHeadlessWithRetry(resolvedAgent, prompt, sandbox.repoPath, sandbox.searchHome)
   if (!usesClaudeFlags) return { succeeded: agentRun.succeeded, finalMessage: agentRun.output, trajectory: [] }
 
   const { steps, finalMessage } = parseTrajectory(agentRun.output)

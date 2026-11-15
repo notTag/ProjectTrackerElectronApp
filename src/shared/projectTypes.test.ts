@@ -1240,9 +1240,10 @@ describe('semantic version', () => {
   })
 
   it('points the version command at a supplied database path', () => {
-    const context = { projectPath: '/code/app', databasePath: '/tmp/eval/project-tracker.sqlite' }
+    // Single-quoted so a $ or quote in the path can't expand or break the command.
+    const context = { projectPath: '/code/app', databasePath: '/tmp/$user "x"/project-tracker.sqlite' }
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }), context)
-    expect(prompt).toContain(`sqlite3 "/tmp/eval/project-tracker.sqlite" 'UPDATE tickets SET version = `)
+    expect(prompt).toContain(`sqlite3 '/tmp/$user "x"/project-tracker.sqlite' 'UPDATE tickets SET version = `)
     expect(prompt).not.toContain(TRACKER_DATABASE_PATH)
   })
 
