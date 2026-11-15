@@ -1,0 +1,16 @@
+{
+  "ticket": {
+    "title": "Add a keyboard shortcut to open the new-ticket modal",
+    "description": "Pressing Cmd+N anywhere on the board opens the new-ticket modal for the current board. Esc closes it. The shortcut is shown in the app menu under File > New Ticket. No other shortcuts change.",
+    "fullAuto": true
+  },
+  "expect": {
+    "endLane": "in-development",
+    "moves": 1
+  },
+  "rubric": [
+    "The PRD written into the description has a goal, requirements and testable acceptance criteria for the Cmd+N shortcut.",
+    "The agent worked without asking the user for confirmation.",
+    "The trajectory shows the ticket moved only after the PRD was written, not at the start of the work."
+  ]
+}

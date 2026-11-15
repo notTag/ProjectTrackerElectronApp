@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.electron.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2024"],
+    "rootDir": ".."
+  },
+  "include": ["./**/*.ts"],
+  "exclude": []
+}

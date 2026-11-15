@@ -11,3 +11,6 @@ assets/app-icon.icns
 # Claude Code local-only settings and agent worktrees
 .claude/settings.local.json
 .claude/worktrees/
+
+# Behavioral eval output (#46)
+evals/results/
