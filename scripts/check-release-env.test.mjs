@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { releaseEnvProblems } from './check-release-env.mjs'
+import { distEnvProblems, releaseEnvProblems } from './check-release-env.mjs'
 
 const appleIdCredentials = {
   APPLE_ID: 'dev@example.com',
@@ -40,5 +40,15 @@ describe('releaseEnvProblems', () => {
     const before = process.env
     releaseEnvProblems({})
     expect(process.env).toBe(before)
+  })
+})
+
+describe('distEnvProblems', () => {
+  it('passes with a keychain profile and no GitHub token', () => {
+    expect(distEnvProblems({ APPLE_KEYCHAIN_PROFILE: 'notary' })).toEqual([])
+  })
+
+  it('fails on an empty env with only the notarization problem', () => {
+    expect(distEnvProblems({})).toEqual([expect.stringContaining('No notarization credentials')])
   })
 })
