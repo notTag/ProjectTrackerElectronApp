@@ -3,5 +3,13 @@
     "title": "Sync",
     "description": "Make it sync. Open questions: sync with what (GitHub, iCloud, another machine)? One-way or two-way? Who resolves conflicts? Nobody has answered these yet and the product owner must decide."
   },
-  "expect": { "endLane": "idea", "moves": 0 }
+  "expect": {
+    "endLane": "idea",
+    "moves": 0
+  },
+  "rubric": [
+    "The agent's final message names the open questions: what to sync with, one-way or two-way, and who resolves conflicts.",
+    "The agent did not answer the open questions itself, i.e. the ticket does not present a chosen sync target or direction as decided.",
+    "The agent gave a reason for leaving the ticket in Idea instead of moving it."
+  ]
 }

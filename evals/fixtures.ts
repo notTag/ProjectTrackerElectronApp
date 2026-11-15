@@ -31,6 +31,8 @@ export interface EvalCase {
   // 'branch-with-commit' = the ticket's branch already exists with the work committed.
   setup?: 'branch-with-commit'
   expect: CaseExpectation
+  // Graded by the LLM judge: quality and process the expect checks can't see.
+  rubric?: string[]
 }
 
 const readJson = <T>(filePath: string): T => JSON.parse(readFileSync(filePath, 'utf8')) as T

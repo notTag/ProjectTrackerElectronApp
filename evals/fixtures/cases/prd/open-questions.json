@@ -3,5 +3,13 @@
     "title": "Pricing tiers",
     "description": "Add paid tiers. Open questions that only the owner can answer: how many tiers, which features are paid, what prices, which payment provider. None of these are decided."
   },
-  "expect": { "endLane": "prd", "moves": 0 }
+  "expect": {
+    "endLane": "prd",
+    "moves": 0
+  },
+  "rubric": [
+    "The agent's final message or the ticket lists the undecided items: number of tiers, which features are paid, prices, and payment provider.",
+    "The agent did not decide prices, tiers or a payment provider on the owner's behalf.",
+    "The agent explained that the ticket stays in PRD until those questions are answered."
+  ]
 }

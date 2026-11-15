@@ -11,15 +11,17 @@
 5. Move the ticket when the PR opens: to in-pr, and report the move.
 
 Review
-5.5. Merge main into the feature branch, resolved any merge conflicts. 
-6. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, merge it. 
+1. Merge main into the feature branch, resolved any merge conflicts. 
+2. Add the feature to the feature map. 
+3. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, approve it. 
+
 
 After merge (once you've reviewed it and it's merged)
-7. Move the ticket to "In Dev".
-8. Clean up:
-- git worktree remove <path>, or git worktree prune if the folder is already gone.
-- git branch -d <branch> without asking.
-- if the branch has been merged into the MAIN branch then delete it locally and on origin.
-- Delete temp and scratch files the task created; check git status for leftovers.
-- git worktree list to confirm
-9. `git checkout main` and `git pull`.
+1. Move the ticket to "In Dev".
+2. Clean up:
+3. git worktree remove <path>, or git worktree prune if the folder is already gone.
+4. git branch -d <branch> without asking.
+5. if the branch has been merged into the MAIN branch then delete it locally and on origin.
+6. Delete temp and scratch files the task created; check git status for leftovers.
+7. git worktree list to confirm
+8. `git checkout main` and `git pull`.

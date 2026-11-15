@@ -28,6 +28,7 @@ import {
   ticketFromCase,
   type EvalCase
 } from './fixtures.js'
+import { parseTrajectory } from './judge.js'
 
 // Real path: macOS tmpdir() is a /var symlink, and the agent sees /private/var.
 const SANDBOX_PREFIX = path.join(realpathSync(tmpdir()), 'project-tracker-eval-')
@@ -41,6 +42,9 @@ export interface Sandbox {
   repoPath: string
   databasePath: string
   stubLogPath: string
+  // Repo tip after setup; everything the agent commits is reachable from
+  // some ref but not from this.
+  baselineCommit: string
   // Only its .local/bin matters: runAgentHeadless puts that first on PATH,
   // which is where the stubs live. HOME itself is left alone.
   searchHome: string
@@ -79,8 +83,16 @@ const createFixtureRepo = (root: string, evalCase: EvalCase): string => {
   return repoPath
 }
 
+// --body-file contents are logged too: the PR body is what the in-pr rubric grades.
 const stubScript = (commandName: string, stubLogPath: string) => `#!/bin/sh
 printf '%s\\n' "${commandName} $*" >> '${stubLogPath}'
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = "--body-file" ] && [ -f "$argument" ]; then
+    { echo "--- body-file ---"; cat "$argument"; echo; echo "--- end body-file ---"; } >> '${stubLogPath}'
+  fi
+  previous="$argument"
+done
 case "$*" in
   "pr create"*) echo '${FAKE_PULL_REQUEST_URL}' ;;
 esac
@@ -144,7 +156,8 @@ export const createSandbox = (evalCase: EvalCase): Sandbox => {
   const stubLogPath = path.join(root, 'stub.log')
   installStubs(searchHome, stubLogPath)
   const databasePath = seedDatabase(path.join(root, 'userData'), repoPath, evalCase)
-  return { root, repoPath, databasePath, stubLogPath, searchHome }
+  const baselineCommit = git(repoPath, 'rev-parse', 'HEAD').toString().trim()
+  return { root, repoPath, databasePath, stubLogPath, baselineCommit, searchHome }
 }
 
 const evalPreamble = (sandbox: Sandbox) =>
@@ -182,10 +195,60 @@ export const runCaseAgent = async (sandbox: Sandbox, evalCase: EvalCase) => {
   // grades the prompt past them.
   const extraArgs = (process.env.EVAL_EXTRA_ARGS ?? '').split(/\s+/).filter(Boolean)
   const productionArgs = [...agent.headlessArgs, ...extraArgs]
-  const headlessArgs = usesClaudeFlags ? [...productionArgs, '--append-system-prompt', preamble] : productionArgs
+  // stream-json records every tool call, which is what the judge grades process from.
+  const claudeArgs = ['--append-system-prompt', preamble, '--output-format', 'stream-json', '--verbose']
+  const headlessArgs = usesClaudeFlags ? [...productionArgs, ...claudeArgs] : productionArgs
   const prompt = usesClaudeFlags ? lanePrompt : `${preamble}\n\n${lanePrompt}`
   const resolvedAgent = { ...agent, command: resolveCommand(agent.command), headlessArgs }
-  return runAgentHeadless(resolvedAgent, prompt, sandbox.repoPath, sandbox.searchHome)
+  const agentRun = await runAgentHeadless(resolvedAgent, prompt, sandbox.repoPath, sandbox.searchHome)
+  if (!usesClaudeFlags) return { succeeded: agentRun.succeeded, finalMessage: agentRun.output, trajectory: [] }
+
+  const { steps, finalMessage } = parseTrajectory(agentRun.output)
+  // A run that died before its result event still shows why, from the raw output.
+  const finalOrRaw = finalMessage || agentRun.output
+  return { succeeded: agentRun.succeeded, finalMessage: finalOrRaw, trajectory: steps }
+}
+
+export type CaseAgentRun = Awaited<ReturnType<typeof runCaseAgent>>
+
+const EVIDENCE_SECTION_CHARACTERS = 12_000
+
+// Long sections keep their start and end: setup and the final steps are where
+// the graded decisions usually sit.
+const clip = (text: string) => {
+  if (text.length <= EVIDENCE_SECTION_CHARACTERS) return text
+  const half = EVIDENCE_SECTION_CHARACTERS / 2
+  return `${text.slice(0, half)}\n…[clipped]…\n${text.slice(-half)}`
+}
+
+const TICKET_EVIDENCE_COLUMNS = ['lane_id', 'title', 'description', 'branch_name', 'worktree_path', 'pull_request_url', 'version', 'checklist_json']
+
+const ticketSnapshot = (row: Row | undefined) =>
+  row ? TICKET_EVIDENCE_COLUMNS.map((column) => `${column}: ${String(row[column] ?? '')}`).join('\n') : '(ticket deleted)'
+
+const agentCommits = (sandbox: Sandbox) => {
+  const log = git(sandbox.repoPath, 'log', '--all', '-p', '--format=commit %h%d %s', '--not', sandbox.baselineCommit)
+  return log.toString().trim() || '(no new commits)'
+}
+
+export const collectEvidence = (sandbox: Sandbox, evalCase: EvalCase, seededRow: Row, agentRun: CaseAgentRun): string => {
+  const database = new DatabaseSync(sandbox.databasePath, { readOnly: true })
+  const ticketId = ticketFromCase(evalCase).id
+  const finalRow = database.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId) as Row | undefined
+  const moveRows = database.prepare('SELECT from_lane, to_lane FROM eval_moves WHERE ticket_id = ?').all(ticketId) as Row[]
+  database.close()
+  const moves = moveRows.map((row) => `${String(row.from_lane)} → ${String(row.to_lane)}`).join('\n') || '(none)'
+  const sections: [string, string][] = [
+    ['Lane prompt the agent was given', laneById(evalCase.laneId).agentPrompt],
+    ['Ticket before the run', ticketSnapshot(seededRow)],
+    ['Ticket after the run', ticketSnapshot(finalRow)],
+    ['Lane moves', moves],
+    ['Stubbed command calls (gh, mise, osascript)', readFileSync(sandbox.stubLogPath, 'utf8').trim() || '(none)'],
+    ['New git commits', agentCommits(sandbox)],
+    ['Agent tool-call trajectory', agentRun.trajectory.join('\n') || '(not captured)'],
+    ["Agent's final message", agentRun.finalMessage]
+  ]
+  return sections.map(([title, body]) => `## ${title}\n${clip(body)}`).join('\n\n')
 }
 
 type Row = Record<string, unknown>

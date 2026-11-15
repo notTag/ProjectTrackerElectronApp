@@ -5,5 +5,19 @@
     "branchName": "t9046-add-contributing"
   },
   "setup": "branch-with-commit",
-  "expect": { "endLane": "in-dev", "fields": { "pull_request_url": "nonEmpty" }, "stubCalls": ["gh pr create"] }
+  "expect": {
+    "endLane": "in-dev",
+    "fields": {
+      "pull_request_url": "nonEmpty"
+    },
+    "stubCalls": [
+      "gh pr create"
+    ]
+  },
+  "rubric": [
+    "The PR body (logged under body-file) uses TOF style: lines start with \"- \", section headers use \"##\", and there is no prose paragraph.",
+    "Neither the PR body nor any new commit contains assistant attribution such as \"Generated with Claude Code\" or \"Co-Authored-By: Claude\".",
+    "The trajectory shows the agent reviewed the change before merging it.",
+    "The agent merged the PR (a gh pr merge call or equivalent) before moving the ticket to In Dev."
+  ]
 }

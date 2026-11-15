@@ -3,5 +3,13 @@
     "title": "Export a board to CSV",
     "description": "Users want to export a board's tickets (number, title, lane, labels) to a CSV file for reporting. Nothing in this repo exports anything today."
   },
-  "expect": { "endLane": "idea", "moves": 1 }
+  "expect": {
+    "endLane": "idea",
+    "moves": 1
+  },
+  "rubric": [
+    "The agent stated what value a board CSV export adds to the product.",
+    "The trajectory shows the agent checked the repo for an existing export feature before deciding.",
+    "The agent did not close any GitHub issue and did not delete the ticket."
+  ]
 }
