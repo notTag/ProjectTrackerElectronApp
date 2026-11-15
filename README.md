@@ -58,10 +58,23 @@ bun run build
 bun run start:dev
 ```
 
-Create a macOS `.dmg` and `.zip`:
+Create a signed, notarized macOS `.dmg` and `.zip`:
 
 ```bash
-bun run dist
+APPLE_KEYCHAIN_PROFILE=notary bun run dist
+```
+
+`dist` needs notarization credentials (see [Notarization credentials](#notarization-credentials))
+and stops before building without them. A build that is signed but not
+notarized opens on your Mac but shows "Project Tracker is damaged" on any other.
+After the `.app` is notarized, the `.dmg` is also submitted to `notarytool` and
+stapled, so it opens offline on a machine that has never seen it.
+
+For a quick local package with no signing or notarization:
+
+```bash
+bun run build
+CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac --dir
 ```
 
 You'll find the files in `dist/`. To open the packaged `.app`:
@@ -69,6 +82,8 @@ You'll find the files in `dist/`. To open the packaged `.app`:
 ```bash
 bun run start:prod
 ```
+
+Before a release, run through the [packaged app smoke test](docs/packaged-smoke-test.md).
 
 ## Releasing
 
@@ -86,16 +101,16 @@ To publish an update for people who already have the app installed:
 
    ```bash
    GH_TOKEN=<token with repo scope> \
-   APPLE_ID=<apple id email> \
-   APPLE_APP_SPECIFIC_PASSWORD=<app-specific password> \
-   APPLE_TEAM_ID=<team id> \
+   APPLE_KEYCHAIN_PROFILE=notary \
    bun run release
    ```
 
 3. Open the draft release on GitHub and publish it. The updater ignores drafts.
 
 `bun run release` uploads the `.dmg`, `.zip`, and `latest-mac.yml` update
-manifest. The `.zip` is what the updater downloads, so keep both targets.
+manifest. The `.zip` is what the updater downloads, so keep both targets. The
+`.dmg` is left out of `latest-mac.yml` because stapling rewrites it after its
+hash would have been taken.
 `bun run dist` builds the same files without publishing them, so those builds
 won't reach the updater.
 
@@ -103,15 +118,30 @@ macOS refuses an update it can't verify, so every release must be:
 
 - **Signed** with the same Developer ID Application certificate as the installed
   app. electron-builder picks it up from your keychain automatically.
-- **Notarized.** electron-builder notarizes when the `APPLE_*` variables above
-  are set. On its own it would only log `skipped macOS notarization` and carry
-  on, so `bun run release` checks first and stops before building if there is no
+- **Notarized.** electron-builder notarizes when the `APPLE_*` variables are
+  set. On its own it would only log `skipped macOS notarization` and carry on,
+  so `bun run release` checks first and stops before building if there is no
   GitHub token (`GH_TOKEN`, `GITHUB_TOKEN` or `GITHUB_RELEASE_TOKEN`) or the
   notarization variables are missing or incomplete. It doesn't check the signing
-  certificate, so make sure it's in your keychain first. An App Store Connect
-  API key (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) or a
-  `notarytool` keychain profile (`APPLE_KEYCHAIN_PROFILE`) works instead of an
-  Apple ID.
+  certificate, so make sure it's in your keychain first.
+
+### Notarization credentials
+
+Credentials come from the environment or the keychain and are never committed.
+The default is a `notarytool` keychain profile. Set it up once per Mac:
+
+```bash
+xcrun notarytool store-credentials notary --apple-id <apple id email> --team-id RNHBB5G7H7
+```
+
+It prompts for an [app-specific password](https://account.apple.com) and stores
+it in your login keychain. Then add `export APPLE_KEYCHAIN_PROFILE=notary` to
+your shell profile. Check it with `xcrun notarytool history --keychain-profile notary`.
+
+Either of these sets works instead (both `dist` and `release` accept them):
+
+- Apple ID: `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`
+- App Store Connect API key: `APPLE_API_KEY` (path to the `.p8`), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`
 
 ## Other scripts
 
@@ -121,6 +151,7 @@ macOS refuses an update it can't verify, so every release must be:
 | `bun run test` | Run Vitest unit tests |
 | `bun run start:dev` | Run the built app with Electron's development host |
 | `bun run start:prod` | Open the packaged `Project Tracker.app` from `dist/` |
+| `bun run dist` | Build a signed, notarized `.dmg` and `.zip` in `dist/` |
 | `bun run release` | Build and upload a GitHub release for automatic updates |
 
 ## Project structure
@@ -212,6 +243,10 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 - Changes another process makes reach the app within about 10 seconds, when the window regains focus, or when you focus a field in a ticket. The background check skips while a field has focus, so it never replaces text you're typing.
 - When two writers edit the same ticket field, or the same lane, project or setting, the last write wins.
 - `node:sqlite` is still experimental in Node 22 and logs an `ExperimentalWarning` at startup.
+- If the database file is corrupt or can't be read, the app shows an error dialog naming the file and then quits. It never moves or deletes the file.
+- Set `PROJECT_TRACKER_USER_DATA=<dir>` to run the app against a different `userData` folder, for example a throwaway one for testing.
+
+[docs/storage-seam.md](docs/storage-seam.md) describes what `StateRepository` exposes and what its callers assume, for anyone replacing it with a server-backed store.
 
 ## Tech stack
 
