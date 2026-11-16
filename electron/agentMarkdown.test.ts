@@ -24,20 +24,33 @@ afterEach(() => {
 const target = (projectPath: string, filePath = '', kind: LaneMarkdownKind = 'agent') => ({
   kind,
   projectPath,
-  projectName: 'ProjectTracker/electron-app',
-  laneName: 'PRD',
+  laneName: 'In Review',
   filePath
 })
 
 describe('resolveAgentMarkdownPath', () => {
-  it('defaults to the generated name under agent-context/', () => {
+  it('defaults to AgentPrompt.md in the lane folder under SwimlaneAgentPrompt/', () => {
     const resolved = resolveAgentMarkdownPath(target('/code/app'))
-    expect(resolved).toBe('/code/app/agent-context/ProjectTracker-electron-app-PRD-AgentContext.md')
+    expect(resolved).toBe('/code/app/SwimlaneAgentPrompt/In-Review/AgentPrompt.md')
   })
 
-  it('keeps a traversal lane name inside agent-context/', () => {
-    const resolved = resolveAgentMarkdownPath({ ...target('/code/app'), laneName: '../../../etc/passwd' })
-    expect(path.dirname(resolved)).toBe('/code/app/agent-context')
+  it('puts the orchestrator file in the same lane folder', () => {
+    const resolved = resolveAgentMarkdownPath(target('/code/app', '', 'orchestrator'))
+    expect(resolved).toBe('/code/app/SwimlaneAgentPrompt/In-Review/AgentOrchestratorPrompt.md')
+  })
+
+  it('keeps a traversal lane name inside SwimlaneAgentPrompt/', () => {
+    for (const laneName of ['../../etc', '../../../etc/passwd', '..', '/']) {
+      const resolved = resolveAgentMarkdownPath({ ...target('/code/app'), laneName })
+      const laneFolder = path.dirname(resolved)
+      expect(path.dirname(laneFolder)).toBe('/code/app/SwimlaneAgentPrompt')
+      expect(path.basename(laneFolder).startsWith('.')).toBe(false)
+    }
+  })
+
+  it('keeps an existing explicit agent-context/ path untouched', () => {
+    const legacyPath = '/code/app/agent-context/ProjectTracker-electron-app-PRD-AgentContext.md'
+    expect(resolveAgentMarkdownPath(target('/code/app', legacyPath))).toBe(legacyPath)
   })
 
   it('resolves a relative explicit path against the project', () => {
@@ -49,14 +62,10 @@ describe('resolveAgentMarkdownPath', () => {
   })
 
   describe('orchestrator kind', () => {
-    it('defaults to its own generated name under agent-context/', () => {
-      const resolved = resolveAgentMarkdownPath(target('/code/app', '', 'orchestrator'))
-      expect(resolved).toBe('/code/app/agent-context/ProjectTracker-electron-app-PRD-AgentOrchestratorContext.md')
-    })
-
-    it('keeps a traversal lane name inside agent-context/', () => {
+    it('keeps a traversal lane name inside SwimlaneAgentPrompt/', () => {
       const traversal = { ...target('/code/app', '', 'orchestrator'), laneName: '../../etc' }
-      expect(path.dirname(resolveAgentMarkdownPath(traversal))).toBe('/code/app/agent-context')
+      const laneFolder = path.dirname(resolveAgentMarkdownPath(traversal))
+      expect(path.dirname(laneFolder)).toBe('/code/app/SwimlaneAgentPrompt')
     })
 
     it('resolves a relative explicit path against the project', () => {
@@ -75,7 +84,7 @@ const save = (markdownTarget: ReturnType<typeof target>, content: string) =>
   saveAgentMarkdown(resolveAgentMarkdownPath(markdownTarget), content)
 
 describe('saveAgentMarkdown', () => {
-  it('creates agent-context/ and writes the prompt', () => {
+  it('creates the lane folder recursively and writes the prompt', () => {
     const projectPath = freshProjectPath()
     const saved = save(target(projectPath), '# Guide\n')
     expect(saved.appended).toBe(false)

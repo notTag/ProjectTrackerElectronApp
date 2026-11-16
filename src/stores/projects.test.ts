@@ -648,6 +648,63 @@ describe('refreshBoardPullRequests', () => {
   })
 })
 
+describe('moveTickets', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockEntityWrites()
+  })
+
+  const stateWithThreeTickets = (): ProjectTrackerState => {
+    const state = stateWithTicketIn('idea')
+    const board = state.boards![PROJECT_PATH]
+    const [ideaTicket] = board.tickets
+    const secondIdeaTicket = { ...ideaTicket, id: 'ticket-2', number: 8 }
+    const prdTicket = { ...ideaTicket, id: 'ticket-3', number: 9, laneId: 'prd' }
+    const tickets = [ideaTicket, secondIdeaTicket, prdTicket]
+    return { ...state, boards: { [PROJECT_PATH]: { ...board, tickets } } }
+  }
+
+  it('moves every id in one board edit with a shared updatedAt', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const updateBoard = vi.spyOn(store, 'updateBoard')
+
+    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-2', 'ticket-3'], 'dev')
+
+    expect(updateBoard).toHaveBeenCalledTimes(1)
+    expect(api.updateTicket).toHaveBeenCalledTimes(3)
+    const sentPatches = api.updateTicket.mock.calls.map(([, patch]) => patch)
+    const sentUpdatedAts = new Set(sentPatches.map((patch) => patch.updatedAt))
+    expect(sentPatches.every((patch) => patch.laneId === 'dev')).toBe(true)
+    expect(sentUpdatedAts.size).toBe(1)
+    expect(store.board(PROJECT_PATH).tickets.every((ticket) => ticket.laneId === 'dev')).toBe(true)
+  })
+
+  it('leaves a ticket already in the target lane untouched', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const prdTicketBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+
+    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
+
+    const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+    expect(api.updateTicket).toHaveBeenCalledTimes(1)
+    expect(prdTicketAfter?.updatedAt).toBe(prdTicketBefore?.updatedAt)
+  })
+
+  it('writes nothing for an empty id list', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const updateBoard = vi.spyOn(store, 'updateBoard')
+
+    await store.moveTickets(PROJECT_PATH, [], 'dev')
+
+    expect(updateBoard).not.toHaveBeenCalled()
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+})
+
 describe('per-entity writes', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -688,18 +745,19 @@ describe('per-entity writes', () => {
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
   })
 
-  it('saves the orchestrator markdown, then stores the sent prompt and the written path', async () => {
+  it('saves the orchestrator markdown, then stores the prompt patch and the written path', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
-    const savedPath = '/code/app/agent-context/app-PRD-AgentOrchestratorContext.md'
+    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
     api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath, appended: false })
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '')
+    const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
+    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', promptPatch)
 
     expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.')
     expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', {
-      orchestratorPrompt: 'Flag red PRs.',
+      ...promptPatch,
       orchestratorFilePath: savedPath
     })
   })
@@ -710,7 +768,7 @@ describe('per-entity writes', () => {
     api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'x.txt')).rejects.toThrow()
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'x.txt', {})).rejects.toThrow()
 
     expect(api.updateLane).not.toHaveBeenCalled()
   })

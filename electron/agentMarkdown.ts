@@ -2,35 +2,35 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from 'node:path'
 
 import {
-  AGENT_CONTEXT_DIRECTORY,
-  agentMarkdownFileName,
-  orchestratorMarkdownFileName,
+  AGENT_PROMPT_FILE_NAME,
+  ORCHESTRATOR_PROMPT_FILE_NAME,
+  SWIMLANE_PROMPT_DIRECTORY,
+  laneFolderName,
   type LaneMarkdownKind
 } from '../src/shared/projectTypes.js'
 
 export interface AgentMarkdownTarget {
   kind: LaneMarkdownKind
   projectPath: string
-  projectName: string
   laneName: string
-  // The explicit path for this kind: the lane's agentFilePath or orchestratorFilePath.
+  // What the user typed in this kind's file field; empty means "use the default".
   filePath: string
 }
 
 const MARKDOWN_KINDS = {
-  agent: { fieldLabel: 'Agent markdown file', defaultFileName: agentMarkdownFileName },
-  orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', defaultFileName: orchestratorMarkdownFileName }
+  agent: { fieldLabel: 'Agent markdown file', fileName: AGENT_PROMPT_FILE_NAME },
+  orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', fileName: ORCHESTRATOR_PROMPT_FILE_NAME }
 } as const
 
-// An empty field gets the generated name under <project>/agent-context/; the
-// sanitized name has no separators or leading dots, so it can't climb out.
-// A path the user typed is honoured, but only as a .md file, so a stray paste
-// can't overwrite something like ~/.zshrc. Main further confines it to the
-// scan directories.
+// An empty field gets <project>/SwimlaneAgentPrompt/<lane>/<fileName>; the
+// sanitized folder name has no separators or leading dots, so it can't climb
+// out. A path the user typed is honoured, but only as a .md file, so a stray
+// paste can't overwrite something like ~/.zshrc. Main further confines it to
+// the scan directories.
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
   const explicitPath = target.filePath.trim()
-  const { fieldLabel, defaultFileName } = MARKDOWN_KINDS[target.kind]
+  const { fieldLabel, fileName } = MARKDOWN_KINDS[target.kind]
 
   if (explicitPath) {
     const resolved = path.resolve(projectPath, explicitPath)
@@ -40,8 +40,8 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
     return resolved
   }
 
-  const fileName = defaultFileName(target.projectName, target.laneName)
-  return path.join(projectPath, AGENT_CONTEXT_DIRECTORY, fileName)
+  const laneFolder = laneFolderName(target.laneName)
+  return path.join(projectPath, SWIMLANE_PROMPT_DIRECTORY, laneFolder, fileName)
 }
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')

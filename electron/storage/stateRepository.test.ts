@@ -47,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -126,6 +126,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].orchestratorPrompt).toBe('')
     expect(board?.lanes[1].orchestratorFilePath).toBe('docs/orch.md')
     expect(board?.lanes[0].orchestratorFilePath).toBe('')
+    expect(board?.lanes[1].orchestratorPromptOverride).toBe('Watch {{tickets}}')
+    expect(board?.lanes[0].orchestratorPromptOverride).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
@@ -769,6 +771,7 @@ describe('legacy databases', () => {
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorFilePath).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].orchestratorPromptOverride).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
