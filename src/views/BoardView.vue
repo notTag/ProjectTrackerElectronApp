@@ -1751,7 +1751,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <span v-else-if="laneMarkdownStatus.savedMessage" class="field-hint">{{ laneMarkdownStatus.savedMessage }}</span>
         <span v-else class="field-hint">
           Used alongside the prompt above — both are sent when both are filled in. Left empty, Save to Agent Markdown
-          creates one in the project's agent-context/ folder.
+          creates SwimlaneAgentPrompt/&lt;lane&gt;/AgentPrompt.md in the project.
         </span>
       </label>
 

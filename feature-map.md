@@ -416,9 +416,9 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Save to Agent Markdown** button, under the prompt. Disabled while the prompt is empty or a save is running. It writes the prompt to a markdown file and links that file to the lane:
-  - File field empty: creates `<project>/agent-context/<PROJECT>-<LANE>-AgentContext.md`, making the folder if it's missing. Names are sanitized: spaces and `/ \` become `-`, and `: * ? " < > |` are dropped.
+  - File field empty: creates `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. Paths saved before #81 (`agent-context/...`) keep working as explicit paths.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project.
-  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too, so saving twice adds the prompt twice.
+  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too. Saving the same prompt again is a no-op, so repeated clicks don't stack copies.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
@@ -571,7 +571,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.7 Lane prompt evals — `evals/`
 
 - Static tier, part of `bun run test`:
-  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
   - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
 - Behavioral tier, `bun run eval`:
   - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
@@ -580,7 +580,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
   - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
   - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
   - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
-  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
+  - `evals/behavioral/sync.eval.test.ts` checks each lane's committed prompt file (saved path, else `SwimlaneAgentPrompt/<lane>/AgentPrompt.md`) against its lane's prompt in the live DB.
 
 ---
 
