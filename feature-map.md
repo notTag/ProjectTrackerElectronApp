@@ -439,6 +439,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone.
   - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
   - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
+- **Save to Agent Orchestrator Markdown** button, under the Orchestrator prompt. Writes the text in the box (override or generated) with the same file rules as Save to Agent Markdown; default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, and the path lands in **Agent Orchestrator markdown file**. The text is stored with the same override rules as leaving the box, so saving the untouched default doesn't create an override.
+- **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): where that save writes. The file is a copy for versioning and review; the launch prompt never reads or names it, so re-saving unchanged text stays a no-op. Ticket agents never see it.
 - **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.

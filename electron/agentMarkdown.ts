@@ -1,16 +1,26 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { SWIMLANE_PROMPT_DIRECTORY, laneFolderName } from '../src/shared/projectTypes.js'
+import {
+  AGENT_PROMPT_FILE_NAME,
+  ORCHESTRATOR_PROMPT_FILE_NAME,
+  SWIMLANE_PROMPT_DIRECTORY,
+  laneFolderName,
+  type LaneMarkdownKind
+} from '../src/shared/projectTypes.js'
 
 export interface AgentMarkdownTarget {
+  kind: LaneMarkdownKind
   projectPath: string
   laneName: string
-  // What the user typed in the lane's file field; empty means "use the default".
+  // What the user typed in this kind's file field; empty means "use the default".
   filePath: string
-  // Default file inside the lane folder, e.g. AGENT_PROMPT_FILE_NAME.
-  fileName: string
 }
+
+const MARKDOWN_KINDS = {
+  agent: { fieldLabel: 'Agent markdown file', fileName: AGENT_PROMPT_FILE_NAME },
+  orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', fileName: ORCHESTRATOR_PROMPT_FILE_NAME }
+} as const
 
 // An empty field gets <project>/SwimlaneAgentPrompt/<lane>/<fileName>; the
 // sanitized folder name has no separators or leading dots, so it can't climb
@@ -20,17 +30,18 @@ export interface AgentMarkdownTarget {
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
   const explicitPath = target.filePath.trim()
+  const { fieldLabel, fileName } = MARKDOWN_KINDS[target.kind]
 
   if (explicitPath) {
     const resolved = path.resolve(projectPath, explicitPath)
     if (path.extname(resolved).toLowerCase() !== '.md') {
-      throw new Error('Agent markdown file must end in .md.')
+      throw new Error(`${fieldLabel} must end in .md.`)
     }
     return resolved
   }
 
   const laneFolder = laneFolderName(target.laneName)
-  return path.join(projectPath, SWIMLANE_PROMPT_DIRECTORY, laneFolder, target.fileName)
+  return path.join(projectPath, SWIMLANE_PROMPT_DIRECTORY, laneFolder, fileName)
 }
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
