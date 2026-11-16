@@ -11,6 +11,7 @@ import type {
   ProjectTrackerState,
   ProjectWritePatch,
   PullRequestStatus,
+  ScanProgress,
   ScanResult,
   SwimLane,
   TabLiveness,
@@ -41,6 +42,8 @@ interface ProjectTrackerElectronApi {
     hiddenPaths: string[],
     thirdPartyPaths: string[]
   ): Promise<ScanResult>
+  onScanProgress(callback: (progress: ScanProgress) => void): () => void
+  cancelScan(): Promise<void>
   pickScanDirectory(): Promise<string | null>
   openProjectIn(
     path: string,

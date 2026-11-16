@@ -103,6 +103,22 @@ body {
   white-space: nowrap;
 }
 
+/* Single line: the path ellipsizes, full path lives in the title tooltip. */
+.scan-progress {
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 320px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.scan-progress-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Match the picker triggers: Add/Dirs get the same 1px border so the whole
    action cluster reads as one bordered control group. */
 .titlebar-actions button.secondary {

@@ -46,7 +46,8 @@ import {
   type Ticket,
   type TicketWritePatch,
   type LaneWritePatch,
-  type ProjectWritePatch
+  type ProjectWritePatch,
+  type ScanProgress
 } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -532,7 +533,10 @@ const registerIpc = () => {
     return toPlainJson(stateRepository.updateProject(normalizePath(projectPath), patch))
   })
 
-  ipcMain.handle('projects:scan', (event, payload: unknown) => {
+  // ponytail: one scan app-wide, per-window controllers if multi-window scanning ever matters
+  let activeScan: AbortController | null = null
+
+  ipcMain.handle('projects:scan', async (event, payload: unknown) => {
     assertTrustedSender(event)
     const candidate = payload as {
       scanDirectories?: unknown
@@ -547,11 +551,29 @@ const registerIpc = () => {
       throw new Error('Invalid scan payload.')
     }
 
-    return toPlainJson(scanProjectDirectories(
-      candidate.scanDirectories.map(normalizePath),
-      candidate.hiddenPaths.map(normalizePath),
-      candidate.thirdPartyPaths.map(normalizePath)
-    ))
+    if (activeScan) throw new Error('A scan is already running.')
+
+    const scan = new AbortController()
+    activeScan = scan
+    const sendProgress = (progress: ScanProgress) => {
+      if (!event.sender.isDestroyed()) event.sender.send('projects:scan-progress', progress)
+    }
+    try {
+      const result = await scanProjectDirectories(
+        candidate.scanDirectories.map(normalizePath),
+        candidate.hiddenPaths.map(normalizePath),
+        candidate.thirdPartyPaths.map(normalizePath),
+        { signal: scan.signal, onProgress: sendProgress }
+      )
+      return toPlainJson(result)
+    } finally {
+      activeScan = null
+    }
+  })
+
+  ipcMain.handle('projects:scan-cancel', (event) => {
+    assertTrustedSender(event)
+    activeScan?.abort()
   })
 
   ipcMain.handle('dialog:pick-scan-directory', async (event) => {

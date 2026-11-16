@@ -87,6 +87,13 @@ const getProjectDisplayName = (project: ProjectRecord) => {
   return relativePath.includes('/') ? relativePath : project.name
 }
 
+const scanProgressLabel = computed(() => {
+  const progress = store.scanProgress
+  if (!progress) return 'Scanning...'
+  const folderWord = progress.directoriesSeen === 1 ? 'folder' : 'folders'
+  return `Scanned ${progress.directoriesSeen} ${folderWord}`
+})
+
 const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
 
 const filteredProjects = computed(() =>
@@ -395,6 +402,11 @@ const renderMarkdown = (markdown: string | null) => {
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
       <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
+<span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
+        <span>{{ scanProgressLabel }}</span>
+        <span v-if="store.scanProgress" class="scan-progress-path">{{ store.scanProgress.currentPath }}</span>
+      </span>
+      <button v-if="store.scanning" class="secondary" @click="store.cancelScan()">Cancel</button>
       <button
         :disabled="store.scanning || store.state.scanDirectories.length === 0"
         title="A '.git' must be present in order for the project to appear."
@@ -666,7 +678,12 @@ const renderMarkdown = (markdown: string | null) => {
           <button class="secondary" @click="pickOnboardingPath">Browse</button>
         </div>
         <div class="modal-actions">
-          <button class="secondary" @click="onboardingSkipped = true">Skip</button>
+          <span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
+            <span>{{ scanProgressLabel }}</span>
+            <span v-if="store.scanProgress" class="scan-progress-path">{{ store.scanProgress.currentPath }}</span>
+          </span>
+          <button v-if="store.scanning" class="secondary" @click="store.cancelScan()">Cancel</button>
+          <button v-else class="secondary" @click="onboardingSkipped = true">Skip</button>
           <button :disabled="!onboardingPath || store.scanning" @click="startFirstScan">
             {{ store.scanning ? 'Scanning...' : 'Scan Folder' }}
           </button>
