@@ -1993,8 +1993,8 @@ const runTicketAgent = (ticket: Ticket) => {
           {{ laneMarkdownStatus.orchestrator.savedMessage }}
         </span>
         <span v-else class="field-hint">
-          The orchestrator is told to follow this file. Left empty, Save to Agent Orchestrator Markdown creates
-          SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
+          Where Save to Agent Orchestrator Markdown writes the prompt above, for versioning or review. Left empty it
+          creates SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
         </span>
       </label>
 

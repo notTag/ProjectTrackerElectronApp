@@ -1416,34 +1416,13 @@ describe('Auto Run orchestrator', () => {
       }
     })
 
-    it('points at the orchestrator markdown file when only the file is set', () => {
-      const linked = { ...inDev, orchestratorFilePath: ' /code/app/agent-context/orchestrator.md ' }
-      const expectedSection = [
-        'Lane instructions',
-        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
-        'Follow the guidance in /code/app/agent-context/orchestrator.md.'
-      ].join('\n')
-      expect(orchestratorPrompt(linked, entries, context('ghostty', 'Ghostty'))).toBe(`${prompt}\n\n${expectedSection}`)
-    })
-
-    it('puts the lane text before the file reference, under the precedence line', () => {
-      const both = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md' }
-      const expectedSection = [
-        'Lane instructions',
-        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
-        'Poll every 2 minutes.',
-        'Follow the guidance in docs/orch.md.'
-      ].join('\n')
-      expect(orchestratorPrompt(both, entries, context('ghostty', 'Ghostty'))).toBe(`${prompt}\n\n${expectedSection}`)
-    })
-
-    it('is unchanged by a whitespace-only orchestrator file path', () => {
-      const lane = { ...inDev, orchestratorFilePath: '  ' }
-      expect(orchestratorPrompt(lane, entries, context('ghostty', 'Ghostty'))).toBe(prompt)
-    })
-
-    it("never puts the orchestrator markdown file in a ticket agent's prompt", () => {
-      const linked = { ...inDev, orchestratorFilePath: 'docs/orch.md' }
+    // The file holds a copy of this prompt; if the prompt named the file, every
+    // save would differ from the last and append another copy.
+    it('leaves the orchestrator and ticket prompts unchanged by an orchestrator markdown file', () => {
+      const linked = { ...inDev, orchestratorFilePath: 'SwimlaneAgentPrompt/In-Dev/AgentOrchestratorPrompt.md' }
+      const launchContext = context('ghostty', 'Ghostty')
+      expect(orchestratorPrompt(linked, entries, launchContext)).toBe(prompt)
+      expect(orchestratorPromptTemplate(linked, launchContext)).toBe(orchestratorPromptTemplate(inDev, launchContext))
       expect(ticketAgentPrompt(ticket(12, 'First thing'), linked)).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
     })
 

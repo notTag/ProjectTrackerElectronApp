@@ -230,8 +230,9 @@ export interface SwimLane {
   // Folded into orchestratorPromptOverride on the first edit, and unused while
   // one is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
-  // Markdown twin of orchestratorPrompt, referenced (not inlined) by the
-  // orchestrator launch prompt. Optional so older lanes load.
+  // Where Save to Agent Orchestrator Markdown writes the full orchestrator
+  // prompt. Never added to the prompt itself: the file is a copy of it, so a
+  // reference would make each save differ from the last. Optional so older lanes load.
   orchestratorFilePath?: string
   // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
   // are filled in. Empty means the generated prompt. Optional so older lanes load.
@@ -1030,12 +1031,8 @@ const LANE_INSTRUCTIONS_PRECEDENCE =
 
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
-  const instructionsFilePath = lane.orchestratorFilePath?.trim() ?? ''
-  if (!laneInstructions && !instructionsFilePath) return ''
-
-  const fileReference = instructionsFilePath ? `Follow the guidance in ${instructionsFilePath}.` : ''
-  const lines = ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions, fileReference]
-  return lines.filter(Boolean).join('\n')
+  if (!laneInstructions) return ''
+  return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
 }
 
 export const ORCHESTRATOR_PROMPT_TOKENS = {
