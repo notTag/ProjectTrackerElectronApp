@@ -739,13 +739,18 @@ const ipcErrorMessage = (error: unknown) => {
 
 const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind) => {
   const { prompt, filePath } = laneMarkdownDraft.value[kind]
-  laneMarkdownStatus.value[kind] = { saving: true, savedMessage: '', error: '' }
+  const savingLaneId = openLaneId.value
+  const setStatus = (status: LaneMarkdownStatus) => {
+    // The modal may have switched lanes mid-save; don't show this lane's result on another.
+    if (openLaneId.value === savingLaneId) laneMarkdownStatus.value[kind] = status
+  }
+  setStatus({ saving: true, savedMessage: '', error: '' })
   try {
     const saved = await store.saveLaneMarkdown(projectPath.value, lane, kind, prompt, filePath)
     const verb = saved.appended ? 'Appended to' : 'Saved to'
-    laneMarkdownStatus.value[kind] = { saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' }
+    setStatus({ saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' })
   } catch (error) {
-    laneMarkdownStatus.value[kind] = { saving: false, savedMessage: '', error: ipcErrorMessage(error) }
+    setStatus({ saving: false, savedMessage: '', error: ipcErrorMessage(error) })
   }
 }
 

@@ -266,6 +266,8 @@ const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
 const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
 // NOT NULL text columns: a patch may change them but never clear them.
 const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
+// NOT NULL text columns whose SwimLane field is optional: absent is fine, a non-string is not.
+const OPTIONAL_TEXT_KEYS = new Set(['orchestratorPrompt', 'orchestratorFilePath'])
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
 const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 
@@ -273,7 +275,10 @@ const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
   if (!isPlainObject(value)) return false
   return Object.entries(value).every(([key, fieldValue]) => {
     if (!allowedKeys.has(key)) return false
-    return !REQUIRED_TEXT_KEYS.has(key) || typeof fieldValue === 'string'
+    const isString = typeof fieldValue === 'string'
+    if (REQUIRED_TEXT_KEYS.has(key)) return isString
+    if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue === undefined
+    return true
   })
 }
 
