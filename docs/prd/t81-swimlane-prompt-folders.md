@@ -34,7 +34,7 @@
 ## Decisions (defaults, full auto)
 - D1 Root dir literally `SwimlaneAgentPrompt/` (per ticket), replaces `agent-context/` for new saves
 - D2 No auto-migration of existing `agent-context/` files or DB paths; explicit paths win. Moving this repo's 7 files = separate chore
-- D3 Lane rename → next save uses the new folder; old folder left alone
+- D3 Lane rename → path stays pinned: the first save stores the absolute default path in `agentFilePath`, so later saves keep the old folder. Clear the field to re-derive from the new name
 - D4 Orchestrator file referenced, not inlined — same as agent file in `ticketAgentPrompt`
 - D5 (2026-11-16, agreed with the #82 agent) Orchestrator half moves to #82: `orchestratorFilePath` field + column, IPC `kind`, button/field, `orchestratorPrompt` file reference. #81 ships the folder layout + shared helpers (`SWIMLANE_PROMPT_DIRECTORY`, `AGENT_PROMPT_FILE_NAME`, `ORCHESTRATOR_PROMPT_FILE_NAME`, `laneFolderName`, `resolveAgentMarkdownPath({ filePath, fileName })`) that #82 plugs into
 
@@ -45,7 +45,7 @@
 - Committing files to git
 
 ## Open questions
-None — defaults D1–D4.
+None — defaults D1–D5. Orchestrator ACs above (button/field, default orchestrator path, `orchestratorFilePath` column, `orchestratorPrompt` reference, their tests) ship in #82 per D5.
 
 ## Branch / worktree
 - Branch: `t81-each-swimlane-s`

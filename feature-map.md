@@ -559,7 +559,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.7 Lane prompt evals — `evals/`
 
 - Static tier, part of `bun run test`:
-  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
   - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
 - Behavioral tier, `bun run eval`:
   - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
@@ -568,7 +568,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
   - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
   - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
   - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
-  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
+  - `evals/behavioral/sync.eval.test.ts` checks each lane's committed prompt file (saved path, else `SwimlaneAgentPrompt/<lane>/AgentPrompt.md`) against its lane's prompt in the live DB.
 
 ---
 
