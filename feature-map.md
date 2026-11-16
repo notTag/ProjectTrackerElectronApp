@@ -370,6 +370,13 @@ In graph view this opens as a side panel instead of a centered modal.
 - Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
 - Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
 
+**Images**
+
+- Attach png/jpg/jpeg/gif/webp images: **Add image** (native picker, multi-select), Cmd+V anywhere in the ticket panel (text pastes still go to the field), or drop files onto the section. 20 MB cap per image.
+- Each image is copied to `<userData>/attachments/<ticketId>/<uuid>.<ext>`, so moving or deleting the original doesn't break the ticket. Paths are stored as `images_json` on the ticket row.
+- Thumbnails load through the `ticket-image:` scheme, which only serves files inside the attachments folder. Clicking one opens it in the OS viewer; **×** removes it and deletes the copy.
+- Passed to agents as an `Images (open each path to view it):` block of absolute paths, only when the ticket has images. Deleting the ticket deletes its attachments folder.
+
 **Checklist**
 
 - The heading shows done/total.
@@ -489,7 +496,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - It uses the same visible lanes and filtered tickets as the swimlane view. Arrows into hidden, filtered-out or deleted lanes are not drawn.
 - **Details sidebar**:
   - Nothing selected: the number of swim lanes, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
-  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), and a list of tickets you can click to open, or "No tickets match the current filters."
+  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), then **Agent prompt** and **Orchestrator prompt** sections.
+  - Each prompt section lists the lane's prompt as editable rules (`promptRules` in `projectTypes.ts`): an unindented `- `/`* ` bullet or numbered line (`1.`) starts a rule; other lines, indented sub-bullets included, continue it. Leaving a rule (blur or Enter; Shift+Enter adds a line break) saves the prompt through `store.updateLane`, rewritten as `- rule` lines with numbered rules kept as-is (`rulesToPrompt`). **+ Add rule** and **×** add and delete rules; a rule cleared to empty is deleted. An empty prompt shows "No rules yet". When the lane has an agent markdown file the Agent section shows "Also follows: <file name>". The markdown file itself is not written; that stays on the Swimlane settings button.
 - Clicking a ticket node or a list entry opens the Ticket modal as a side panel, and the sidebar makes room for it.
 
 ---

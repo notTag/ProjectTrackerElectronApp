@@ -74,6 +74,7 @@ const stateWithBoard = (): ProjectTrackerState => {
             pullRequestMergedAt: '2026-01-04T00:00:00Z',
             fullAuto: true,
             externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
+            images: ['/data/attachments/t/a.png'],
             moveToLaneId: 'prd',
             moveOnComplete: true,
             version: '1.4.0-rc.1',
@@ -155,6 +156,8 @@ describe('StateRepository', () => {
     expect(board?.tickets[1].worktreePath).toBeUndefined()
     expect(board?.tickets[0].externalLinks).toEqual(['https://figma.com/f', 'https://slack.com/t'])
     expect(board?.tickets[1].externalLinks).toBeUndefined()
+    expect(board?.tickets[0].images).toEqual(['/data/attachments/t/a.png'])
+    expect(board?.tickets[1].images).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
@@ -274,6 +277,22 @@ describe('StateRepository', () => {
     const reopened = reopenedBoard(userDataPath, projectPath)
     expect(reopened.lanes[1].orchestratorAgentId).toBe('opencode')
     expect(reopened.tickets[0]).toMatchObject({ agentId: 'codex', model: 'gpt-5' })
+  })
+
+  it('loads tickets with no images from a database created before images existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN images_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket.images).toBeUndefined()
+    migratedTicket.images = ['/data/attachments/t/a.png']
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].images).toEqual(['/data/attachments/t/a.png'])
   })
 
   it('loads tickets with no links from a database created before external links existed', () => {

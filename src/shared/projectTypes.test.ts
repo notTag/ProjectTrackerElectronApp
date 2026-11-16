@@ -31,6 +31,8 @@ import {
   oldestImportedCreatedAt,
   type GithubClosedIssue,
   laneFolderName,
+  promptRules,
+  rulesToPrompt,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -640,6 +642,15 @@ describe('ticketShellCommand', () => {
     expect(ticketAgentPrompt(linkedTicket, lane())).toContain('Links:\n- https://figma.com/f\n- https://slack.com/t')
     expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Links:')
     expect(ticketAgentPrompt(ticket({ externalLinks: [] }), lane())).not.toContain('Links:')
+  })
+
+  it('lists attached image paths only when the ticket has some', () => {
+    const imageTicket = ticket({ images: ['/data/attachments/t1/a.png', '/data/attachments/t1/b.jpg'] })
+    expect(ticketAgentPrompt(imageTicket, lane())).toContain(
+      'Images (open each path to view it):\n- /data/attachments/t1/a.png\n- /data/attachments/t1/b.jpg'
+    )
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Images')
+    expect(ticketAgentPrompt(ticket({ images: [] }), lane())).not.toContain('Images')
   })
 
   it('ends with the lane output target and permission to reuse an existing location', () => {
@@ -1648,6 +1659,60 @@ describe('laneTransitions', () => {
     const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
     const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
     expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
+  })
+})
+
+describe('promptRules / rulesToPrompt', () => {
+  const bulletPrompt = [
+    '- Fill out the missing details for the ticket in the project tracker. ',
+    "- If there are no open questions move the ticket, update the ticket status to 'PRD'. ",
+    '',
+    '- As soon as you are done, send a message to the Orchestrator agent.'
+  ].join('\n')
+  const numberedPrompt = [
+    '1. Verify if there is an existing worktree. 2. Use the /worktree skill for all work in this lane. ',
+    '3. Upon completion of work, verify all original tasks have been completed. ',
+    '5. Upon completion of steps 1-5, move the ticket.',
+    '- As soon as you are done, send a message to the Orchestrator agent.'
+  ].join('\n')
+
+  it('splits bullets into rules, dropping markers, blank lines and trailing spaces', () => {
+    expect(promptRules(bulletPrompt)).toEqual([
+      'Fill out the missing details for the ticket in the project tracker.',
+      "If there are no open questions move the ticket, update the ticket status to 'PRD'.",
+      'As soon as you are done, send a message to the Orchestrator agent.'
+    ])
+  })
+
+  it('keeps numbered lines as their own rules with the number intact', () => {
+    const rules = promptRules(numberedPrompt)
+    expect(rules).toHaveLength(4)
+    expect(rules[2]).toBe('5. Upon completion of steps 1-5, move the ticket.')
+    expect(rulesToPrompt(rules)).toBe(numberedPrompt.split('\n').map(line => line.trimEnd()).join('\n'))
+  })
+
+  it('joins continuation lines and treats text before the first bullet as a rule', () => {
+    expect(promptRules('Intro line\n- first\n  more of first\n* second')).toEqual(['Intro line', 'first\n  more of first', 'second'])
+  })
+
+  it('round-trips through rulesToPrompt', () => {
+    for (const prompt of [bulletPrompt, numberedPrompt, 'Intro\n- a\n  b\n- - dash']) {
+      const rules = promptRules(prompt)
+      expect(promptRules(rulesToPrompt(rules))).toEqual(rules)
+    }
+    expect(rulesToPrompt(promptRules(bulletPrompt))).toBe(promptRules(bulletPrompt).map(rule => `- ${rule}`).join('\n'))
+  })
+
+  it('keeps indented sub-bullets and sub-steps inside their parent rule', () => {
+    const nestedPrompt = '1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step\n- Post the link.'
+    const rules = promptRules(nestedPrompt)
+    expect(rules).toEqual(['1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step', 'Post the link.'])
+    expect(rulesToPrompt(rules)).toBe(nestedPrompt)
+  })
+
+  it('maps an empty prompt to no rules and back', () => {
+    expect(promptRules('  \n\n')).toEqual([])
+    expect(rulesToPrompt([])).toBe('')
   })
 })
 
