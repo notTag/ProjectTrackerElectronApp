@@ -103,6 +103,22 @@ body {
   white-space: nowrap;
 }
 
+/* Single line: the path ellipsizes, full path lives in the title tooltip. */
+.scan-progress {
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 320px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.scan-progress-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Match the picker triggers: Add/Dirs get the same 1px border so the whole
    action cluster reads as one bordered control group. */
 .titlebar-actions button.secondary {
@@ -1116,6 +1132,43 @@ code {
   z-index: 3;
 }
 
+.lane-add-zone {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lane-add-button {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  font-size: 2.5rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(100%);
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+}
+
+/* [inert] during a lane drag blocks pointer + focus; :not() keeps it hidden. */
+.lane-add-zone.shown:not([inert]) .lane-add-button,
+.lane-add-button:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-add-button {
+    transform: none;
+    transition: opacity 200ms ease-out;
+  }
+}
+
 .lane {
   display: flex;
   flex-direction: column;
@@ -1378,6 +1431,12 @@ code {
   font-size: 0.82rem;
 }
 
+.orchestrator-prompt {
+  min-height: 320px;
+  white-space: pre;
+  overflow: auto;
+}
+
 .agent-file-path {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.82rem;
@@ -1518,6 +1577,47 @@ code {
   flex: 1;
 }
 
+.ticket-images ul {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ticket-images li {
+  position: relative;
+}
+
+.ticket-image-thumb {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.ticket-image-thumb img {
+  display: block;
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+}
+
+.ticket-images li .icon-button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+
+.ticket-images-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .checklist-done {
   color: var(--color-text-muted);
   text-decoration: line-through;
@@ -1655,6 +1755,10 @@ code {
 .graph-back { margin-bottom: 12px; }
 .graph-details { width: 340px; flex-shrink: 0; padding: 20px; border-left: 1px solid var(--color-text-muted); overflow: auto; max-height: calc(100vh - 210px); }
 .graph-details h2 { overflow-wrap: anywhere; }
+.graph-rule { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.graph-rule textarea { flex: 1; min-height: 0; resize: none; field-sizing: content; }
+.graph-rule-delete { padding: 2px 8px; }
+.graph-rule-add { margin-top: 8px; }
 .graph-list-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
 .modal-backdrop.graph-ticket-panel { left: auto; top: 150px; bottom: 0; right: 0; width: min(440px, 45vw); padding: 0; background: transparent; align-items: stretch; }
 .graph-ticket-panel .ticket-modal { width: 100%; max-height: 100%; border-radius: 0; overflow-y: auto; }

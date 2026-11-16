@@ -1,5 +1,5 @@
 import type { IpcChannel, ProjectTrackerBridge } from '@/shared/bridgeApi'
-import type { AgentRetryEvent } from '@/shared/projectTypes'
+import type { AgentRetryEvent, ScanProgress } from '@/shared/projectTypes'
 
 // window.projectTracker for the web build: each method posts the same payload
 // electron/preload.cts sends over IPC to the local server (electron/web/server.ts),
@@ -21,10 +21,11 @@ const invoke = async <T>(channel: IpcChannel, payload?: unknown): Promise<T> => 
   return body.result as T
 }
 
-type ServerEvent = 'external-change' | 'agent-retry'
+type ServerEvent = 'external-change' | 'agent-retry' | 'scan-progress'
 const listeners: Record<ServerEvent, Set<(data: unknown) => void>> = {
   'external-change': new Set(),
-  'agent-retry': new Set()
+  'agent-retry': new Set(),
+  'scan-progress': new Set()
 }
 let events: EventSource | undefined
 
@@ -46,6 +47,42 @@ const subscribe = (event: ServerEvent, listener: (data: unknown) => void) => {
   }
 }
 
+// btoa takes a binary string; built in chunks so a 20 MB image doesn't overflow
+// String.fromCharCode's argument limit.
+const toBase64 = (bytes: Uint8Array) => {
+  const CHUNK_SIZE = 0x8000
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+    const chunk = bytes.subarray(offset, offset + CHUNK_SIZE)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+const saveTicketImageBytes = (ticketId: string, bytes: Uint8Array, mimeType: string) =>
+  invoke<string>('ticket-images:save-bytes', { ticketId, bytes: toBase64(bytes), mimeType })
+
+// The browser's own file picker: it can't return paths, so files go up as bytes.
+const chooseImageFiles = () =>
+  new Promise<File[]>((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.accept = 'image/png,image/jpeg,image/gif,image/webp'
+    input.addEventListener('change', () => resolve([...(input.files ?? [])]))
+    input.addEventListener('cancel', () => resolve([]))
+    input.click()
+  })
+
+const pickTicketImages = async (ticketId: string) => {
+  const files = await chooseImageFiles()
+  const saves = files.map(async (file) => {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    return saveTicketImageBytes(ticketId, bytes, file.type)
+  })
+  return Promise.all(saves)
+}
+
 export const webBridge = {
   getProjectState: () => invoke('project-state:get'),
   saveProjectState: (state) => invoke('project-state:save', state),
@@ -53,6 +90,11 @@ export const webBridge = {
   createTicket: (projectPath, ticket) => invoke('ticket:create', { projectPath, ticket }),
   updateTicket: (id, patch) => invoke('ticket:update', { id, patch }),
   deleteTicket: (id) => invoke('ticket:delete', { id }),
+  pickTicketImages,
+  saveTicketImageBytes,
+  removeTicketImage: (ticketId, imagePath) => invoke('ticket-images:remove', { ticketId, imagePath }),
+  openTicketImage: (imagePath) => invoke('ticket-images:open', imagePath),
+  ticketImageUrl: (imagePath) => `/api/ticket-image/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath, lane) => invoke('lane:create', { projectPath, lane }),
   updateLane: (projectPath, laneId, patch) => invoke('lane:update', { projectPath, laneId, patch }),
   reorderLanes: (projectPath, laneIds) => invoke('lane:reorder', { projectPath, laneIds }),
@@ -61,6 +103,8 @@ export const webBridge = {
   onExternalChange: (callback) => subscribe('external-change', () => callback()),
   scanProjectDirectories: (scanDirectories, hiddenPaths, thirdPartyPaths) =>
     invoke('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
+  onScanProgress: (callback) => subscribe('scan-progress', (progress) => callback(progress as ScanProgress)),
+  cancelScan: () => invoke('projects:scan-cancel'),
   pickScanDirectory: () => invoke('dialog:pick-scan-directory'),
   openProjectIn: (projectPath, targetId, command, title) =>
     invoke('project:open-in', { projectPath, targetId, command, title }),

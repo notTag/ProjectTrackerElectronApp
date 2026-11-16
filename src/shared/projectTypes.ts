@@ -76,6 +76,11 @@ export interface ScanFailure {
   message: string
 }
 
+export interface ScanProgress {
+  directoriesSeen: number
+  currentPath: string
+}
+
 export interface ScanResult {
   snapshot: ProjectSnapshot
   failures: ScanFailure[]
@@ -221,9 +226,13 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
-  // Appended, never substituted: the generated orchestrator prompt carries the
-  // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
+  // Appended to the generated orchestrator prompt under "Lane instructions".
+  // Folded into orchestratorPromptOverride on the first edit, and unused while
+  // one is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
+  // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
+  // are filled in. Empty means the generated prompt. Optional so older lanes load.
+  orchestratorPromptOverride?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
@@ -349,6 +358,8 @@ export interface Ticket {
   fullAuto?: boolean
   // Any further http(s) links: design docs, threads, related issues. Absent means none.
   externalLinks?: string[]
+  // Absolute paths of image copies under <userData>/attachments/<ticketId>/. Absent means none.
+  images?: string[]
   // The ticket's own Next Lane, overriding its lane's. Cleared once a completion
   // move lands, so the ticket then inherits; moveOnComplete is what arms it.
   moveToLaneId?: string
@@ -548,6 +559,7 @@ export interface TicketPromptContext {
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
   const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
+  const imageLines = (ticket.images ?? []).map((imagePath) => `- ${imagePath}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -559,6 +571,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
+    imageLines.length ? ['Images (open each path to view it):', ...imageLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')
@@ -632,21 +645,49 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   return guardAgainstOptionParsing(prompt)
 }
 
-export const AGENT_CONTEXT_DIRECTORY = 'agent-context'
+// Each lane's prompt files live together in <project>/SwimlaneAgentPrompt/<lane>/.
+export const SWIMLANE_PROMPT_DIRECTORY = 'SwimlaneAgentPrompt'
+export const AGENT_PROMPT_FILE_NAME = 'AgentPrompt.md'
+export const ORCHESTRATOR_PROMPT_FILE_NAME = 'AgentOrchestratorPrompt.md'
 
-// Path separators become word breaks ("ProjectTracker/electron-app" reads as
-// "ProjectTracker-electron-app"); the other characters filesystems reject are
-// dropped. Leading dots go so a name can't produce a hidden file or "..".
+// Path separators become word breaks ("In Review/QA" reads as "In-Review-QA");
+// the other characters filesystems reject are dropped. Leading dots go so a
+// name can't produce a hidden folder or "..".
 const fileNamePart = (value: string, fallback: string): string => {
   const hyphenated = value.trim().replace(/[\s/\\]+/g, '-')
   const withoutForbidden = hyphenated.replace(/[:*?"<>|]/g, '')
-  const withoutLeadingDots = withoutForbidden.replace(/^\.+/, '')
-  const collapsed = withoutLeadingDots.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
-  return collapsed || fallback
+  const collapsed = withoutForbidden.replace(/-{2,}/g, '-')
+  // Dots and hyphens are stripped together: "../../etc" hyphenates to
+  // "..-..-etc", and stripping one kind first would expose the other.
+  const trimmed = collapsed.replace(/^[.-]+/, '').replace(/-+$/, '')
+  return trimmed || fallback
 }
 
-export const agentMarkdownFileName = (projectName: string, laneName: string): string =>
-  `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentContext.md`
+export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
+
+// Only unindented markers start a rule: indented sub-bullets and sub-steps stay
+// inside their parent rule, indentation intact.
+const BULLET_RULE = /^[-*]\s+(.*)$/
+// Numbered rules keep their number in the text: prompts refer back to "steps 1-5".
+const NUMBERED_RULE = /^\d+[.)]\s/
+
+// A lane prompt read as a list of rules: a bullet or numbered line starts a rule,
+// other lines continue the one before. Text above the first bullet is a rule too.
+export const promptRules = (prompt: string): string[] => {
+  const rules: string[] = []
+  for (const rawLine of prompt.split('\n')) {
+    const line = rawLine.trimEnd()
+    if (!line.trim()) continue
+    const bulletText = BULLET_RULE.exec(line)?.[1]
+    const startsRule = bulletText !== undefined || NUMBERED_RULE.test(line) || rules.length === 0
+    if (startsRule) rules.push(bulletText ?? line.trim())
+    else rules[rules.length - 1] += `\n${line}`
+  }
+  return rules
+}
+
+export const rulesToPrompt = (rules: string[]): string =>
+  rules.map((rule) => (NUMBERED_RULE.test(rule) ? rule : `- ${rule}`)).join('\n')
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
@@ -978,25 +1019,29 @@ const laneInstructionsSection = (lane: SwimLane): string => {
   return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
 }
 
+export const ORCHESTRATOR_PROMPT_TOKENS = {
+  tickets: '{{tickets}}',
+  ticketNumbers: '{{ticket_numbers}}',
+  lanes: '{{lanes}}',
+  terminal: '{{terminal}}'
+} as const
+
+type OrchestratorPromptParts = Record<keyof typeof ORCHESTRATOR_PROMPT_TOKENS, string>
+
+// Without these the orchestrator has nothing to watch.
+const REQUIRED_ORCHESTRATOR_TOKENS = [ORCHESTRATOR_PROMPT_TOKENS.tickets, ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]
+
 // The orchestrator only reports: it shares the DB with the app and the ticket
 // agents, so it is told never to write, and never to steer the other agents.
-export const orchestratorPrompt = (
+// Shared by the launch and by the lane modal's template, so the two can't drift.
+const renderOrchestratorPrompt = (
   lane: SwimLane,
-  entries: AutoRunLaunchEntry[],
+  parts: OrchestratorPromptParts,
   context: OrchestratorPromptContext
 ): string => {
-  const launches = entries.map((entry) => entry.launch)
-  const ticketLines = entries.map(({ ticket, launch }) => {
-    const tabTitle = launch.title ?? `#${launch.number}`
-    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
-  })
-  const laneLines = context.lanes.map(
-    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
-  )
-  const ticketNumbers = launches.map((launch) => launch.number).join(', ')
   const ticketSql = [
     'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
-    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
   const pollSeconds = pollMinutes * 60
@@ -1007,14 +1052,14 @@ export const orchestratorPrompt = (
   return [
     `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
     'You report only. Never write to the database, never move tickets, never edit files, never answer or message the ticket agents.',
-    ['Watch these tickets until each one is done:', ...ticketLines].join('\n'),
-    ['Board lanes (id — name — agent work):', ...laneLines].join('\n'),
+    ['Watch these tickets until each one is done:', parts.tickets].join('\n'),
+    ['Board lanes (id — name — agent work):', parts.lanes].join('\n'),
     ['Ticket state (read-only):', ticketQuery].join('\n'),
     [
       'PR state per ticket (use the branch_name from the database when it differs from the one above):',
       'gh pr list --head <branch> --state all --json number,url,state'
     ].join('\n'),
-    tabSection(context),
+    parts.terminal,
     [
       'Loop:',
       `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
@@ -1029,6 +1074,57 @@ export const orchestratorPrompt = (
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+const orchestratorPromptParts = (
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): OrchestratorPromptParts => {
+  const ticketLines = entries.map(({ ticket, launch }) => {
+    const tabTitle = launch.title ?? `#${launch.number}`
+    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+  })
+  const laneLines = context.lanes.map(
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+  )
+  const ticketNumbers = entries.map(({ launch }) => launch.number).join(', ')
+  return {
+    tickets: ticketLines.join('\n'),
+    ticketNumbers,
+    lanes: laneLines.join('\n'),
+    terminal: tabSection(context)
+  }
+}
+
+// One pass, so a ticket title that happens to contain a token is never
+// expanded a second time. Unknown {{…}} is left as typed.
+const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts): string => {
+  const valueByToken: Record<string, string> = {
+    [ORCHESTRATOR_PROMPT_TOKENS.tickets]: parts.tickets,
+    [ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]: parts.ticketNumbers,
+    [ORCHESTRATOR_PROMPT_TOKENS.lanes]: parts.lanes,
+    [ORCHESTRATOR_PROMPT_TOKENS.terminal]: parts.terminal
+  }
+  return template.replace(/\{\{\w+\}\}/g, (token) => valueByToken[token] ?? token)
+}
+
+// The default prompt for the lane, with launch-time tokens in place of the
+// tickets, lanes and terminal section.
+export const orchestratorPromptTemplate = (lane: SwimLane, context: OrchestratorPromptContext): string =>
+  renderOrchestratorPrompt(lane, ORCHESTRATOR_PROMPT_TOKENS, context)
+
+export const orchestratorPromptMissingTokens = (text: string): string[] =>
+  REQUIRED_ORCHESTRATOR_TOKENS.filter((token) => !text.includes(token))
+
+export const orchestratorPrompt = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): string => {
+  const parts = orchestratorPromptParts(entries, context)
+  const override = lane.orchestratorPromptOverride ?? ''
+  if (!override.trim()) return renderOrchestratorPrompt(lane, parts, context)
+  return fillOrchestratorTokens(override, parts)
 }
 
 export const buildOrchestratorLaunch = (

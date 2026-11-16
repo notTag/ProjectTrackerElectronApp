@@ -28,9 +28,11 @@ import {
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
+import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicketImageBytes } from './ticketImages.js'
 import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
+  AGENT_PROMPT_FILE_NAME,
   availableAgents,
   isUuid,
   pullRequestNumber,
@@ -47,7 +49,8 @@ import {
   type Ticket,
   type TicketWritePatch,
   type LaneWritePatch,
-  type ProjectWritePatch
+  type ProjectWritePatch,
+  type ScanProgress
 } from '../src/shared/projectTypes.js'
 
 export const APP_NAME = 'Project Tracker'
@@ -60,20 +63,25 @@ export const EXTERNAL_CHANGE_POLL_MS = 10_000
 
 export interface HandlerDependencies {
   homeDirectory: string
+  attachmentsRoot: string
   // Runs recorded as running before this moment belong to a process that is gone.
   startedAt: string
   // Absolute path of the chosen folder, or null when the user cancels.
   pickDirectory: () => Promise<string | null>
   writeClipboard: (text: string) => void | Promise<void>
-  // Non-mac folder open; macOS always goes through `open -a <app>`.
-  openPath: (folderPath: string) => Promise<unknown>
+  // Opens a file or folder in its default app: Open In on non-mac, and ticket
+  // images. Resolves to an error message, empty on success (shell.openPath's shape).
+  openPath: (targetPath: string) => Promise<string>
 }
 
 // Per call: which repository (the desktop app has one, the web server one per
-// browser tab) and where an agent's retry notices go.
+// browser tab), where pushes for the caller go, and when the caller's page goes away.
 export interface CallContext {
   repository: StateRepository
   onAgentRetry: (notice: AgentRetryEvent) => void
+  onScanProgress: (progress: ScanProgress) => void
+  // Runs the listener when the caller's page reloads or closes; returns an unsubscribe.
+  onPageGone: (listener: () => void) => () => void
 }
 
 export type IpcHandler = (payload: unknown, context: CallContext) => unknown
@@ -222,10 +230,12 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   laneId: true, title: true, description: true, updatedAt: true, labels: true, branchName: true,
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
-  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true
+  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
+  images: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
+  orchestratorPromptOverride: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
   nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
@@ -302,6 +312,10 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     ghostty: openGhosttyWithCommands
   }
 
+  const { attachmentsRoot } = dependencies
+  // ponytail: one scan app-wide (every web tab included), per-caller controllers if parallel scans ever matter
+  let activeScan: AbortController | null = null
+
   return {
     'project-state:get': (_payload, { repository }) => toPlainJson(repository.getState()),
 
@@ -341,6 +355,36 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { id } = (payload ?? {}) as { id?: unknown }
       if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
       repository.deleteTicket(id)
+      // The row is already gone, so a cleanup failure must not report a failed delete.
+      try {
+        removeTicketImages(attachmentsRoot, id)
+      } catch (error) {
+        console.warn(`Could not remove attachments for ticket ${id}:`, error)
+      }
+    },
+
+    // Pasted, dropped or (on the web) browser-picked image data, which has bytes
+    // but no file path. IPC structured-clones a Uint8Array; the web server's JSON
+    // body carries the same bytes as a base64 string.
+    'ticket-images:save-bytes': (payload) => {
+      const { ticketId, bytes, mimeType } = (payload ?? {}) as { ticketId?: unknown; bytes?: unknown; mimeType?: unknown }
+      const imageBytes = typeof bytes === 'string' ? Buffer.from(bytes, 'base64') : bytes
+      const isValidPayload = typeof ticketId === 'string' && imageBytes instanceof Uint8Array && typeof mimeType === 'string'
+      if (!isValidPayload) throw new Error('Invalid ticket image payload.')
+      return saveTicketImageBytes(attachmentsRoot, ticketId, imageBytes, mimeType)
+    },
+
+    'ticket-images:remove': (payload) => {
+      const { ticketId, imagePath } = (payload ?? {}) as { ticketId?: unknown; imagePath?: unknown }
+      if (typeof ticketId !== 'string' || typeof imagePath !== 'string') throw new Error('Invalid ticket image payload.')
+      removeTicketImage(attachmentsRoot, ticketId, imagePath)
+    },
+
+    'ticket-images:open': async (payload) => {
+      const imagePath = resolveAttachmentPath(attachmentsRoot, String(payload))
+      if (!imagePath) throw new Error('Not a ticket image.')
+      const failureMessage = await dependencies.openPath(imagePath)
+      if (failureMessage) throw new Error(failureMessage)
     },
 
     'lane:create': (payload, { repository }) => {
@@ -375,7 +419,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       return toPlainJson(repository.updateProject(normalizePath(projectPath), patch))
     },
 
-    'projects:scan': (payload) => {
+    'projects:scan': async (payload, { onScanProgress, onPageGone }) => {
       const candidate = (payload ?? {}) as {
         scanDirectories?: unknown
         hiddenPaths?: unknown
@@ -389,11 +433,34 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
         throw new Error('Invalid scan payload.')
       }
 
-      return toPlainJson(scanProjectDirectories(
-        candidate.scanDirectories.map(normalizePath),
-        candidate.hiddenPaths.map(normalizePath),
-        candidate.thirdPartyPaths.map(normalizePath)
-      ))
+      if (activeScan) throw new Error('A scan is already running.')
+
+      const scan = new AbortController()
+      activeScan = scan
+      // A cancelled walk can still be finishing an fs call after a newer scan starts;
+      // its progress must not show up in the newer scan.
+      const sendProgress = (progress: ScanProgress) => {
+        if (activeScan === scan) onScanProgress(progress)
+      }
+      // A reload drops the renderer's scanning state and its Cancel button, so a hung
+      // scan would otherwise block every later scan until restart.
+      const stopWatchingPage = onPageGone(() => scan.abort())
+      try {
+        const result = await scanProjectDirectories(
+          candidate.scanDirectories.map(normalizePath),
+          candidate.hiddenPaths.map(normalizePath),
+          candidate.thirdPartyPaths.map(normalizePath),
+          { signal: scan.signal, onProgress: sendProgress }
+        )
+        return toPlainJson(result)
+      } finally {
+        activeScan = null
+        stopWatchingPage()
+      }
+    },
+
+    'projects:scan-cancel': () => {
+      activeScan?.abort()
     },
 
     'dialog:pick-scan-directory': async () => {
@@ -654,15 +721,14 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       if (!fieldsAreStrings) throw new Error('Invalid save request.')
 
       const normalized = assertScannedProjectPath(repository, projectPath as string)
-      // The name comes from our own state, not the renderer, since it becomes part of a path.
       const project = repository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
       if (!project) throw new Error('Unknown project.')
 
       const target = {
         projectPath: normalized,
-        projectName: project.name,
         laneName: laneName as string,
-        agentFilePath: agentFilePath as string
+        filePath: agentFilePath as string,
+        fileName: AGENT_PROMPT_FILE_NAME
       }
       // Same boundary as every other path IPC: keeps a typed path from reaching
       // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
 // electron-updater exposes `autoUpdater` as a lazy getter on a CommonJS module,
 // which Node's ESM named-export detection cannot see. Default import or bust.
 import electronUpdater from 'electron-updater'
@@ -10,6 +10,7 @@ import { startUpdateCheck } from './autoUpdate.js'
 import { APP_NAME, EXTERNAL_CHANGE_POLL_MS, createIpcHandlers, type CallContext } from './ipcHandlers.js'
 import { DATABASE_FILE_NAME, StateRepository } from './storage/stateRepository.js'
 import { assertTrustedSenderUrl, isAppPageUrl } from './trustedSender.js'
+import { IMAGE_EXTENSIONS, addTicketImages, attachmentsRootOf, resolveAttachmentPath } from './ticketImages.js'
 import { IPC_CHANNELS } from '../src/shared/bridgeApi.js'
 import { isWebUrl } from '../src/shared/projectTypes.js'
 
@@ -29,6 +30,14 @@ app.setName(APP_NAME)
 // (smoke test, corrupt-DB check). Must run before anything reads userData.
 const userDataOverride = process.env.PROJECT_TRACKER_USER_DATA
 if (userDataOverride) app.setPath('userData', path.resolve(userDataOverride))
+const attachmentsRoot = attachmentsRootOf(app.getPath('userData'))
+
+// Dev serves the renderer from the Vite http origin, where Chromium refuses
+// file:// images, so thumbnails load through this scheme in dev and packaged alike.
+const TICKET_IMAGE_SCHEME = 'ticket-image'
+protocol.registerSchemesAsPrivileged([
+  { scheme: TICKET_IMAGE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }
+])
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
 // rasterization (correct DOM, scrambled on-screen text). Software compositing
@@ -185,8 +194,25 @@ const registerIpc = () => {
     nativeTheme.themeSource = type
   })
 
+  // Electron-only: the web build picks files in the browser and sends their bytes.
+  ipcMain.handle('ticket-images:pick', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId } = (payload ?? {}) as { ticketId?: unknown }
+    if (typeof ticketId !== 'string') throw new Error('Invalid ticket image payload.')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Attach images',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }]
+    } satisfies Electron.OpenDialogOptions
+    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (result.canceled) return []
+    return addTicketImages(attachmentsRoot, ticketId, result.filePaths)
+  })
+
   const handlers = createIpcHandlers({
     homeDirectory: app.getPath('home'),
+    attachmentsRoot,
     startedAt: APP_STARTED_AT,
     pickDirectory: async () => {
       const options = {
@@ -206,10 +232,22 @@ const registerIpc = () => {
     ipcMain.handle(channel, (event, payload: unknown) => {
       assertTrustedSender(event)
       const sender = event.sender
+      const sendIfOpen = (channel: string, message: unknown) => {
+        if (!sender.isDestroyed()) sender.send(channel, message)
+      }
       const context: CallContext = {
         repository: stateRepository,
-        onAgentRetry: (notice) => {
-          if (!sender.isDestroyed()) sender.send('ticket:agent-retry', notice)
+        onAgentRetry: (notice) => sendIfOpen('ticket:agent-retry', notice),
+        onScanProgress: (progress) => sendIfOpen('projects:scan-progress', progress),
+        onPageGone: (listener) => {
+          const onNavigation = (navigation: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+            const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
+            if (isPageLoad) listener()
+          }
+          sender.on('did-start-navigation', onNavigation)
+          return () => {
+            if (!sender.isDestroyed()) sender.off('did-start-navigation', onNavigation)
+          }
         }
       }
       return handler(payload, context)
@@ -237,6 +275,14 @@ app.whenReady().then(async () => {
     return
   }
   registerIpc()
+  protocol.handle(TICKET_IMAGE_SCHEME, (request) => {
+    const requestUrl = new URL(request.url)
+    const encodedPath = requestUrl.pathname.slice(1)
+    const requestedPath = decodeURIComponent(encodedPath)
+    const imagePath = resolveAttachmentPath(attachmentsRoot, requestedPath)
+    if (!imagePath) return new Response(null, { status: 404 })
+    return net.fetch(pathToFileURL(imagePath).toString())
+  })
   await createWindow()
 
   setInterval(() => {

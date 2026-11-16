@@ -6,6 +6,7 @@ import type {
   ProjectRecord,
   ProjectTrackerState,
   ProjectWritePatch,
+  ScanProgress,
   ScanResult,
   SwimLane,
   TerminalTab,
@@ -82,8 +83,36 @@ export const projectTrackerApi = {
     return bridge().scanProjectDirectories([...scanDirectories], [...hiddenPaths], [...thirdPartyPaths])
   },
 
+  onScanProgress(callback: (progress: ScanProgress) => void): () => void {
+    return bridge().onScanProgress(callback)
+  },
+
+  cancelScan(): Promise<void> {
+    return bridge().cancelScan()
+  },
+
   pickScanDirectory() {
     return bridge().pickScanDirectory()
+  },
+
+  pickTicketImages(ticketId: string) {
+    return bridge().pickTicketImages(ticketId)
+  },
+
+  saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string) {
+    return bridge().saveTicketImageBytes(ticketId, bytes, mimeType)
+  },
+
+  removeTicketImage(ticketId: string, imagePath: string) {
+    return bridge().removeTicketImage(ticketId, imagePath)
+  },
+
+  openTicketImage(imagePath: string) {
+    return bridge().openTicketImage(imagePath)
+  },
+
+  ticketImageUrl(imagePath: string) {
+    return bridge().ticketImageUrl(imagePath)
   },
 
   openProjectIn(path: string, targetId: string, command?: string, title?: string) {

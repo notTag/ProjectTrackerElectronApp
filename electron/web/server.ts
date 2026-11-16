@@ -18,13 +18,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { APP_NAME, EXTERNAL_CHANGE_POLL_MS, createIpcHandlers, type IpcHandler } from '../ipcHandlers.js'
 import { DATABASE_FILE_NAME, StateRepository } from '../storage/stateRepository.js'
+import { attachmentsRootOf, resolveAttachmentPath } from '../ticketImages.js'
 import { IPC_CHANNELS, type IpcChannel } from '../../src/shared/bridgeApi.js'
 import { isUuid, type AgentRetryEvent } from '../../src/shared/projectTypes.js'
 
 export const DEFAULT_WEB_PORT = 5174
 const LISTEN_HOST = '127.0.0.1'
-// A full project-state:save is the biggest body; 10 MB is far past any real one.
-const MAX_BODY_BYTES = 10 * 1024 * 1024
+// The biggest body is a 20 MB image (MAX_IMAGE_BYTES) as base64, about 27 MB.
+const MAX_BODY_BYTES = 32 * 1024 * 1024
 // A reload drops the SSE stream for a moment; keep the tab's repository (and
 // its diff baseline) across that instead of starting it over.
 const CLIENT_GRACE_MS = 30_000
@@ -35,6 +36,10 @@ const CONTENT_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.json': 'application/json',
   '.woff2': 'font/woff2'
@@ -43,7 +48,9 @@ const CONTENT_TYPES: Record<string, string> = {
 const SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'Content-Security-Policy': "frame-ancestors 'none'",
-  'X-Content-Type-Options': 'nosniff'
+  'X-Content-Type-Options': 'nosniff',
+  // Other sites can't even embed a response (e.g. an attachment as <img>).
+  'Cross-Origin-Resource-Policy': 'same-origin'
 }
 
 // One repository per browser tab (D1 in docs/prd/t85-web-app-parity.md): each
@@ -53,6 +60,8 @@ const SECURITY_HEADERS = {
 interface Client {
   repository: StateRepository
   streams: Set<ServerResponse>
+  // Fired when the tab's last event stream closes (reload or close).
+  pageGoneListeners: Set<() => void>
   closeTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -129,17 +138,23 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     )
   }
 
+  const attachmentsRoot = attachmentsRootOf(options.userDataPath)
   const handlers: Record<IpcChannel, IpcHandler> = createIpcHandlers({
     homeDirectory: homedir(),
+    attachmentsRoot,
     startedAt: new Date().toISOString(),
     pickDirectory: options.pickDirectory ?? chooseFolderWithOsascript,
     writeClipboard: async (text) => {
       await runFile('pbcopy', [], text)
     },
-    // ponytail: macOS only, like the rest of the launch features. Rejecting
-    // sends Open In to its clipboard fallback.
-    openPath: async () => {
-      throw new Error('Opening folders is only supported on macOS.')
+    // Same contract as shell.openPath: an error message, empty on success.
+    openPath: async (targetPath) => {
+      try {
+        await runFile('open', [targetPath])
+        return ''
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
     }
   })
 
@@ -151,7 +166,7 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
   const clientFor = (clientId: string) => {
     let client = clients.get(clientId)
     if (!client) {
-      client = { repository: new StateRepository(options.userDataPath), streams: new Set() }
+      client = { repository: new StateRepository(options.userDataPath), streams: new Set(), pageGoneListeners: new Set() }
       clients.set(clientId, client)
     }
     return client
@@ -203,7 +218,12 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     try {
       const result = await handlers[channel](payload, {
         repository: client.repository,
-        onAgentRetry: (notice: AgentRetryEvent) => pushEvent(client, 'agent-retry', notice)
+        onAgentRetry: (notice: AgentRetryEvent) => pushEvent(client, 'agent-retry', notice),
+        onScanProgress: (progress) => pushEvent(client, 'scan-progress', progress),
+        onPageGone: (listener) => {
+          client.pageGoneListeners.add(listener)
+          return () => client.pageGoneListeners.delete(listener)
+        }
       })
       // undefined has no JSON form; void handlers answer { } and the bridge reads undefined.
       sendJson(response, 200, result === undefined ? {} : { result })
@@ -226,7 +246,9 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     client.streams.add(response)
     request.on('close', () => {
       client.streams.delete(response)
-      if (client.streams.size === 0) client.closeTimer = setTimeout(() => dropClient(clientId), CLIENT_GRACE_MS)
+      if (client.streams.size > 0) return
+      for (const listener of client.pageGoneListeners) listener()
+      client.closeTimer = setTimeout(() => dropClient(clientId), CLIENT_GRACE_MS)
     })
   }
 
@@ -238,6 +260,14 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     }
   }
 
+  const sendFile = (response: ServerResponse, filePath: string | null) => {
+    const isFile = filePath !== null && statSync(filePath, { throwIfNoEntry: false })?.isFile()
+    if (!isFile) return reject(response, 404, 'Not found.')
+    const contentType = CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+    response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': contentType })
+    response.end(readFileSync(filePath))
+  }
+
   const serveStatic = (response: ServerResponse, urlPath: string) => {
     // A bad %-escape throws, and a throw here would take the whole server down.
     const decoded = decodedPath(urlPath)
@@ -245,11 +275,14 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     const relativePath = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '')
     const filePath = path.resolve(staticRoot, relativePath)
     const isInsideRoot = filePath.startsWith(`${staticRoot}${path.sep}`)
-    const isFile = isInsideRoot && statSync(filePath, { throwIfNoEntry: false })?.isFile()
-    if (!isFile) return reject(response, 404, 'Not found.')
-    const contentType = CONTENT_TYPES[path.extname(filePath)] ?? 'application/octet-stream'
-    response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': contentType })
-    response.end(readFileSync(filePath))
+    sendFile(response, isInsideRoot ? filePath : null)
+  }
+
+  // The web twin of Electron's ticket-image:// scheme, confined the same way.
+  const serveTicketImage = (response: ServerResponse, encodedPath: string) => {
+    const decoded = decodedPath(encodedPath)
+    if (decoded === undefined) return reject(response, 400, 'Malformed path.')
+    sendFile(response, resolveAttachmentPath(attachmentsRoot, decoded))
   }
 
   const server = createServer((request, response) => {
@@ -263,6 +296,10 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     }
     if (request.method === 'GET' && url.pathname === '/api/events') {
       return handleEvents(request, response, clientIdOf(url.searchParams.get('client')))
+    }
+    const ticketImagePrefix = '/api/ticket-image/'
+    if (request.method === 'GET' && url.pathname.startsWith(ticketImagePrefix)) {
+      return serveTicketImage(response, url.pathname.slice(ticketImagePrefix.length))
     }
     if (request.method === 'GET' && !url.pathname.startsWith('/api/')) return serveStatic(response, url.pathname)
     reject(response, 404, 'Not found.')

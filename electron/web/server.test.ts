@@ -131,6 +131,31 @@ describe('web server', () => {
     })
   })
 
+  describe('ticket images', () => {
+    it('saves base64 bytes, serves them back, and serves nothing outside the attachments folder', async () => {
+      const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47])
+      const imagePath = (await invoke('ticket-images:save-bytes', {
+        ticketId: 't1',
+        bytes: pngBytes.toString('base64'),
+        mimeType: 'image/png'
+      })) as string
+      expect(imagePath.startsWith(path.join(userDataPath, 'attachments', 't1'))).toBe(true)
+
+      const host = { Host: new URL(running.url).host }
+      const served = await send(running.url, { path: `/api/ticket-image/${encodeURIComponent(imagePath)}`, headers: host })
+      expect(served.status).toBe(200)
+      expect(served.headers['content-type']).toBe('image/png')
+      expect(served.headers['cross-origin-resource-policy']).toBe('same-origin')
+
+      const outside = await send(running.url, { path: `/api/ticket-image/${encodeURIComponent('/etc/hosts')}`, headers: host })
+      expect(outside.status).toBe(404)
+
+      await invoke('ticket-images:remove', { ticketId: 't1', imagePath })
+      const removed = await send(running.url, { path: `/api/ticket-image/${encodeURIComponent(imagePath)}`, headers: host })
+      expect(removed.status).toBe(404)
+    })
+  })
+
   describe('lanes', () => {
     it('creates, updates, reorders and deletes', async () => {
       await invoke('lane:create', { projectPath, lane: { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' } })

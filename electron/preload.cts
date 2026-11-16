@@ -6,6 +6,7 @@ import type {
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
+  ScanProgress,
   SwimLane,
   TerminalTab,
   Ticket,
@@ -41,6 +42,14 @@ contextBridge.exposeInMainWorld('projectTracker', {
   createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
   updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
   deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
+  // Electron-only channel: the web bridge picks files in the browser and sends their bytes.
+  pickTicketImages: (ticketId: string) => ipcRenderer.invoke('ticket-images:pick', { ticketId }),
+  saveTicketImageBytes: (ticketId: string, bytes: Uint8Array, mimeType: string) =>
+    ipcRenderer.invoke('ticket-images:save-bytes', { ticketId, bytes, mimeType }),
+  removeTicketImage: (ticketId: string, imagePath: string) =>
+    invokePlain('ticket-images:remove', { ticketId, imagePath }),
+  openTicketImage: (imagePath: string) => invokePlain('ticket-images:open', imagePath),
+  ticketImageUrl: (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
   updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
     invokePlain('lane:update', { projectPath, laneId, patch }),
@@ -57,6 +66,12 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
+  onScanProgress: (callback: (progress: ScanProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => callback(progress)
+    ipcRenderer.on('projects:scan-progress', listener)
+    return () => ipcRenderer.removeListener('projects:scan-progress', listener)
+  },
+  cancelScan: () => invokePlain('projects:scan-cancel'),
   pickScanDirectory: () => invokePlain('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),
