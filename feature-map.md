@@ -109,6 +109,7 @@ From left to right:
 | **Theme** picker | See 1.5 |
 | **Add** | Opens the native folder dialog, adds the chosen folder to the scan directories, then runs a full scan. Disabled while a scan is running |
 | **Dirs** | Shows or hides the Scan directories panel (2.2) |
+| **📊 Metrics** | Popover table for every project in the current list (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. **↻** pulls fresh numbers. Its open state is remembered per view |
 | **Scan** / **Scanning...** | Rescans every scan directory. Disabled while scanning or when there are no scan directories. Tooltip: "A '.git' must be present in order for the project to appear." (see 5) |
 
 ### 2.2 Scan directories panel (toggled by Dirs)
@@ -143,6 +144,8 @@ Eight clickable counters. Clicking a tile applies its filter, and clicking it ag
 | Hidden | status hidden or path in the hidden list | sets the status filter to Hidden, which shows the hidden projects |
 
 The selected tile is highlighted. Changing a filter by hand in the toolbar deselects the tile.
+
+**Active** is selected when the Dashboard opens, and again each time you come back from a board, since the view remounts.
 
 ### 2.5 Toolbar (search, filter, sort)
 
@@ -197,6 +200,12 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
 - States: "Loading README...", an error message, "No README found.", or the rendered file with its filename above it.
 - A small built-in renderer handles headings (#, ## and ###), bullet lists, fenced code blocks, inline code, bold, italics and http(s) links. Output is sanitized with DOMPurify.
 
+#### Expanded card, Metrics tab
+
+- `src/components/CardMetrics.vue`, loaded each time the card expands.
+- Bar charts for **Tickets closed** and **PRs merged** per time window (plain CSS bars). Without a closing lane it says "No lane counts as closed — set one in lane settings"; without a repo or on a failed fetch it says why.
+- Tiles for **PRs open** and **Agents running** ("—" when processes can't be listed), and an "Updated <time>" line.
+
 #### Empty state
 
 When nothing matches: "No projects match the current view. Adjust filters or add another scan directory."
@@ -235,6 +244,7 @@ From left to right:
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
 | **⚙ Display** | Opens the Display settings modal (3.5) |
+| **📊 Metrics** | The same popover as the Dashboard's (2.1), for this project only |
 
 ### 3.2 Notices and errors
 
@@ -251,6 +261,7 @@ See 1.7. Board notices include:
 From left to right:
 
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
+  - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
 - **All swim lanes** select: limits the board to a single column.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
@@ -270,6 +281,7 @@ From left to right:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
+- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while the lane filter shows a single column.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
 
@@ -283,7 +295,10 @@ From left to right:
   - **Labels** as chips
   - **☑ done/total** checklist progress
   - **⑂ branch**
+  - **⌂ worktree** folder name (full path on hover)
   - **v1.4.0** semantic version
+  - **PR #N ↗** link, with a dot for the PR's state (open, draft, merged, closed). Clicking it opens the PR without opening the ticket
+- **Agent run badge**: running, ✓ succeeded, failed, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
 
 ### 3.5 Display settings modal (⚙ Display)
 
@@ -333,6 +348,11 @@ In graph view this opens as a side panel instead of a centered modal.
 | Worktree | Absolute path to a worktree. Cleared when left empty |
 | Version | Semantic version, `MAJOR.MINOR.PATCH` with optional `-prerelease` / `+build`. A leading `v` is dropped. Anything else shows "Use MAJOR.MINOR.PATCH, like 1.4.0" and isn't saved. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
+
+**Merge Request**
+
+- A state pill (open, draft, merged, closed, or none), "Merged <date time>" for merged PRs, a link to the PR, and a **Refresh from GitHub** button.
+- State comes from GitHub: a PR with `merged_at` is merged, otherwise closed or open, and draft only while open. Opening a board refreshes tickets that have a branch or PR URL and whose PR isn't settled yet.
 
 **External Links**
 
@@ -416,6 +436,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 ### 3.10 GitHub issue import (⇣ Pull issues)
 
+- Opening a board with a GitHub repo pulls automatically, once per project per app launch (`autoPulledProjects` in `projects.ts`). The button runs the same pull on demand.
 - Fetches open issues, up to 5 pages of 100. Pull requests are skipped.
 - The first import creates a **GitHub Issues** lane at the far left.
 - Each issue becomes a ticket:
@@ -433,6 +454,8 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
 - Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
+- Tab titles are `#N <title>` (`ticketTabTitle`), the same for ⌁ Run in. The orchestrator tab matches tickets by that `#N ` prefix.
+- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name 'Ticket #N'` (`ticketSessionName`).
 - How each terminal does it:
   - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
