@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
+import MetricsPanel from '@/components/MetricsPanel.vue'
+import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
+import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
@@ -11,12 +14,19 @@ import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
   TICKET_CARD_FIELDS,
+  normalizeSemanticVersion,
   TICKET_DESCRIPTION_TEMPLATE,
   addChecklistItem,
+  addExternalLink,
   agentForTicket,
+  agentRunBadge,
+  canResume,
+  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
+  orchestratorAgentChoice,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -24,15 +34,24 @@ import {
   isFullAuto,
   isWebUrl,
   moveLaneInBoard,
+  orchestratorPollActive,
+  orchestratorPollMinutes,
   parseLabels,
   pullRequestLabel,
+  pullRequestStatusLabel,
   removeChecklistItem,
+  removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
   getUnassignedLane,
+  boardLaneColumns,
+  effectiveNextLaneId,
+  boardLaneById,
+  hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
+  ticketTabTitle,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -43,7 +62,8 @@ import {
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
   type SwimLane,
-  type Ticket
+  type Ticket,
+  type TicketPatch
 } from '@/shared/projectTypes'
 
 const route = useRoute()
@@ -75,9 +95,16 @@ const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
 
-const ticketDraft = ref<{ title: string; description: string; laneId: string } | null>(null)
+// nextLaneId stays null until the user picks one, so the field follows the
+// Status lane's default as Status changes.
+const ticketDraft = ref<{ title: string; description: string; laneId: string; nextLaneId: string | null } | null>(
+  null
+)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
+const linkDraft = ref('')
+const linkDraftInvalid = ref(false)
+const linkInput = ref<HTMLInputElement | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -88,15 +115,16 @@ const anyModalOpen = computed(
         openLaneId.value ||
         ticketDraft.value ||
         laneDraftName.value !== null ||
-        autoRunConfirmLaneId.value
+        autoRunConfirmLaneId.value ||
+        ticketPendingDeletion.value
     ) || boardSettingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
 // so it carries its own agent prompt without ever becoming deletable.
-const unassignedLane = computed(() => getUnassignedLane(board.value))
+const laneColumns = computed(() => boardLaneColumns(board.value))
 
-const laneColumns = computed(() => [unassignedLane.value, ...board.value.lanes])
+const unassignedLane = computed(() => laneColumns.value[0])
 
 // Widths, hidden columns and card fields are this user's view of a shared
 // board, so they persist alongside the board rather than in component state.
@@ -115,8 +143,9 @@ const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(
 const laneTicketTotal = (laneId: string) =>
   board.value.tickets.filter((ticket) => ticket.laneId === laneId).length
 
-// The columns worth an explicit show/hide chip: both arrive by import rather
-// than by choice, so they are the ones a board wants out of the way.
+// The columns worth a header quick-toggle chip: both arrive by import rather
+// than by choice, so they are the ones a board wants out of the way. The
+// Display modal lists every column instead (laneColumns).
 const githubImportLane = computed(
   () => board.value.lanes.find((lane) => lane.id === GITHUB_IMPORT_LANE_ID) ?? null
 )
@@ -350,12 +379,130 @@ const clearFilters = () => {
   showOnlyMine.value = false
 }
 
-const assignToMe = (ticket: Ticket) => {
-  const nextAssigneeId = ticket.assigneeId === store.state.userId ? undefined : store.state.userId
-  editTicket(ticket, { assigneeId: nextAssigneeId })
+// Fields save on change, so Cancel can't just drop a draft. Instead each field
+// keeps the value it held just before its first edit this session. Captured at
+// edit time, not on open, so a write that lands from elsewhere (a background
+// run, an agent, a drag) before the user touches that field is never undone.
+// A field that was unset keeps its key as undefined, which clears it on restore.
+const valuesBeforeEdit = new Map<keyof TicketPatch, unknown>()
+
+watch(openTicketId, () => valuesBeforeEdit.clear())
+
+const rememberValuesBeforeEdit = (ticket: Ticket, patch: TicketPatch) => {
+  const editedFields = Object.keys(patch) as (keyof TicketPatch)[]
+  for (const field of editedFields) {
+    if (valuesBeforeEdit.has(field)) continue
+    const currentValue = toRaw(ticket[field])
+    valuesBeforeEdit.set(field, structuredClone(currentValue))
+  }
+}
+
+const cancelTicketEdits = () => {
+  const ticketId = openTicketId.value
+  const restorePatch: TicketPatch = Object.fromEntries(valuesBeforeEdit)
+  closeModals()
+  if (ticketId && valuesBeforeEdit.size > 0) void store.updateTicket(projectPath.value, ticketId, restorePatch)
+}
+
+const ticketPendingDeletion = ref<Ticket | null>(null)
+const deleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
+
+// The ticket can vanish underneath the confirm (agent, poll); drop the stale question.
+watch(openTicket, (ticket) => {
+  if (!ticket) ticketPendingDeletion.value = null
+})
+
+// Focus lands on Cancel so a stray Enter can't delete the ticket.
+const askToDeleteTicket = async (ticket: Ticket) => {
+  ticketPendingDeletion.value = ticket
+  await nextTick()
+  deleteConfirmCancelButton.value?.focus()
+}
+
+const confirmDeleteTicket = async () => {
+  const ticket = ticketPendingDeletion.value
+  ticketPendingDeletion.value = null
+  if (ticket) await deleteTicket(ticket)
 }
 
 const pullIssues = () => store.pullGithubIssues(projectPath.value)
+
+const pullRequestRefreshing = ref(false)
+const pullRequestError = ref<string | null>(null)
+
+const refreshOpenTicketPullRequest = async () => {
+  const ticket = openTicket.value
+  if (!ticket) return
+  pullRequestRefreshing.value = true
+  pullRequestError.value = null
+  try {
+    await store.refreshPullRequest(projectPath.value, ticket)
+  } catch (error) {
+    pullRequestError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    pullRequestRefreshing.value = false
+  }
+}
+
+const versionInvalid = ref(false)
+
+// An invalid value is kept in the input with an error instead of being saved.
+// A valid one is written back so "v1.4.0" shows as the "1.4.0" it saved as,
+// even when that equals the stored value and Vue sees nothing to re-render.
+const editTicketVersion = (ticket: Ticket, input: HTMLInputElement) => {
+  const version = normalizeSemanticVersion(input.value)
+  versionInvalid.value = version === null
+  if (version === null) return
+  input.value = version ?? ''
+  editTicket(ticket, { version })
+}
+
+// A version written from outside (an agent's sqlite3 UPDATE) replaces whatever
+// invalid text the error was about.
+watch(() => openTicket.value?.version, () => {
+  versionInvalid.value = false
+})
+
+watch(openTicketId, (ticketId) => {
+  pullRequestError.value = null
+  versionInvalid.value = false
+  if (ticketId) void refreshOpenTicketPullRequest()
+})
+
+// A new URL points at a different PR, so the cached state is dropped rather
+// than shown against it until the refresh lands.
+const overridePullRequestUrl = async (ticket: Ticket, rawUrl: string) => {
+  await store.updateTicket(projectPath.value, ticket.id, {
+    pullRequestUrl: rawUrl.trim() || undefined,
+    pullRequestState: undefined,
+    pullRequestMergedAt: undefined
+  })
+  await refreshOpenTicketPullRequest()
+}
+
+// Once per board per visit; githubUrl is in the source so a board opened before
+// state finished loading still gets its refresh when the project arrives.
+const boardsWithRefreshedPullRequests = new Set<string>()
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (!url || boardsWithRefreshedPullRequests.has(path)) return
+    boardsWithRefreshedPullRequests.add(path)
+    void store.refreshBoardPullRequests(path)
+  },
+  { immediate: true }
+)
+
+// Keyed on githubUrl too: on a deep link the project isn't loaded yet, so the
+// pull waits for the url to show up instead of seeing "no repo" and skipping.
+// The board route is reused across projects, hence a watch, not onMounted.
+watch(
+  [projectPath, githubUrl],
+  ([path, url]) => {
+    if (url) void store.autoPullGithubIssues(path)
+  },
+  { immediate: true }
+)
 
 const closeModals = () => {
   openTicketId.value = null
@@ -364,7 +511,10 @@ const closeModals = () => {
   laneDraftName.value = null
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
+  ticketPendingDeletion.value = null
   checklistDraft.value = ''
+  linkDraft.value = ''
+  linkDraftInvalid.value = false
 }
 
 const focusTicketFilter = () => {
@@ -390,6 +540,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
+  // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
+  if (ticketPendingDeletion.value) {
+    ticketPendingDeletion.value = null
+    event.preventDefault()
+    return
+  }
   if (anyModalOpen.value) {
     closeModals()
     event.preventDefault()
@@ -398,6 +554,8 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   // The shortcut lands people in the filter, so Escape there should only leave
   // the filter, not the board.
   if (event.target === filterQueryInput.value) {
+    // A search input's default Escape action clears its value; keep the text.
+    event.preventDefault()
     filterQueryInput.value?.blur()
     return
   }
@@ -414,20 +572,40 @@ onBeforeUnmount(() => {
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
-  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId }
+  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null }
 }
+
+const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
+
+const draftNextLaneId = computed(() => {
+  const draft = ticketDraft.value
+  if (!draft) return ''
+  // A pick made before Status changed to that same lane would be a no-op target.
+  const pickIsStatusLane = draft.nextLaneId === draft.laneId
+  if (draft.nextLaneId === null || pickIsStatusLane) return laneNextLaneId(draft.laneId)
+  return draft.nextLaneId
+})
 
 const saveTicketDraft = async () => {
   const draft = ticketDraft.value
   if (!draft || !draft.title.trim()) return
   const description = draft.description.trim()
   const templateWasLeftUntouched = description === TICKET_DESCRIPTION_TEMPLATE.trim()
+  const resolvedNextLaneId = draftNextLaneId.value
+  // Matching the lane default is stored as no override, so the ticket keeps
+  // inheriting if the lane's Next Lane changes later.
+  const overridesLaneDefault = resolvedNextLaneId !== laneNextLaneId(draft.laneId)
+  const completion = {
+    moveToLaneId: overridesLaneDefault && resolvedNextLaneId ? resolvedNextLaneId : undefined,
+    moveOnComplete: Boolean(resolvedNextLaneId)
+  }
   ticketDraft.value = null
   await store.addTicket(
     projectPath.value,
     draft.laneId,
     draft.title.trim(),
-    templateWasLeftUntouched ? '' : description
+    templateWasLeftUntouched ? '' : description,
+    completion
   )
 }
 
@@ -448,7 +626,9 @@ const deleteTicket = async (ticket: Ticket) => {
   await store.removeTicket(projectPath.value, ticket.id)
 }
 
-const editTicket = (ticket: Ticket, patch: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>) => {
+const editTicket = (ticket: Ticket, patch: TicketPatch) => {
+  const editsOpenTicket = ticket.id === openTicketId.value
+  if (editsOpenTicket) rememberValuesBeforeEdit(ticket, patch)
   void store.updateTicket(projectPath.value, ticket.id, patch)
 }
 
@@ -467,8 +647,51 @@ const toggleChecklistItem = (ticket: Ticket, index: number, done: boolean) =>
 const dropChecklistItem = (ticket: Ticket, index: number) =>
   editTicket(ticket, { checklist: removeChecklistItem(ticket.checklist, index) })
 
+// Invalid input keeps its text so it can be fixed; a duplicate clears, since
+// that link is already listed above.
+const addLinkDraft = (ticket: Ticket) => {
+  const url = linkDraft.value.trim()
+  if (!url) return
+  linkInput.value?.focus()
+  if (!isWebUrl(url)) {
+    linkDraftInvalid.value = true
+    return
+  }
+  linkDraft.value = ''
+  const isAlreadyListed = ticket.externalLinks?.includes(url)
+  if (!isAlreadyListed) editTicketLinks(ticket, (links) => addExternalLink(links, url))
+}
+
+const dropExternalLink = (ticket: Ticket, link: string) =>
+  editTicketLinks(ticket, (links = []) => removeExternalLink(links, links.indexOf(link)))
+
+// Store state only refreshes after the IPC save returns, so the new list is
+// computed inside the queued mutate from the latest saved links: two quick
+// adds or removes in a row would otherwise overwrite each other.
+const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  void store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const links = change(current.externalLinks)
+      return { ...current, externalLinks: links.length ? links : undefined, updatedAt }
+    })
+  }))
+}
+
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
+}
+
+const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) => {
+  const minutes = input.valueAsNumber
+  const isWholeMinutes = Number.isInteger(minutes) && minutes >= 1
+  if (!isWholeMinutes) {
+    input.value = String(orchestratorPollMinutes(lane))
+    return
+  }
+  editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
 // Live copies of the two lane fields, because both inputs only commit on blur:
@@ -535,7 +758,48 @@ const formatDateTime = (value: string) => {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-const laneName = (laneId: string) => board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
+const laneName = (laneId: string) => {
+  if (laneId === UNASSIGNED_LANE_ID) return unassignedLane.value.name
+  return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
+}
+
+const openTicketNextLaneId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket) return undefined
+  return effectiveNextLaneId(ticket, boardLaneById(board.value, ticket.laneId))
+})
+
+// '' = inherit. A stale override naming the ticket's own lane shows as inherit
+// too, matching how effectiveNextLaneId resolves it.
+const openTicketOverrideId = computed(() => {
+  const ticket = openTicket.value
+  if (!ticket?.moveToLaneId || ticket.moveToLaneId === ticket.laneId) return ''
+  return ticket.moveToLaneId
+})
+
+const openTicketLaneDefaultLabel = computed(() => {
+  const ticket = openTicket.value
+  const laneDefaultId = ticket ? laneNextLaneId(ticket.laneId) : ''
+  return laneDefaultId ? `Lane default: ${laneName(laneDefaultId)}` : 'None'
+})
+
+// Next Lane targets for a ticket: No status and every lane, minus the lane the
+// ticket is in (moving to it is a no-op).
+const nextLaneOptionsFor = (currentLaneId: string) =>
+  laneColumns.value.filter((lane) => lane.id !== currentLaneId)
+
+// Picking a lane arms it — the checkbox starts ticked. Picking the lane default
+// (or the lane it already inherits) drops the override, so the ticket follows
+// later changes to its lane's Next Lane; it stays armed only if there is one.
+const setMoveToLane = (ticket: Ticket, laneId: string) => {
+  const laneDefaultId = laneNextLaneId(ticket.laneId)
+  const overridesLaneDefault = laneId !== '' && laneId !== laneDefaultId
+  if (overridesLaneDefault) {
+    editTicket(ticket, { moveToLaneId: laneId, moveOnComplete: true })
+    return
+  }
+  editTicket(ticket, { moveToLaneId: undefined, moveOnComplete: Boolean(laneDefaultId) })
+}
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
 // different instruction once it moves column.
@@ -543,12 +807,30 @@ const laneOfTicket = (ticket: Ticket) =>
   laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
 
 const promptContext = (ticket: Ticket) => ({
-  assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined
+  assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined,
+  projectPath: projectPath.value
 })
 
 const ticketCommand = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
-  return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket))
+  return ticketShellCommand(ticket, laneOfTicket(ticket), agent, promptContext(ticket), ticket.model)
+}
+
+const trimmedInputValue = (event: Event) => (event.target as HTMLInputElement).value.trim() || undefined
+
+// A model id belongs to one CLI ('opus' means nothing to Codex), so switching
+// the agent clears it rather than handing the new CLI a model it can't run.
+// An orchestrator left on "Same as ticket agent" follows the ticket agent, so
+// its model is cleared along with it.
+const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
+  const orchestratorFollowsTicketAgent = !lane.orchestratorAgentId
+  const orchestratorModelPatch = orchestratorFollowsTicketAgent ? { orchestratorModel: undefined } : {}
+  editLane(lane, { autoRunAgentId, autoRunModel: undefined, ...orchestratorModelPatch })
+}
+
+const changeAutoRunConfirmAgent = () => {
+  autoRunConfirmModel.value = ''
+  if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
 }
 
 // Runs what the lane shows: an active filter narrows the batch, so the button
@@ -573,11 +855,18 @@ const autoRunTooltip = (lane: SwimLane) => {
 // one run pick a different agent or terminal without changing the lane.
 const autoRunConfirmLaneId = ref<string | null>(null)
 const autoRunConfirmAgentId = ref('')
+const autoRunConfirmModel = ref('')
+// '' = same as the ticket agent, matching an absent lane.orchestratorAgentId.
+const autoRunConfirmOrchestratorAgentId = ref('')
+const autoRunConfirmOrchestratorModel = ref('')
 const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
 const askToAutoRunLane = (lane: SwimLane) => {
   autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
+  autoRunConfirmModel.value = lane.autoRunModel ?? ''
+  autoRunConfirmOrchestratorAgentId.value = lane.orchestratorAgentId ?? ''
+  autoRunConfirmOrchestratorModel.value = lane.orchestratorModel ?? ''
   autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
   autoRunConfirmLaneId.value = lane.id
 }
@@ -587,27 +876,83 @@ const confirmAutoRunLane = () => {
   autoRunConfirmLaneId.value = null
   if (!lane) return
   const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  const model = autoRunConfirmModel.value
   const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
   const launches = autoRunTickets(lane).map((ticket) =>
-    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees)
+    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
   )
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees)
+  const orchestratorContext = {
+    projectPath: projectPath.value,
+    lanes: [...board.value.lanes, getUnassignedLane(board.value)],
+    terminalId: terminal.id,
+    terminalLabel: terminal.label
+  }
+  const orchestratorSettings = {
+    orchestratorAgentId: autoRunConfirmOrchestratorAgentId.value || undefined,
+    orchestratorModel: autoRunConfirmOrchestratorModel.value
+  }
+  const orchestratorChoice = orchestratorAgentChoice(orchestratorSettings, { agent, model }, agents.value)
+  const orchestrator = buildOrchestratorLaunch(
+    lane,
+    launches,
+    orchestratorChoice.agent,
+    orchestratorContext,
+    orchestratorChoice.model
+  )
+  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees, orchestrator)
 }
 
-const openTicketInShell = (ticket: Ticket) =>
-  store.openIn(projectPath.value, openInStore.selectedId, ticketCommand(ticket))
-
-// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
-const agentFinishedInCurrentLane = (ticket: Ticket) => {
-  const lastRun = ticket.agentRun
-  return lastRun?.succeeded === true && lastRun.laneId === ticket.laneId
+const openTicketInShell = (ticket: Ticket) => {
+  const command = ticketCommand(ticket)
+  const tabTitle = ticketTabTitle(ticket)
+  return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
+
+// Glyphs, not just colour, tell success from failure.
+const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
+  running: { className: 'agent-status-running', label: 'Agent running' },
+  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
+  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
+  interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
+}
+
+const cardAgentBadge = (ticket: Ticket) => {
+  const running = Boolean(store.agentRunning[ticket.id])
+  const badge = agentRunBadge(ticket, running)
+  return badge ? AGENT_BADGES[badge] : null
+}
+
+// A re-running ticket shows the running dot, not its old result, so the lane
+// count leaves it out too.
+const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
+const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
+
+// Watching the open ticket (not the card click) also covers opening from the
+// graph view, and a run that finishes while its modal is already open.
+// Only unseen runs are written, so reopening a ticket doesn't touch it.
+watch(
+  () => openTicket.value?.agentRun,
+  (agentRun) => {
+    const ticket = openTicket.value
+    if (!ticket || !agentRun || agentRun.seenAt !== undefined) return
+    void store.markAgentRunSeen(projectPath.value, ticket.id, agentRun.at)
+  },
+  { immediate: true }
+)
+
+// The run's own agent, not the ticket's current pick: only the CLI that
+// started a session can resume it.
+const ticketCanResume = (ticket: Ticket) => {
+  const runAgent = findAgent(agents.value, ticket.agentRun?.agentId ?? ticket.agentId)
+  return canResume(ticket, runAgent)
+}
+
+const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
@@ -621,6 +966,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <span class="titlebar-title">{{ projectTitle }}</span>
     <div class="titlebar-actions">
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
+      <MetricsPanel :project-paths="[projectPath]" scope="board" />
       <OpenInPicker />
       <button
         class="secondary"
@@ -656,21 +1002,13 @@ const runTicketAgent = (ticket: Ticket) => {
   </header>
 
   <main class="app-shell board-shell">
-    <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
-      </div>
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
-      </div>
-    </section>
+    <MessageBanners />
 
     <section class="board-filters">
       <input
         ref="filterQueryInput"
         v-model="filterQuery"
+        type="search"
         class="filter-query"
         aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
         :class="{ active: filterQuery }"
@@ -711,7 +1049,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -759,6 +1097,13 @@ const runTicketAgent = (ticket: Ticket) => {
         >
           <h2>{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span
+            v-if="unseenAgentResultCount(lane.id) > 0"
+            class="lane-unseen-count"
+            role="img"
+            :aria-label="`${unseenAgentResultCount(lane.id)} unseen agent results`"
+            title="Agent results you haven't opened yet"
+          >{{ unseenAgentResultCount(lane.id) }}</span>
           <button
             class="icon-button auto-run-button"
             :title="autoRunTooltip(lane)"
@@ -801,19 +1146,12 @@ const runTicketAgent = (ticket: Ticket) => {
             />
             <h3>
               <span
-                v-if="store.agentRunning[ticket.id]"
-                class="agent-status agent-status-running"
+                v-if="cardAgentBadge(ticket)"
+                :class="['agent-status', cardAgentBadge(ticket)?.className]"
                 role="img"
-                aria-label="Agent running"
-                title="Agent running"
-              />
-              <span
-                v-else-if="agentFinishedInCurrentLane(ticket)"
-                class="agent-status agent-status-done"
-                role="img"
-                aria-label="Agent finished"
-                title="Agent finished"
-              >✓</span>
+                :aria-label="cardAgentBadge(ticket)?.label"
+                :title="cardAgentBadge(ticket)?.label"
+              >{{ cardAgentBadge(ticket)?.glyph }}</span>
               <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span
@@ -836,6 +1174,7 @@ const runTicketAgent = (ticket: Ticket) => {
                 (showsField('checklist') && ticket.checklist?.length) ||
                 (showsField('branch') && ticket.branchName) ||
                 (showsField('worktree') && ticket.worktreePath) ||
+                (showsField('version') && ticket.version) ||
                 (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
@@ -853,6 +1192,7 @@ const runTicketAgent = (ticket: Ticket) => {
               >
                 ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
               </span>
+              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
               <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
               <a
                 v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
@@ -861,6 +1201,12 @@ const runTicketAgent = (ticket: Ticket) => {
                 draggable="false"
                 @click.stop
               >
+                <span
+                  v-if="ticket.pullRequestState"
+                  class="pull-request-dot"
+                  :data-state="ticket.pullRequestState"
+                  :title="pullRequestStatusLabel(ticket.pullRequestState)"
+                ></span>
                 {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
               </a>
             </p>
@@ -896,14 +1242,14 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <p class="eyebrow">Columns</p>
       <ul class="card-field-list">
-        <li v-for="lane in toggleableLanes" :key="lane.id">
+        <li v-for="lane in laneColumns" :key="lane.id">
           <label>
             <input
               type="checkbox"
               :checked="!laneIsHidden(lane.id)"
               @change="toggleLaneVisibility(lane.id)"
             />
-            {{ lane.name }}
+            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
           </label>
         </li>
       </ul>
@@ -930,6 +1276,17 @@ const runTicketAgent = (ticket: Ticket) => {
           <option :value="UNASSIGNED_LANE_ID">{{ UNASSIGNED_LANE_NAME }}</option>
           <option v-for="lane in board.lanes" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
         </select>
+      </label>
+
+      <label>
+        Next Lane
+        <select :value="draftNextLaneId" @change="ticketDraft.nextLaneId = ($event.target as HTMLSelectElement).value">
+          <option value="">None</option>
+          <option v-for="lane in nextLaneOptionsFor(ticketDraft.laneId)" :key="lane.id" :value="lane.id">
+            {{ lane.name }}
+          </option>
+        </select>
+        <span class="field-hint">Defaults to the Status lane's Next Lane.</span>
       </label>
 
       <label>
@@ -1019,7 +1376,7 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openTicket.branchName ?? ''"
           placeholder="feat/board-ticket-fields"
-          @change="editTicket(openTicket, { branchName: ($event.target as HTMLInputElement).value.trim() || undefined })"
+          @change="editTicket(openTicket, { branchName: trimmedInputValue($event) })"
         />
       </label>
 
@@ -1030,26 +1387,78 @@ const runTicketAgent = (ticket: Ticket) => {
           :value="openTicket.worktreePath ?? ''"
           placeholder="/Users/me/Code/my-app-board-ticket-fields"
           @change="
-            editTicket(openTicket, { worktreePath: ($event.target as HTMLInputElement).value.trim() || undefined })
+            editTicket(openTicket, { worktreePath: trimmedInputValue($event) })
           "
         />
       </label>
 
       <label>
-        GitHub PR
+        Version
         <input
-          type="url"
           class="agent-file-path"
-          :value="openTicket.pullRequestUrl ?? ''"
-          placeholder="https://github.com/owner/repo/pull/123"
-          @change="
-            editTicket(openTicket, { pullRequestUrl: ($event.target as HTMLInputElement).value.trim() || undefined })
-          "
+          :value="openTicket.version ?? ''"
+          placeholder="1.4.0"
+          @change="editTicketVersion(openTicket, $event.target as HTMLInputElement)"
         />
-        <a v-if="isWebUrl(openTicket.pullRequestUrl)" class="field-hint" :href="openTicket.pullRequestUrl" target="_blank">
-          Open pull request ↗
-        </a>
+        <span v-if="versionInvalid" class="field-hint field-error">Use MAJOR.MINOR.PATCH, like 1.4.0</span>
       </label>
+
+      <section class="ticket-pull-request">
+        <p class="eyebrow">Merge Request</p>
+        <p class="pull-request-status">
+          <span class="pull-request-pill" :data-state="openTicket.pullRequestState ?? 'none'">
+            {{ pullRequestStatusLabel(openTicket.pullRequestState) }}
+          </span>
+          <span v-if="openTicket.pullRequestState === 'merged' && openTicket.pullRequestMergedAt" class="field-hint">
+            Merged {{ formatDateTime(openTicket.pullRequestMergedAt) }}
+          </span>
+          <a v-if="isWebUrl(openTicket.pullRequestUrl)" :href="openTicket.pullRequestUrl" target="_blank">
+            {{ pullRequestLabel(openTicket.pullRequestUrl) }} ↗
+          </a>
+          <button
+            class="icon-button"
+            title="Refresh from GitHub"
+            :disabled="pullRequestRefreshing || !githubUrl"
+            @click="refreshOpenTicketPullRequest"
+          >
+            ↻
+          </button>
+        </p>
+        <span v-if="pullRequestError" class="field-hint field-error">{{ pullRequestError }}</span>
+        <label>
+          PR URL override
+          <input
+            type="url"
+            class="agent-file-path"
+            :value="openTicket.pullRequestUrl ?? ''"
+            placeholder="Found from the branch; paste https://github.com/owner/repo/pull/123 to override"
+            @change="overridePullRequestUrl(openTicket, ($event.target as HTMLInputElement).value)"
+          />
+        </label>
+      </section>
+
+      <section class="ticket-checklist ticket-links">
+        <p class="eyebrow">External Links</p>
+        <ul v-if="openTicket.externalLinks?.length">
+          <li v-for="(link, index) in openTicket.externalLinks" :key="index">
+            <a v-if="isWebUrl(link)" :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
+            <span v-else :title="link">{{ link }}</span>
+            <button class="icon-button" title="Remove link" @click="dropExternalLink(openTicket, link)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-links-add">
+          <input
+            ref="linkInput"
+            v-model="linkDraft"
+            type="url"
+            placeholder="https://…"
+            @input="linkDraftInvalid = false"
+            @keyup.enter="addLinkDraft(openTicket)"
+          />
+          <button type="button" @click="addLinkDraft(openTicket)">Add</button>
+        </div>
+        <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
 
       <section class="ticket-checklist">
         <p class="eyebrow">
@@ -1082,10 +1491,19 @@ const runTicketAgent = (ticket: Ticket) => {
           Agent
           <select
             :value="agentForTicket(openTicket, agents).id"
-            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value })"
+            @change="editTicket(openTicket, { agentId: ($event.target as HTMLSelectElement).value, model: undefined })"
           >
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
+        </label>
+        <label>
+          Model
+          <ModelField
+            :model-value="openTicket.model ?? ''"
+            :agent="findAgent(agents, openTicket.agentId)"
+            placeholder="CLI default"
+            @update:model-value="editTicket(openTicket, { model: $event || undefined })"
+          />
         </label>
         <label class="checkbox-label">
           <input
@@ -1098,6 +1516,21 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">
           In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
         </span>
+        <label>
+          Next Lane
+          <select
+            :value="openTicketOverrideId"
+            @change="setMoveToLane(openTicket, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ openTicketLaneDefaultLabel }}</option>
+            <option v-for="lane in nextLaneOptionsFor(openTicket.laneId)" :key="lane.id" :value="lane.id">
+              {{ lane.name }}
+            </option>
+          </select>
+          <span class="field-hint">
+            Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane.
+          </span>
+        </label>
         <p class="agent-hint">
           The agent gets this ticket, its lane's prompt, markdown file and output location.
           Run works in the background and saves its output below — it can write files but not run
@@ -1112,6 +1545,15 @@ const runTicketAgent = (ticket: Ticket) => {
             @click="runTicketAgent(openTicket)"
           >
             {{ store.agentRunning[openTicket.id] ? 'Running…' : '▶ Run' }}
+          </button>
+          <button
+            v-if="ticketCanResume(openTicket)"
+            class="secondary"
+            :disabled="store.agentRunning[openTicket.id]"
+            title="Resume the interrupted session in a terminal tab, in the directory it started in"
+            @click="resumeTicketAgent(openTicket)"
+          >
+            ⏯ Resume
           </button>
           <button
             class="secondary"
@@ -1134,12 +1576,39 @@ const runTicketAgent = (ticket: Ticket) => {
         View on GitHub ({{ openTicket.externalId?.replace('github:', '#') }})
       </a>
 
+      <label v-if="openTicketNextLaneId" class="checkbox-label">
+        <input
+          type="checkbox"
+          :checked="Boolean(openTicket.moveOnComplete)"
+          @change="editTicket(openTicket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
+        />
+        Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
+      </label>
+
       <div class="modal-actions">
-        <button class="secondary danger" @click="deleteTicket(openTicket)">Delete</button>
-        <button class="secondary" @click="assignToMe(openTicket)">
-          {{ openTicket.assigneeId === store.state.userId ? 'Unassign me' : 'Assign to me' }}
+        <button
+          class="secondary danger ticket-delete"
+          title="Delete ticket"
+          aria-label="Delete ticket"
+          @click="askToDeleteTicket(openTicket)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
         </button>
+        <button class="secondary" @click="cancelTicketEdits">Cancel</button>
         <button @click="closeModals">Done</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="ticketPendingDeletion" class="modal-backdrop" @click.self="ticketPendingDeletion = null">
+    <section class="modal" role="alertdialog" aria-labelledby="delete-ticket-question">
+      <p class="eyebrow">Delete ticket</p>
+      <p id="delete-ticket-question">
+        Are you sure you want to delete ticket #{{ ticketPendingDeletion.number }}?
+      </p>
+      <div class="modal-actions">
+        <button ref="deleteConfirmCancelButton" class="secondary" @click="ticketPendingDeletion = null">Cancel</button>
+        <button class="secondary danger" @click="confirmDeleteTicket">Delete</button>
       </div>
     </section>
   </div>
@@ -1149,14 +1618,38 @@ const runTicketAgent = (ticket: Ticket) => {
       <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
       <p id="auto-run-confirm-question" class="auto-run-question">
         Run {{ autoRunTickets(autoRunConfirmLane).length }} separate
-        <select v-model="autoRunConfirmAgentId" aria-label="Agent">
+        <select v-model="autoRunConfirmAgentId" aria-label="Agent" @change="changeAutoRunConfirmAgent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
         </select>
-        agents for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
+        agents with
+        <ModelField
+          v-model="autoRunConfirmModel"
+          :agent="findAgent(agents, autoRunConfirmAgentId)"
+          placeholder="CLI default"
+        />
+        for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
+      <section v-if="orchestratorPollActive(autoRunConfirmLane)" class="auto-run-orchestrator">
+        <p class="eyebrow">Orchestrator</p>
+        <label>
+          Agent
+          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+            <option value="">Same as ticket agent</option>
+            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+          </select>
+        </label>
+        <label>
+          Model
+          <ModelField
+            v-model="autoRunConfirmOrchestratorModel"
+            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+          />
+        </label>
+      </section>
       <p class="auto-run-question">
         Each opens in its own
-        <select v-model="autoRunConfirmTerminalId" aria-label="Terminal">
+        <select v-model="autoRunConfirmTerminalId" aria-label="Shell">
           <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
             {{ terminal.label }}
           </option>
@@ -1232,27 +1725,95 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
+      <label>
+        Orchestrator prompt
+        <textarea
+          class="agent-prompt"
+          :value="openLane.orchestratorPrompt ?? ''"
+          placeholder="e.g. Flag PRs with failing checks."
+          @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
+        />
+        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run while Active)</span>
+      </label>
+
+      <div class="orchestrator-poll-row">
+        <label>
+          Orchestrator poll (minutes)
+          <input
+            type="number"
+            min="1"
+            step="1"
+            :value="orchestratorPollMinutes(openLane)"
+            :disabled="!orchestratorPollActive(openLane)"
+            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+          />
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="orchestratorPollActive(openLane)"
+            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
+          />
+          Active
+        </label>
+      </div>
+
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>
+        <div class="auto-run-pickers">
+          <label>
+            Agent
+            <select
+              :value="findAgent(agents, openLane.autoRunAgentId).id"
+              @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Shell
+            <select
+              :value="autoRunTerminal(openLane).id"
+              @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+            >
+              <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+                {{ terminal.label }}
+              </option>
+            </select>
+          </label>
+        </div>
         <label>
-          Agent
+          Model
+          <ModelField
+            :model-value="openLane.autoRunModel ?? ''"
+            :agent="findAgent(agents, openLane.autoRunAgentId)"
+            placeholder="CLI default"
+            @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
+          />
+        </label>
+        <label>
+          Orchestrator agent
           <select
-            :value="findAgent(agents, openLane.autoRunAgentId).id"
-            @change="editLane(openLane, { autoRunAgentId: ($event.target as HTMLSelectElement).value })"
+            :value="openLane.orchestratorAgentId ?? ''"
+            @change="
+              editLane(openLane, {
+                orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
+                orchestratorModel: undefined
+              })
+            "
           >
+            <option value="">Same as ticket agent</option>
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
         <label>
-          Terminal
-          <select
-            :value="autoRunTerminal(openLane).id"
-            @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
-          >
-            <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
-              {{ terminal.label }}
-            </option>
-          </select>
+          Orchestrator model
+          <ModelField
+            :model-value="openLane.orchestratorModel ?? ''"
+            :agent="findAgent(agents, openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+            :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+            @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
+          />
         </label>
         <label class="checkbox-label">
           <input
@@ -1269,6 +1830,43 @@ const runTicketAgent = (ticket: Ticket) => {
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
+        </label>
+        <label>
+          Next Lane
+          <select
+            :value="openLane.nextLaneId ?? ''"
+            @change="editLane(openLane, { nextLaneId: ($event.target as HTMLSelectElement).value || undefined })"
+          >
+            <option value="">None</option>
+            <option v-if="openLane.id !== UNASSIGNED_LANE_ID" :value="UNASSIGNED_LANE_ID">
+              {{ UNASSIGNED_LANE_NAME }}
+            </option>
+            <option
+              v-for="lane in board.lanes.filter((candidate) => candidate.id !== openLane?.id)"
+              :key="lane.id"
+              :value="lane.id"
+            >
+              {{ lane.name }}
+            </option>
+          </select>
+          <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
+        </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.agentSetsVersion)"
+            @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
+          />
+          Agent sets semantic version
+        </label>
+        <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.closesTicket)"
+            @change="editLane(openLane, { closesTicket: ($event.target as HTMLInputElement).checked })"
+          />
+          Counts as closed: tickets entering this lane count as closed in Metrics
         </label>
         <span class="field-hint">
           The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it

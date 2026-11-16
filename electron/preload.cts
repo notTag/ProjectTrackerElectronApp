@@ -1,8 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { AutoRunTicketLaunch, ProjectTrackerState } from '../src/shared/projectTypes.js'
+import type {
+  AgentRetryEvent,
+  AutoRunTicketLaunch,
+  LaneWritePatch,
+  ProjectTrackerState,
+  ProjectWritePatch,
+  SwimLane,
+  TerminalTab,
+  Ticket,
+  TicketWritePatch
+} from '../src/shared/projectTypes.js'
 
-const toPlainJson = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+// Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
+const toPlainJson = <T,>(value: T): T => {
+  const serialized = JSON.stringify(value)
+  return serialized === undefined ? (undefined as T) : (JSON.parse(serialized) as T)
+}
 
 const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
   const result =
@@ -23,6 +37,15 @@ contextBridge.exposeInMainWorld('projectTracker', {
   getProjectState: () => invokePlain('project-state:get'),
   saveProjectState: (state: ProjectTrackerState) => invokePlain('project-state:save', state),
   refreshProjectState: () => invokePlain('project-state:refresh'),
+  createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
+  updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
+  deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
+  createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
+  updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
+    invokePlain('lane:update', { projectPath, laneId, patch }),
+  reorderLanes: (projectPath: string, laneIds: string[]) => invokePlain('lane:reorder', { projectPath, laneIds }),
+  deleteLane: (projectPath: string, laneId: string) => invokePlain('lane:delete', { projectPath, laneId }),
+  updateProject: (path: string, patch: ProjectWritePatch) => invokePlain('project:update', { path, patch }),
   // The IPC event object is withheld so the renderer never gets ipcRenderer access.
   onExternalChange: (callback: () => void) => {
     const listener = () => callback()
@@ -34,16 +57,32 @@ contextBridge.exposeInMainWorld('projectTracker', {
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
-  openProjectIn: (projectPath: string, targetId: string, command?: string) =>
-    invokePlain('project:open-in', { projectPath, targetId, command }),
-  autoRunLane: (projectPath: string, targetId: string, tickets: AutoRunTicketLaunch[], useWorktrees: boolean) =>
-    invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees }),
-  runTicketAgent: (projectPath: string, agentId: string, prompt: string) =>
-    invokePlain('ticket:run-agent', { projectPath, agentId, prompt }),
+  openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
+    invokePlain('project:open-in', { projectPath, targetId, command, title }),
+  autoRunLane: (
+    projectPath: string,
+    targetId: string,
+    tickets: AutoRunTicketLaunch[],
+    useWorktrees: boolean,
+    orchestrator?: TerminalTab
+  ) => invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees, orchestrator }),
+  runTicketAgent: (projectPath: string, agentId: string, prompt: string, model?: string, sessionId?: string) =>
+    invokePlain('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId }),
+  onAgentRetry: (callback: (notice: AgentRetryEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, notice: AgentRetryEvent) => callback(notice)
+    ipcRenderer.on('ticket:agent-retry', listener)
+    return () => ipcRenderer.removeListener('ticket:agent-retry', listener)
+  },
+  appStartedAt: () => invokePlain('app:started-at'),
+  terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
   saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
     invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
-  fetchProjectGithubIssues: (githubUrl: string) => invokePlain('project:fetch-github-issues', githubUrl),
+  getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
+  fetchProjectGithubIssues: (githubUrl: string, since?: string) =>
+    invokePlain('project:fetch-github-issues', { githubUrl, since }),
+  fetchTicketPullRequest: (githubUrl: string, branchName: string, pullRequestUrl?: string) =>
+    invokePlain('ticket:fetch-pull-request', { githubUrl, branchName, pullRequestUrl }),
   setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
 })

@@ -1,0 +1,6 @@
+1. Verify if there is an existing worktree, branch, pull request or merge request for the current ticket. Ask the running agents if there are any agents working on this task. 2. Use the /worktree skill for all work in this lane. 
+3. Upon completion of work, verify all original tasks have been completed. 
+4. Run all tests and test locally (when possible) 
+5. Upon completion of steps 1-5, move the ticket to the Merge request swimlane and update it's status. 
+6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
+- As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen. 

@@ -1,0 +1,16 @@
+{
+  "ticket": {
+    "title": "Show the ticket count in each swim lane header",
+    "description": "Each lane header should show how many tickets the lane holds, e.g. \"PRD (4)\". Count updates live as tickets move. Hidden/filtered tickets are not counted."
+  },
+  "expect": {
+    "endLane": "prd",
+    "moves": 1
+  },
+  "rubric": [
+    "The updated description keeps the original intent: a live ticket count in each lane header that excludes hidden or filtered tickets.",
+    "The updated description adds concrete, testable acceptance criteria that were not in the original.",
+    "The agent did not invent unrelated features or scope beyond the ticket.",
+    "The agent did not stop to ask the user for confirmation, since full auto is on and the ticket has no open questions."
+  ]
+}

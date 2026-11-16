@@ -118,11 +118,18 @@ export const mergeScannedProjects = (
   failures: ScanFailure[]
 ): ProjectTrackerState => {
   const existingByPath = new Map(previous.snapshot.projects.map((project) => [project.path, project]))
+  // Only the very first scan qualifies. A known path means an older state that
+  // lost its scannedAt, not a new user.
+  const isFirstEverScan =
+    !previous.snapshot.scannedAt && scannedProjects.every((project) => !existingByPath.has(project.path))
+  const firstFirstPartyProject = scannedProjects.find((project) => project.source === 'first-party')
+  const firstAddedPath = isFirstEverScan ? firstFirstPartyProject?.path : undefined
   const projects = scannedProjects.map((project) => {
     const existing = existingByPath.get(project.path)
+    const scannedStatus: ProjectStatus = project.path === firstAddedPath ? 'active' : project.status
     return {
       ...project,
-      status: existing?.status ?? project.status,
+      status: existing?.status ?? scannedStatus,
       priority: existing?.priority ?? project.priority,
       notes: existing?.notes ?? project.notes,
       githubUrl: project.githubUrl ?? existing?.githubUrl,
@@ -176,6 +183,33 @@ export const addScanDirectory = (state: ProjectTrackerState, directory: string):
   return { ...state, scanDirectories, snapshot: { ...state.snapshot, projects } }
 }
 
+// Metrics panel (#27). Window starts are ISO timestamps, computed in the main
+// process from local time.
+export interface MetricWindows {
+  today: string
+  week: string
+  month: string
+  year: string
+}
+
+export type MetricWindowCounts = Record<keyof MetricWindows, number>
+
+export interface ProjectPrMetrics {
+  open: number
+  merged: MetricWindowCounts
+}
+
+export interface ProjectMetrics {
+  projectPath: string
+  name: string
+  closed: MetricWindowCounts
+  hasClosingLanes: boolean
+  // undefined: the project has no GitHub repo, so there is nothing to count.
+  prs?: ProjectPrMetrics | { error: string }
+  // null when the process listing failed.
+  agentsRunning: number | null
+}
+
 export interface SwimLane {
   id: string
   name: string
@@ -187,16 +221,37 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
+  // Appended, never substituted: the generated orchestrator prompt carries the
+  // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
+  orchestratorPrompt?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
   autoRunTerminalId?: string
+  // Model handed to the Auto Run agent's CLI. Absent means the CLI's own default.
+  autoRunModel?: string
+  // Agent and model for the orchestrator tab. Absent agent means the run's
+  // ticket agent; absent model means the run's ticket model when the agent is too.
+  orchestratorAgentId?: string
+  orchestratorModel?: string
   // Each Auto Run ticket gets its own git worktree and branch off freshly
   // fetched main. Absent (lanes saved before it existed) means on.
   autoRunWorktrees?: boolean
   // When this lane's agent moves a ticket on, the destination lane's agent
   // starts on it with no click. Absent means off.
   fullAuto?: boolean
+  // A ticket entering this lane counts as closed in the metrics panel. Absent means no.
+  closesTicket?: boolean
+  // This lane's agent is told it may set the ticket's semantic version, and how.
+  // When to set it is the agent's call, not a rule here. Absent means off.
+  agentSetsVersion?: boolean
+  // How often this lane's Auto Run orchestrator polls, in whole minutes. Absent means 2.
+  orchestratorPollMinutes?: number
+  // Off means this lane's Auto Run opens no orchestrator tab. Absent means on.
+  orchestratorPollActive?: boolean
+  // Where this lane's tickets go on completion when they set no Next Lane of
+  // their own. Absent means None.
+  nextLaneId?: string
 }
 
 export interface ChecklistItem {
@@ -204,8 +259,12 @@ export interface ChecklistItem {
   done: boolean
 }
 
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'interrupted'
+
 // Captures what a swim lane's agent produced for a ticket. Only the most recent
 // run is kept: the board is a working surface, not an audit log.
+// Written once BEFORE the agent starts (status 'running') so a run that dies
+// mid-way still leaves its session id behind to resume from.
 export interface TicketAgentRun {
   at: string
   laneId: string
@@ -213,6 +272,45 @@ export interface TicketAgentRun {
   // Absent on runs saved before it existed; those show no completed badge
   // rather than claiming a success nobody recorded.
   succeeded?: boolean
+  // When someone opened the ticket after this run finished. Absent = unseen, so
+  // runs saved before it existed still surface their result once.
+  seenAt?: string
+  // Authoritative when present; runs saved before it existed fall back to `succeeded`.
+  status?: AgentRunStatus
+  startedAt?: string
+  mode?: 'headless' | 'terminal'
+  // The agent CLI's own session id, picked by the app so Resume works even when
+  // the run died before printing anything.
+  sessionId?: string
+  // Claude looks sessions up per working directory, so Resume runs from here.
+  cwd?: string
+  attempts?: number
+  agentId?: string
+  // The terminal a tab run opened in, so its tab can be looked for later.
+  terminalId?: string
+  // The title that tab opened with, looked for as-is even if the ticket is renamed.
+  tabTitle?: string
+}
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
+
+// Lane-scoped: each lane has its own prompt, so a run finished in an earlier
+// lane says nothing about the work in this one. A running record shows even
+// once seen: opening the ticket mid-run doesn't make the run any less live.
+export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
+  if (running) return 'running'
+  const lastRun = ticket.agentRun
+  if (!lastRun || lastRun.laneId !== ticket.laneId) return null
+  if (lastRun.status === 'running') return 'running'
+  if (lastRun.seenAt !== undefined) return null
+  if (lastRun.status === 'interrupted') return 'interrupted'
+  if (lastRun.succeeded === undefined) return null
+  return lastRun.succeeded ? 'succeeded' : 'failed'
+}
+
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => {
+  const badge = agentRunBadge(ticket, false)
+  return badge !== null && badge !== 'running'
 }
 
 export interface Ticket {
@@ -230,12 +328,18 @@ export interface Ticket {
   branchName?: string
   worktreePath?: string
   pullRequestUrl?: string
+  // Last state GitHub reported for that PR, cached so the board renders
+  // without the network. Refreshed by the store, never typed in by hand.
+  pullRequestState?: PullRequestState
+  pullRequestMergedAt?: string
   // Who picked this ticket up. Absent means nobody has.
   assigneeId?: string
   checklist?: ChecklistItem[]
   // Which configured agent this ticket is earmarked for. Absent means none has
   // been chosen, which is every ticket until agents exist in state.
   agentId?: string
+  // Model for this ticket's own Run / Open In. Absent means the CLI's default.
+  model?: string
   agentRun?: TicketAgentRun
   // Set only on tickets imported from GitHub. Doubles as the dedupe key so
   // re-pulling issues updates nothing and duplicates nothing.
@@ -243,7 +347,17 @@ export interface Ticket {
   externalUrl?: string
   // Full auto for this ticket in every lane, whatever the lane's own toggle says.
   fullAuto?: boolean
+  // Any further http(s) links: design docs, threads, related issues. Absent means none.
+  externalLinks?: string[]
+  // The ticket's own Next Lane, overriding its lane's. Cleared once a completion
+  // move lands, so the ticket then inherits; moveOnComplete is what arms it.
+  moveToLaneId?: string
+  moveOnComplete?: boolean
+  // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
+  version?: string
 }
+
+export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
 
 // Prefilled into a new ticket so descriptions arrive in the shape a lane's agent
 // can act on. Discarded on save when left untouched, so an unused template never
@@ -281,6 +395,16 @@ export const setChecklistItemDone = (
 export const removeChecklistItem = (checklist: ChecklistItem[] = [], index: number): ChecklistItem[] =>
   checklist.filter((_, itemIndex) => itemIndex !== index)
 
+// Returns the same array for a non-web or duplicate URL.
+export const addExternalLink = (links: string[] = [], url: string): string[] => {
+  const trimmedUrl = url.trim()
+  const isNewWebUrl = isWebUrl(trimmedUrl) && !links.includes(trimmedUrl)
+  return isNewWebUrl ? [...links, trimmedUrl] : links
+}
+
+export const removeExternalLink = (links: string[] = [], index: number): string[] =>
+  links.filter((_, linkIndex) => linkIndex !== index)
+
 export const checklistProgress = (checklist: ChecklistItem[] = []) => {
   const doneItems = checklist.filter((item) => item.done)
   return { done: doneItems.length, total: checklist.length }
@@ -298,13 +422,29 @@ export const ticketSearchText = (ticket: Ticket) => {
 // prompt as its last argument and runs in the project directory; `headlessArgs`
 // go before the prompt when it runs in the background with nobody watching, and
 // `promptArgs` go before it when it runs in a terminal someone is watching.
+// `modelArgs` is the flag that takes a model name; absent means the CLI's model
+// can't be picked here and the model field stays hidden. `models` are suggested
+// ids for that field's dropdown — free text still works, so a model shipped
+// after this list (or a custom agent's own ids) needs no code change.
+// `sessionNameArgs` are the flag words before a terminal session's display name;
+// an agent without them gets no name, since not every CLI can set one at launch.
 export interface Agent {
   id: string
   name: string
   command: string
   headlessArgs: string[]
   promptArgs?: string[]
+  modelArgs?: string[]
+  models?: string[]
+  sessionNameArgs?: string[]
+  // `{sessionId}` is replaced with the run's session id. sessionArgs start a
+  // session under that id, resumeArgs pick it back up. No resumeArgs means the
+  // CLI can't resume: no session id is passed and Resume stays hidden.
+  sessionArgs?: string[]
+  resumeArgs?: string[]
 }
+
+const SESSION_ID_TOKEN = '{sessionId}'
 
 // acceptEdits lets a background run write its output files without a human to
 // approve them, while shell commands stay denied — the run can draft, not execute.
@@ -312,7 +452,21 @@ export const DEFAULT_AGENT: Agent = {
   id: 'claude-code',
   name: 'Claude Code',
   command: 'claude',
-  headlessArgs: ['-p', '--permission-mode', 'acceptEdits']
+  headlessArgs: ['-p', '--permission-mode', 'acceptEdits'],
+  modelArgs: ['--model'],
+  models: [
+    'fable',
+    'opus',
+    'sonnet',
+    'haiku',
+    'claude-fable-5-2',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5'
+  ],
+  sessionNameArgs: ['--name'],
+  sessionArgs: ['--session-id', SESSION_ID_TOKEN],
+  resumeArgs: ['--resume', SESSION_ID_TOKEN]
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -321,7 +475,9 @@ const CODEX_AGENT: Agent = {
   id: 'codex',
   name: 'Codex',
   command: 'codex',
-  headlessArgs: ['exec', '--sandbox', 'workspace-write']
+  headlessArgs: ['exec', '--sandbox', 'workspace-write'],
+  modelArgs: ['-m'],
+  models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
 }
 
 // Hermes reads its first positional as a subcommand, so a bare prompt would be
@@ -334,7 +490,32 @@ const HERMES_AGENT: Agent = {
   promptArgs: ['chat', '-q']
 }
 
-const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT]
+// `opencode run` is the non-interactive mode. The TUI reads its first positional
+// as a project directory (the Hermes trap again), so the prompt rides on --prompt.
+// No --dangerously-skip-permissions: opencode.json's `permission` config decides
+// what a headless run may do. To opt in, save an `opencode` agent with the flag —
+// and keep promptArgs ['--prompt'], since a saved agent replaces this one whole.
+const OPENCODE_AGENT: Agent = {
+  id: 'opencode',
+  name: 'opencode',
+  command: 'opencode',
+  headlessArgs: ['run'],
+  promptArgs: ['--prompt'],
+  modelArgs: ['-m'],
+  // ponytail: opencode's ids depend on which providers are configured
+  // (`opencode models`), so this is a starting set, not the full list.
+  models: [
+    'anthropic/claude-opus-5-5',
+    'anthropic/claude-sonnet-5-5',
+    'anthropic/claude-haiku-5-5',
+    'openai/gpt-6.1-sol',
+    'openai/gpt-6.1-terra',
+    'openai/gpt-5.6-sol',
+    'opencode/big-pickle'
+  ]
+}
+
+const OPTIONAL_BUILT_IN_AGENTS = [CODEX_AGENT, HERMES_AGENT, OPENCODE_AGENT]
 
 // Agents saved in state are offered alongside the built-ins, so adding another
 // CLI is one entry, not a code change. A saved agent with a built-in's id wins
@@ -356,12 +537,17 @@ export const agentForTicket = (ticket: Ticket, agents: Agent[]): Agent => findAg
 
 export interface TicketPromptContext {
   assigneeName?: string
+  // The board's project path, which the version instruction's SQL filters on.
+  projectPath?: string
+  // The DB the version instruction points at. Evals swap in a throwaway one.
+  databasePath?: string
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
 // prompt instead of a column of "none"s.
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
+  const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -369,8 +555,10 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.labels?.length ? `Labels: ${formatLabels(ticket.labels)}` : '',
     ticket.branchName ? `Branch: ${ticket.branchName}` : '',
     ticket.worktreePath ? `Worktree: ${ticket.worktreePath}` : '',
+    ticket.version ? `Version: ${ticket.version}` : '',
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
+    linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')
@@ -398,7 +586,33 @@ const guardAgainstOptionParsing = (prompt: string): string =>
 export const isFullAuto = (ticket: Ticket, lane: SwimLane): boolean => Boolean(lane.fullAuto || ticket.fullAuto)
 
 const FULL_AUTO_INSTRUCTION =
-  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Then exit."
+  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows `Open Questions: 0`); otherwise stop with the open questions as the last thing on screen and leave the session open."
+
+// The official SemVer 2.0 pattern (semver.org), unchanged.
+const SEMANTIC_VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+
+// undefined = cleared, null = invalid. A leading "v" is a common habit
+// ("v1.4.0"), not part of the version, so it is dropped rather than rejected.
+export const normalizeSemanticVersion = (input: string): string | undefined | null => {
+  const trimmed = input.trim()
+  if (!trimmed) return undefined
+  const withoutPrefix = trimmed.replace(/^v/i, '')
+  return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
+}
+
+const versionInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
+  const sentence =
+    "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
+  if (!context.projectPath) return sentence
+  // The default keeps double quotes so $HOME expands; an injected path is literal.
+  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+  const updateSql =
+    "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
+  const command = `sqlite3 ${quotedDatabasePath} ${shellQuote(updateSql)}`
+  return [`${sentence} To set or change it:`, command].join('\n')
+}
 
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
@@ -411,8 +625,9 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
+  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, fullAuto, output]
+  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
@@ -446,12 +661,138 @@ export const ticketShellCommand = (
   ticket: Ticket,
   lane: SwimLane,
   agent: Agent = DEFAULT_AGENT,
-  context: TicketPromptContext = {}
+  context: TicketPromptContext = {},
+  model?: string,
+  sessionId?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  const commandWords = [agent.command, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket), sessionId })
+}
+
+// Number only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
+
+// A model starting with "-" would read as another flag, so it counts as empty.
+// `quote` lets the terminal path shell-quote the model; argv needs no quoting.
+export const agentModelWords = (agent: Agent, model?: string, quote = (word: string) => word): string[] => {
+  const trimmedModel = model?.trim() ?? ''
+  const isUsableModel = trimmedModel !== '' && !trimmedModel.startsWith('-')
+  if (!agent.modelArgs?.length || !isUsableModel) return []
+  return [...agent.modelArgs, quote(trimmedModel)]
+}
+
+// Strict v4: the id reaches argv and shell strings, so nothing else gets through.
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_V4_PATTERN.test(value)
+
+export const agentSupportsResume = (agent: Agent): boolean =>
+  Boolean(agent.sessionArgs?.length && agent.resumeArgs?.length)
+
+// Session ids only exist for agents that can resume them: one that can't would
+// get a flag it may not know, for nothing.
+export const newAgentSessionId = (agent: Agent): string | undefined =>
+  agentSupportsResume(agent) ? crypto.randomUUID() : undefined
+
+const withSessionId = (args: string[], sessionId: string): string[] =>
+  args.map((arg) => arg.split(SESSION_ID_TOKEN).join(sessionId))
+
+export const agentSessionWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.sessionArgs ?? [], sessionId)
+}
+
+export const agentResumeWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.resumeArgs ?? [], sessionId)
+}
+
+const sessionNameWords = (agent: Agent, sessionName?: string): string[] => {
+  const sessionNameArgs = agent.sessionNameArgs ?? []
+  if (!sessionName || sessionNameArgs.length === 0) return []
+  return [...sessionNameArgs, shellQuote(sessionName)]
+}
+
+// Model, name and session go before promptArgs so a prompt flag is never split from its value.
+interface AgentLaunchOptions {
+  model?: string
+  sessionName?: string
+  sessionId?: string
+}
+
+export const agentShellCommand = (agent: Agent, prompt: string, { model, sessionName, sessionId }: AgentLaunchOptions = {}): string => {
+  const modelWords = agentModelWords(agent, model, shellQuote)
+  const nameWords = sessionNameWords(agent, sessionName)
+  const sessionWords = agentSessionWords(agent, sessionId)
+  const commandWords = [
+    agent.command,
+    ...modelWords,
+    ...nameWords,
+    ...sessionWords,
+    ...(agent.promptArgs ?? []),
+    shellQuote(prompt)
+  ]
   return commandWords.join(' ')
 }
+
+export const RESUME_PROMPT =
+  'You were interrupted mid-task. Check `git status` and the ticket, then continue where you left off.'
+
+// Throws rather than building a half-command: callers gate on canResume first.
+export const agentResumeCommand = (agent: Agent, run: Pick<TicketAgentRun, 'sessionId' | 'cwd'>, prompt: string): string => {
+  if (!agentSupportsResume(agent)) throw new Error(`${agent.name} cannot resume a session.`)
+  if (!isUuid(run.sessionId)) throw new Error('This run has no session to resume.')
+  const resumeWords = agentResumeWords(agent, run.sessionId)
+  const agentWords = [agent.command, ...resumeWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const agentCommand = agentWords.join(' ')
+  return run.cwd ? `cd ${shellQuote(run.cwd)} && ${agentCommand}` : agentCommand
+}
+
+export const canResume = (ticket: Ticket, agent: Agent): boolean => {
+  const run = ticket.agentRun
+  if (!run || run.laneId !== ticket.laneId) return false
+  const endedUnfinished = run.status === 'interrupted' || run.status === 'failed'
+  return endedUnfinished && isUuid(run.sessionId) && agentSupportsResume(agent)
+}
+
+// Long enough for a real terminal run to be well under way; past it, a tab
+// nobody can see is presumed gone.
+export const STALE_RUN_MS = 45 * 60 * 1000
+
+export type TabLiveness = 'alive' | 'gone' | 'unknown'
+
+// Sent by main when a headless run hit a transient failure and is about to retry.
+export interface AgentRetryEvent {
+  sessionId?: string
+  attempt: number
+  of: number
+  delayMs: number
+}
+
+export const runningAgentRuns = (tickets: Ticket[]): Ticket[] =>
+  tickets.filter((ticket) => ticket.agentRun?.status === 'running' && ticket.agentRun.laneId === ticket.laneId)
+
+// A headless run lives in the main process, so one started before this app
+// launch died with the old process. A tab outlives the app, so only its
+// absence (or age, when it can't be looked for) says the run is over.
+// A tab that died this session is left to the stale threshold: it may still
+// be opening.
+export const runsToInterrupt = (
+  tickets: Ticket[],
+  livenessByTicketId: Record<string, TabLiveness>,
+  now: number,
+  appStartedAt: number
+): Ticket[] =>
+  runningAgentRuns(tickets).filter((ticket) => {
+    const run = ticket.agentRun as TicketAgentRun
+    const startedAt = Date.parse(run.startedAt ?? run.at)
+    const startedBeforeApp = startedAt < appStartedAt
+    const isStale = now - startedAt > STALE_RUN_MS
+    if (run.mode !== 'terminal') return startedBeforeApp
+    const liveness = livenessByTicketId[ticket.id] ?? 'unknown'
+    if (liveness === 'alive') return false
+    if (liveness === 'gone') return startedBeforeApp || isStale
+    return isStale
+  })
 
 // Enough of the title to recognise the ticket; the number already identifies it.
 const BRANCH_SLUG_WORD_COUNT = 3
@@ -500,6 +841,8 @@ export interface AutoRunTicketLaunch {
 export interface AutoRunLaunchEntry {
   ticket: Ticket
   launch: AutoRunTicketLaunch
+  agentId?: string
+  sessionId?: string
 }
 
 // With worktrees on, the branch goes into the ticket before its prompt is
@@ -511,12 +854,16 @@ export const buildAutoRunLaunch = (
   lane: SwimLane,
   agent: Agent,
   context: TicketPromptContext,
-  useWorktrees: boolean
+  useWorktrees: boolean,
+  model?: string
 ): AutoRunLaunchEntry => {
   const branchName = ticketBranchName(ticket)
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context)
-  return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
+  // Fresh per launch: the CLI refuses a session id that is already in use.
+  const sessionId = newAgentSessionId(agent)
+  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
+  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) }
+  return { ticket, launch, agentId: agent.id, sessionId }
 }
 
 // A ticket that already has a worktree keeps working in it even when the next
@@ -524,8 +871,198 @@ export const buildAutoRunLaunch = (
 export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =>
   lane.autoRunWorktrees !== false || Boolean(ticket?.worktreePath)
 
+export const DEFAULT_ORCHESTRATOR_POLL_MINUTES = 2
+
+// Agents write the DB with sqlite3, so a stored 0, fraction or text must not
+// reach the prompt as `sleep 0` / `sleep NaN`.
+export const orchestratorPollMinutes = (lane: SwimLane): number => {
+  const storedMinutes = lane.orchestratorPollMinutes ?? 0
+  const isWholeMinutes = Number.isInteger(storedMinutes) && storedMinutes >= 1
+  return isWholeMinutes ? storedMinutes : DEFAULT_ORCHESTRATOR_POLL_MINUTES
+}
+
+export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
+
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
+
+const ORCHESTRATOR_TAB_TITLE_PREFIX = 'AUTORUN-ORCHESTRATOR-'
+// main drops titles over 200 UTF-16 units; 100 code points stays under that
+// even when every one is a surrogate pair.
+const ORCHESTRATOR_TAB_TITLE_MAX_CODE_POINTS = 100
+
+export const orchestratorTabTitle = (lane: Pick<SwimLane, 'name'>): string => {
+  const singleLineName = lane.name.replace(/\p{Cc}/gu, ' ').trim()
+  const laneSlug = singleLineName.toUpperCase().replace(/\s+/g, '-') || 'LANE'
+  const codePoints = Array.from(`${ORCHESTRATOR_TAB_TITLE_PREFIX}${laneSlug}`)
+  return codePoints.slice(0, ORCHESTRATOR_TAB_TITLE_MAX_CODE_POINTS).join('')
+}
+
+// Fixed in dev and packaged builds alike: main sets the app name before
+// Electron resolves userData.
+export const TRACKER_DATABASE_PATH = '$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite'
+
+interface TerminalTabRecipes {
+  listTabs: string
+  closeTab: string
+}
+
+// <N> is the ticket number. Each listing prints every tab title in one line.
+// Verified against each app's scripting dictionary; Warp has none, so it gets no recipes.
+const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
+  ghostty: {
+    listTabs: `osascript -e 'tell application "Ghostty" to get name of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "Ghostty"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'if name of t is "<TAB>" then' -e 'close tab t' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  },
+  iterm2: {
+    listTabs: `osascript -e 'tell application "iTerm" to get name of every session of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "iTerm"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'repeat with s in sessions of t' -e 'if name of s is "<TAB>" then' -e 'close s' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  },
+  // Terminal has no close verb for a tab: it is selected and closed with ⌘W.
+  terminal: {
+    listTabs: `osascript -e 'tell application "Terminal" to get custom title of every tab of every window'`,
+    closeTab: [
+      `osascript -e 'tell application "Terminal"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w'`,
+      `-e 'if custom title of t is "<TAB>" then' -e 'set selected of t to true' -e 'set index of w to 1' -e 'activate'`,
+      `-e 'tell application "System Events" to keystroke "w" using command down' -e 'return' -e 'end if'`,
+      `-e 'end repeat' -e 'end repeat' -e 'end tell'`
+    ].join(' ')
+  }
+}
+
+export interface OrchestratorPromptContext {
+  projectPath: string
+  // Every lane a ticket can reach, the unassigned one included.
+  lanes: SwimLane[]
+  terminalId: string
+  terminalLabel: string
+}
+
+const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
+
+const tabSection = (context: OrchestratorPromptContext): string => {
+  const recipes = TERMINAL_TAB_RECIPES[context.terminalId]
+  if (!recipes) {
+    return [
+      `${context.terminalLabel} cannot be queried or scripted: report every agent as "unknown",`,
+      'and when a ticket is done tell the user to close its tab by hand.'
+    ].join('\n')
+  }
+  return [
+    `Open tab titles in ${context.terminalLabel}:`,
+    recipes.listTabs,
+    'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
+    'open new tabs for later lanes under the same title. Match the whole title: other projects reuse ticket numbers.',
+    '',
+    'Close a done ticket\'s tab (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
+    recipes.closeTab
+  ].join('\n')
+}
+
+// User text may tune the Loop (which tabs to close) but the
+// report-only rule guards a DB shared with the app, so it always wins.
+const LANE_INSTRUCTIONS_PRECEDENCE =
+  'These override the Loop above (e.g. closing tabs), but never the report-only rule.'
+
+const laneInstructionsSection = (lane: SwimLane): string => {
+  const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
+  if (!laneInstructions) return ''
+  return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
+}
+
+// The orchestrator only reports: it shares the DB with the app and the ticket
+// agents, so it is told never to write, and never to steer the other agents.
+export const orchestratorPrompt = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): string => {
+  const launches = entries.map((entry) => entry.launch)
+  const ticketLines = entries.map(({ ticket, launch }) => {
+    const tabTitle = launch.title ?? `#${launch.number}`
+    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+  })
+  const laneLines = context.lanes.map(
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+  )
+  const ticketNumbers = launches.map((launch) => launch.number).join(', ')
+  const ticketSql = [
+    'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
+  ].join(' ')
+  const pollMinutes = orchestratorPollMinutes(lane)
+  const pollSeconds = pollMinutes * 60
+  // Double quotes only around the DB path, which needs $HOME expanded; the SQL
+  // carries the project path, so it gets literal single quotes.
+  const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
+
+  return [
+    `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
+    'You report only. Never write to the database, never move tickets, never edit files, never answer or message the ticket agents.',
+    ['Watch these tickets until each one is done:', ...ticketLines].join('\n'),
+    ['Board lanes (id — name — agent work):', ...laneLines].join('\n'),
+    ['Ticket state (read-only):', ticketQuery].join('\n'),
+    [
+      'PR state per ticket (use the branch_name from the database when it differs from the one above):',
+      'gh pr list --head <branch> --state all --json number,url,state'
+    ].join('\n'),
+    tabSection(context),
+    [
+      'Loop:',
+      `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
+      '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
+      '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
+      '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
+      `   or its tab is gone while it is still in the ${lane.id} lane.`,
+      '4. Done = it is in a lane with agent work: no, or its PR is merged. When a ticket becomes done, close its tab and say so.',
+      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
+    ].join('\n'),
+    laneInstructionsSection(lane)
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+export const buildOrchestratorLaunch = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  agent: Agent,
+  context: OrchestratorPromptContext,
+  model?: string
+): TerminalTab | undefined => {
+  if (!orchestratorPollActive(lane)) return undefined
+  const prompt = orchestratorPrompt(lane, entries, context)
+  const title = orchestratorTabTitle(lane)
+  return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
+}
+
+export interface AgentChoice {
+  agent: Agent
+  model?: string
+}
+
+// No orchestrator agent of its own means "same as the ticket agent", model
+// included unless the lane names one for the orchestrator.
+export const orchestratorAgentChoice = (
+  lane: Pick<SwimLane, 'orchestratorAgentId' | 'orchestratorModel'>,
+  ticketChoice: AgentChoice,
+  agents: Agent[]
+): AgentChoice => {
+  const orchestratorModel = lane.orchestratorModel?.trim() || undefined
+  if (lane.orchestratorAgentId) {
+    const orchestratorAgent = findAgent(agents, lane.orchestratorAgentId)
+    return { agent: orchestratorAgent, model: orchestratorModel }
+  }
+  return { agent: ticketChoice.agent, model: orchestratorModel ?? ticketChoice.model }
+}
 
 export interface FullAutoHandoff {
   ticket: Ticket
@@ -533,8 +1070,21 @@ export interface FullAutoHandoff {
   toLane: SwimLane
 }
 
-const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
+export const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
   laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
+
+// A ticket's own Next Lane wins; without one it inherits its lane's. The modal
+// and completionMoves both resolve through here so what is shown is what moves.
+// An override naming the ticket's own lane is stale (it was dragged there by
+// hand), so it falls through to the lane's Next Lane instead of pinning it.
+export const effectiveNextLaneId = (
+  ticket: Pick<Ticket, 'moveToLaneId' | 'laneId'>,
+  lane: SwimLane | undefined
+): string | undefined => {
+  const overridesCurrentLane = ticket.moveToLaneId === ticket.laneId
+  const override = overridesCurrentLane ? undefined : ticket.moveToLaneId
+  return override ?? lane?.nextLaneId
+}
 
 // The lane a ticket LEFT decides: its agent did the work and moved the ticket.
 // Tickets new in nextBoard have no previous lane, so they never hand off.
@@ -554,11 +1104,68 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
   return handoffs
 }
 
+const isChecklistComplete = (ticket: Ticket | undefined): boolean => {
+  const checklist = ticket?.checklist ?? []
+  return checklist.length > 0 && checklist.every((item) => item.done)
+}
+
+export interface CompletionMove {
+  ticket: Ticket
+  toLane: SwimLane
+}
+
+// Completed = the checklist just went all-done, or the caller saw it finish
+// another way (a successful ▶ Run, passed in alsoCompletedIds). A transition,
+// not a state: a ticket already all-done in previousBoard stays put. Every
+// completed ticket with Next Lane armed is disarmed, even when it is already in
+// its target lane or that lane is gone, so a later re-completion never moves it.
+export const completionMoves = (
+  previousBoard: ProjectBoard,
+  nextBoard: ProjectBoard,
+  alsoCompletedIds: string[] = [],
+  at = new Date().toISOString()
+): { board: ProjectBoard; moves: CompletionMove[] } => {
+  const previousTicketById = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket]))
+  const isJustCompleted = (ticket: Ticket) => {
+    const checklistJustCompleted =
+      isChecklistComplete(ticket) && !isChecklistComplete(previousTicketById.get(ticket.id))
+    return checklistJustCompleted || alsoCompletedIds.includes(ticket.id)
+  }
+
+  const moves: CompletionMove[] = []
+  const tickets = nextBoard.tickets.map((ticket) => {
+    if (!ticket.moveOnComplete || !isJustCompleted(ticket)) return ticket
+    const currentLane = boardLaneById(nextBoard, ticket.laneId)
+    const toLaneId = effectiveNextLaneId(ticket, currentLane)
+    const toLane = toLaneId ? boardLaneById(nextBoard, toLaneId) : undefined
+    const movesLane = toLane !== undefined && toLane.id !== ticket.laneId
+    const disarmed = { ...ticket, moveOnComplete: false, updatedAt: at }
+    if (!movesLane) return disarmed
+    // The override is spent once it lands: from here the ticket inherits its new
+    // lane's Next Lane instead of pointing at the lane it already sits in.
+    const moved = { ...disarmed, laneId: toLane.id, moveToLaneId: undefined }
+    moves.push({ ticket: moved, toLane })
+    return moved
+  })
+  const anyDisarmed = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
+  return { board: anyDisarmed ? { ...nextBoard, tickets } : nextBoard, moves }
+}
+
 export interface GithubIssue {
   number: number
   title: string
   body: string
   htmlUrl: string
+}
+
+// GitHub's state_reason: 'completed', 'not_planned', 'duplicate', or null.
+export interface GithubClosedIssue extends GithubIssue {
+  stateReason: string | null
+}
+
+export interface GithubIssueLists {
+  open: GithubIssue[]
+  closed: GithubClosedIssue[]
 }
 
 export interface ProjectBoard {
@@ -573,6 +1180,12 @@ export interface ProjectBoard {
 const DEFAULT_LANE_NAMES = ['Idea', 'PRD', 'In Development', 'In PR', 'In Dev', 'In QA', 'In Production']
 
 const laneIdFromName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+
+// Every lane after the merge to main counts as closed. QA sits between In Dev
+// and In Production, so leaving it out would reopen each ticket on its way to ship.
+// New boards get these flags; the storage migration seeds the same ids once.
+const CLOSING_LANE_NAMES = ['In Dev', 'In QA', 'In Production']
+export const SEEDED_CLOSING_LANE_IDS = CLOSING_LANE_NAMES.map(laneIdFromName)
 
 // Tickets with no status live under a lane id that is never stored in
 // board.lanes — the board renders it as a virtual column, so it cannot be
@@ -593,6 +1206,10 @@ export const createUnassignedLane = (): SwimLane => ({
 
 export const getUnassignedLane = (board: ProjectBoard): SwimLane =>
   board.unassignedLane ?? createUnassignedLane()
+
+// Every column the board renders, in render order: No status is stored apart
+// from `lanes` but always shows first.
+export const boardLaneColumns = (board: ProjectBoard): SwimLane[] => [getUnassignedLane(board), ...board.lanes]
 
 // Routes a lane edit to wherever that lane lives: the unassigned column is
 // stored on its own field, every other lane in `lanes`.
@@ -641,7 +1258,8 @@ export const createDefaultBoard = (): ProjectBoard => ({
     id: laneIdFromName(name),
     name,
     agentPrompt: '',
-    agentFilePath: ''
+    agentFilePath: '',
+    closesTicket: SEEDED_CLOSING_LANE_IDS.includes(laneIdFromName(name))
   })),
   tickets: []
 })
@@ -674,7 +1292,7 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
 
 export const addTicketToBoard = (
   board: ProjectBoard,
-  input: { laneId: string; title: string; description: string }
+  input: { laneId: string; title: string; description: string; moveToLaneId?: string; moveOnComplete?: boolean }
 ): ProjectBoard => ({
   ...board,
   tickets: [
@@ -688,36 +1306,99 @@ export const getBoard = (state: ProjectTrackerState, projectPath: string): Proje
 
 // Deleting a lane never deletes work: its tickets move to the unassigned column,
 // which always exists, so this holds even when the last lane is removed.
-export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): ProjectBoard => ({
-  ...board,
-  lanes: board.lanes.filter((lane) => lane.id !== laneId),
-  tickets: board.tickets.map((ticket) =>
-    ticket.laneId === laneId ? { ...ticket, laneId: UNASSIGNED_LANE_ID } : ticket
-  )
-})
+// Tickets and lanes whose Next Lane was the deleted lane lose that target. A
+// ticket whose resolved Next Lane changes is disarmed: it never starts moving
+// to a lane the user didn't pick (e.g. the No status lane's default).
+const withoutLane = (ticket: Ticket, laneId: string): Ticket => {
+  const laneFixed = ticket.laneId === laneId ? { ...ticket, laneId: UNASSIGNED_LANE_ID } : ticket
+  if (ticket.moveToLaneId !== laneId) return laneFixed
+  return { ...laneFixed, moveToLaneId: undefined }
+}
+
+const withoutNextLane = (lane: SwimLane, laneId: string): SwimLane =>
+  lane.nextLaneId === laneId ? { ...lane, nextLaneId: undefined } : lane
+
+export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): ProjectBoard => {
+  const lanes = board.lanes.filter((lane) => lane.id !== laneId).map((lane) => withoutNextLane(lane, laneId))
+  const laneBoard: ProjectBoard = {
+    ...board,
+    lanes,
+    ...(board.unassignedLane && { unassignedLane: withoutNextLane(board.unassignedLane, laneId) })
+  }
+  const tickets = board.tickets.map((ticket) => {
+    const targetBefore = effectiveNextLaneId(ticket, boardLaneById(board, ticket.laneId))
+    const fixed = withoutLane(ticket, laneId)
+    const targetAfter = effectiveNextLaneId(fixed, boardLaneById(laneBoard, fixed.laneId))
+    return targetAfter === targetBefore ? fixed : { ...fixed, moveOnComplete: false }
+  })
+  return { ...laneBoard, tickets }
+}
 
 export const githubIssueExternalId = (issue: GithubIssue) => `github:${issue.number}`
 
 export const GITHUB_IMPORT_LANE_ID = 'github-issues'
 export const GITHUB_IMPORT_LANE_NAME = 'GitHub Issues'
 
+// Where tickets closed as completed on GitHub go: the rightmost lane that closes tickets.
+export const productionLane = (board: ProjectBoard): SwimLane | undefined =>
+  [...board.lanes].reverse().find((lane) => lane.closesTicket)
+
+const hasLocalWork = (ticket: Ticket) => Boolean(ticket.worktreePath || ticket.pullRequestUrl)
+
+export interface GithubSyncResult {
+  board: ProjectBoard
+  added: number
+  moved: number
+  removed: number
+  keptWithWork: number
+}
+
+// Kept-with-work tickets don't count: nothing on the board changed for them.
+export const githubSyncChangeCount = (result: GithubSyncResult) => result.added + result.moved + result.removed
+
 // A GitHub issue carries no swim-lane status, so imports land in a dedicated
-// lane at the far left instead of guessing. Issues already imported are skipped,
-// so pulling repeatedly is safe and never clobbers edits to an imported ticket.
-export const addGithubIssuesToBoard = (
-  board: ProjectBoard,
-  issues: GithubIssue[]
-): { board: ProjectBoard; added: number } => {
-  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
-  const lanes = importLaneExists
-    ? board.lanes
-    : [
-        { id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' },
-        ...board.lanes
-      ]
+// lane at the far left instead of guessing. Already-imported tickets keep every
+// local edit; only GitHub's closed state reaches them: completed → production
+// lane, closed for any other reason → removed unless the ticket has local work.
+// Open or unlisted issues leave their ticket untouched.
+export const syncGithubIssuesToBoard = (board: ProjectBoard, issues: GithubIssueLists): GithubSyncResult => {
+  const closedById = new Map(issues.closed.map((issue) => [githubIssueExternalId(issue), issue]))
+  const targetLane = productionLane(board)
+  const movedAt = new Date().toISOString()
+  let moved = 0
+  let removed = 0
+  let keptWithWork = 0
+
+  const syncedTickets: Ticket[] = []
+  for (const ticket of board.tickets) {
+    const closedIssue = ticket.externalId ? closedById.get(ticket.externalId) : undefined
+    if (!closedIssue) {
+      syncedTickets.push(ticket)
+      continue
+    }
+    const isCompleted = closedIssue.stateReason === 'completed'
+    if (isCompleted) {
+      const shouldMove = targetLane !== undefined && ticket.laneId !== targetLane.id
+      if (shouldMove) moved += 1
+      syncedTickets.push(shouldMove ? { ...ticket, laneId: targetLane.id, updatedAt: movedAt } : ticket)
+      continue
+    }
+    if (hasLocalWork(ticket)) {
+      keptWithWork += 1
+      syncedTickets.push(ticket)
+      continue
+    }
+    removed += 1
+  }
 
   const importedIds = new Set(board.tickets.map((ticket) => ticket.externalId).filter(Boolean))
-  const newIssues = issues.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  const newIssues = issues.open.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  // ponytail: no new issues → no import lane, so a sync-only pull doesn't add an empty lane.
+  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
+  const needsImportLane = newIssues.length > 0 && !importLaneExists
+  const lanes = needsImportLane
+    ? [{ id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' }, ...board.lanes]
+    : board.lanes
 
   const createdAt = new Date().toISOString()
   const firstNumber = nextTicketNumber(board)
@@ -733,9 +1414,47 @@ export const addGithubIssuesToBoard = (
   }))
 
   return {
-    board: { ...board, lanes, tickets: [...board.tickets, ...newTickets] },
-    added: newTickets.length
+    board: { ...board, lanes, tickets: [...syncedTickets, ...newTickets] },
+    added: newTickets.length,
+    moved,
+    removed,
+    keptWithWork
   }
+}
+
+// Closed issues older than every imported ticket can't match one, so the closed
+// fetch starts there. Undefined means nothing is imported and the fetch is skipped.
+export const oldestImportedCreatedAt = (board: ProjectBoard): string | undefined => {
+  const importedCreatedAts = board.tickets
+    .filter((ticket) => ticket.externalId?.startsWith('github:'))
+    .map((ticket) => ticket.createdAt)
+  // ISO-8601 UTC strings sort chronologically.
+  return importedCreatedAts.sort()[0]
+}
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+
+interface GithubSyncNoticeContext {
+  openCount: number
+  productionLaneName: string
+  projectName: string
+}
+
+// Names the project, since the banner can show while another board is open.
+export const githubSyncNotice = (result: GithubSyncResult, context: GithubSyncNoticeContext): string => {
+  const skipped = context.openCount - result.added
+  const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
+  const nothingChanged = githubSyncChangeCount(result) === 0
+  const showsImport = result.added > 0 || nothingChanged
+  const parts = [
+    showsImport ? `Imported ${plural(result.added, 'issue')} into ${context.projectName}${skippedNote}` : '',
+    result.moved > 0 ? `moved ${result.moved} to ${context.productionLaneName}` : '',
+    result.removed > 0 ? `removed ${result.removed} closed` : '',
+    result.keptWithWork > 0 ? `kept ${result.keptWithWork} closed with local work` : ''
+  ].filter(Boolean)
+  const sentence = parts.join(', ')
+  const capitalized = `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`
+  return showsImport ? capitalized : `${context.projectName}: ${capitalized}`
 }
 
 // What a ticket card can show on the board. Ids are persisted, so renaming one
@@ -748,7 +1467,8 @@ export const TICKET_CARD_FIELDS = [
   { id: 'checklist', label: 'Checklist progress' },
   { id: 'branch', label: 'Branch' },
   { id: 'worktree', label: 'Worktree' },
-  { id: 'pullRequest', label: 'GitHub PR' }
+  { id: 'pullRequest', label: 'GitHub PR' },
+  { id: 'version', label: 'Semantic version' }
 ] as const
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
@@ -766,10 +1486,70 @@ export const isWebUrl = (url: string | undefined): url is string => /^https?:\/\
 
 // GitHub PR URLs end in /pull/<number>; anything else still gets a link, just
 // without the number.
-export const pullRequestLabel = (pullRequestUrl: string) => {
+export const pullRequestNumber = (pullRequestUrl: string): number | undefined => {
   const pullNumber = pullRequestUrl.match(/\/pull\/(\d+)/)?.[1]
+  return pullNumber ? Number(pullNumber) : undefined
+}
+
+export const pullRequestLabel = (pullRequestUrl: string) => {
+  const pullNumber = pullRequestNumber(pullRequestUrl)
   return pullNumber ? `PR #${pullNumber}` : 'PR'
 }
+
+export type PullRequestState = 'open' | 'draft' | 'merged' | 'closed'
+
+export interface PullRequestStatus {
+  url: string
+  number: number
+  state: PullRequestState
+  mergedAt?: string
+}
+
+// The slice of GitHub's pull request payload the status is read from.
+export interface GithubPullRequest {
+  html_url: string
+  number: number
+  state: 'open' | 'closed'
+  draft?: boolean
+  merged_at?: string | null
+  head?: { ref: string }
+}
+
+// GitHub reports a merged PR as state "closed"; merged_at is what tells the two
+// apart. Draft only means something while the PR is still open.
+const pullRequestStateOf = (pullRequest: GithubPullRequest): PullRequestState => {
+  if (pullRequest.merged_at) return 'merged'
+  if (pullRequest.state === 'closed') return 'closed'
+  return pullRequest.draft ? 'draft' : 'open'
+}
+
+export const toPullRequestStatus = (pullRequest: GithubPullRequest): PullRequestStatus => ({
+  url: pullRequest.html_url,
+  number: pullRequest.number,
+  state: pullRequestStateOf(pullRequest),
+  mergedAt: pullRequest.merged_at ?? undefined
+})
+
+const PULL_REQUEST_STATE_LABELS: Record<PullRequestState, string> = {
+  open: 'Open',
+  draft: 'Draft',
+  merged: 'Merged',
+  closed: 'Closed'
+}
+
+export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
+  state ? PULL_REQUEST_STATE_LABELS[state] : 'No merge request'
+
+// Only a merge is final: a closed PR can be reopened, or replaced by a new PR
+// from the same branch.
+export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
+
+export const GITHUB_UNREACHABLE_MESSAGE = 'GitHub is unreachable. You look offline; local boards and tickets still work.'
+
+// Matched by substring because IPC rewraps main-process errors as
+// "Error invoking remote method '…': Error: <message>".
+export const isGithubUnreachableError = (error: unknown) =>
+  error instanceof Error && error.message.includes(GITHUB_UNREACHABLE_MESSAGE)
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200
@@ -855,4 +1635,146 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
   const selectedTickets = tickets.filter((ticket) => selectedTicketIds.has(ticket.id))
   const nothingSelectedHere = selectedTickets.length === 0
   return nothingSelectedHere ? tickets : selectedTickets
+}
+
+// Per-entity patches cross IPC as JSON, which drops undefined keys, so an
+// explicit clear travels as null.
+export type Clearable<T> = { [K in keyof T]?: T[K] | null }
+export type TicketWritePatch = Clearable<Omit<Ticket, 'id' | 'number' | 'createdAt'>>
+export type LaneWritePatch = Clearable<Omit<SwimLane, 'id'>>
+export type ProjectWritePatch = Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>
+
+// One per-entity write. The store turns a board edit into a list of these and
+// sends each over its own IPC channel instead of shipping the whole state.
+export type BoardWrite =
+  | { kind: 'lane:create'; lane: SwimLane }
+  | { kind: 'lane:update'; laneId: string; patch: Partial<Omit<SwimLane, 'id'>> }
+  | { kind: 'ticket:create'; ticket: Ticket }
+  | { kind: 'ticket:update'; id: string; patch: Partial<Omit<Ticket, 'id' | 'number' | 'createdAt'>> }
+  | { kind: 'lane:reorder'; laneIds: string[] }
+  | { kind: 'ticket:delete'; id: string }
+  | { kind: 'lane:delete'; laneId: string }
+
+// Key order differs between objects read from the database and objects the
+// renderer rebuilt with a spread, so values are compared with sorted keys.
+const canonicalJson = (value: unknown) =>
+  JSON.stringify(value, (_key, nested: unknown) => {
+    const isPlainObject = nested !== null && typeof nested === 'object' && !Array.isArray(nested)
+    if (!isPlainObject) return nested
+    const sortedEntries = Object.entries(nested).sort(([left], [right]) => left.localeCompare(right))
+    return Object.fromEntries(sortedEntries)
+  })
+export const sameRow = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right)
+
+// Keys present on either side whose values differ; a key now absent stays in
+// the result as undefined, which is how a cleared field is written.
+export const changedFields = <T extends object>(next: T, previous: T): Partial<T> => {
+  const nextRecord = next as Record<string, unknown>
+  const previousRecord = previous as Record<string, unknown>
+  const allKeys = new Set([...Object.keys(nextRecord), ...Object.keys(previousRecord)])
+  const changedKeys = [...allKeys].filter((key) => !sameRow(nextRecord[key], previousRecord[key]))
+  const changedEntries = changedKeys.map((key) => [key, nextRecord[key]])
+  return Object.fromEntries(changedEntries) as Partial<T>
+}
+
+// Listed ids first, in the given order, then every other stored id in its old
+// order. Shared by the repository's lane reorder and the browser fallback.
+export const orderedIds = (storedIds: string[], listedIds: string[]) => {
+  const listed = listedIds.filter((laneId) => storedIds.includes(laneId))
+  const unlisted = storedIds.filter((laneId) => !listedIds.includes(laneId))
+  return [...listed, ...unlisted]
+}
+
+const isEmptyPatch = (patch: object) => Object.keys(patch).length === 0
+
+// Order matters: lanes exist before tickets point at them, and deletes come
+// last so a removed lane's tickets have already moved out. A ticket patch
+// always carries updatedAt, so the repository keeps this window's value
+// (marking a run seen stays unstamped) instead of stamping its own.
+export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWrite[] => {
+  const beforeLaneById = new Map(before.lanes.map((lane) => [lane.id, lane]))
+  const afterLaneIds = new Set(after.lanes.map((lane) => lane.id))
+  const beforeTicketById = new Map(before.tickets.map((ticket) => [ticket.id, ticket]))
+  const afterTicketIds = new Set(after.tickets.map((ticket) => ticket.id))
+
+  const createdLanes = after.lanes.filter((lane) => !beforeLaneById.has(lane.id))
+  const laneCreates: BoardWrite[] = createdLanes.map((lane) => ({ kind: 'lane:create', lane }))
+
+  const laneUpdates: BoardWrite[] = []
+  for (const lane of after.lanes) {
+    const previous = beforeLaneById.get(lane.id)
+    if (!previous) continue
+    const { id: _id, ...patch } = changedFields(lane, previous)
+    if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: lane.id, patch })
+  }
+  if (after.unassignedLane) {
+    const previous = before.unassignedLane ?? createUnassignedLane()
+    const { id: _id, ...patch } = changedFields(after.unassignedLane, previous)
+    if (!isEmptyPatch(patch)) laneUpdates.push({ kind: 'lane:update', laneId: UNASSIGNED_LANE_ID, patch })
+  }
+
+  const ticketCreates: BoardWrite[] = []
+  const ticketUpdates: BoardWrite[] = []
+  for (const ticket of after.tickets) {
+    const previous = beforeTicketById.get(ticket.id)
+    if (!previous) {
+      ticketCreates.push({ kind: 'ticket:create', ticket })
+      continue
+    }
+    const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
+    if (isEmptyPatch(patch)) continue
+    ticketUpdates.push({ kind: 'ticket:update', id: ticket.id, patch: { ...patch, updatedAt: ticket.updatedAt } })
+  }
+
+  // Creates are appended last, so that is the order the store would hold
+  // without a reorder.
+  const orderAfterCreates = [...before.lanes.map((lane) => lane.id), ...createdLanes.map((lane) => lane.id)]
+  const expectedOrder = orderAfterCreates.filter((laneId) => afterLaneIds.has(laneId))
+  const afterOrder = after.lanes.map((lane) => lane.id)
+  const orderChanged = afterOrder.some((laneId, index) => laneId !== expectedOrder[index])
+  const reorder: BoardWrite[] = orderChanged ? [{ kind: 'lane:reorder', laneIds: afterOrder }] : []
+
+  const ticketDeletes: BoardWrite[] = before.tickets
+    .filter((ticket) => !afterTicketIds.has(ticket.id))
+    .map((ticket) => ({ kind: 'ticket:delete', id: ticket.id }))
+  const laneDeletes: BoardWrite[] = before.lanes
+    .filter((lane) => !afterLaneIds.has(lane.id))
+    .map((lane) => ({ kind: 'lane:delete', laneId: lane.id }))
+
+  return [...laneCreates, ...laneUpdates, ...ticketCreates, ...ticketUpdates, ...reorder, ...ticketDeletes, ...laneDeletes]
+}
+
+export interface LaneTransition {
+  from: string
+  to: string
+  // 'lane' = the source lane's own Next Lane; 'override' = tickets whose own
+  // Next Lane differs from their lane's, merged per target.
+  kind: 'lane' | 'override'
+  ticketIds: string[]
+}
+
+// Edges for the graph view's lane state diagram. Targets outside `lanes`
+// (hidden, filtered out, or deleted) and self-loops are dropped.
+export const laneTransitions = (lanes: SwimLane[], tickets: Ticket[]): LaneTransition[] => {
+  const lanesById = new Map(lanes.map((lane) => [lane.id, lane]))
+  const isDrawableTarget = (from: string, to: string | undefined): to is string =>
+    to !== undefined && to !== from && lanesById.has(to)
+
+  const laneEdges: LaneTransition[] = lanes
+    .filter((lane) => isDrawableTarget(lane.id, lane.nextLaneId))
+    .map((lane) => ({ from: lane.id, to: lane.nextLaneId!, kind: 'lane', ticketIds: [] }))
+
+  const overrideEdges = new Map<string, LaneTransition>()
+  for (const ticket of tickets) {
+    const lane = lanesById.get(ticket.laneId)
+    if (!lane) continue
+    const target = effectiveNextLaneId(ticket, lane)
+    const inheritsLaneDefault = target === lane.nextLaneId
+    if (inheritsLaneDefault || !isDrawableTarget(lane.id, target)) continue
+    const key = `${lane.id}->${target}`
+    const edge = overrideEdges.get(key) ?? { from: lane.id, to: target, kind: 'override' as const, ticketIds: [] }
+    edge.ticketIds.push(ticket.id)
+    overrideEdges.set(key, edge)
+  }
+  return [...laneEdges, ...overrideEdges.values()]
 }

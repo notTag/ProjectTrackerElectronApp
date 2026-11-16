@@ -1,6 +1,6 @@
 {
   "name": "project-tracker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Native macOS Project Tracker desktop app",
   "author": "Project Tracker",
   "type": "module",
@@ -8,9 +8,10 @@
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "rm -rf out && vue-tsc --noEmit && vite build && tsc -p tsconfig.electron.json",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && tsc -p evals/tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "dist": "bun run build && electron-builder --mac",
+    "eval": "vitest run --config evals/vitest.config.ts",
+    "dist": "node scripts/check-release-env.mjs --notarize-only && bun run build && electron-builder --mac",
     "release": "node scripts/check-release-env.mjs && bun run build && electron-builder --mac --publish always",
     "start:prod": "node scripts/open-packaged-app.mjs",
     "start:dev": "electron ."
@@ -63,6 +64,11 @@
         "zip"
       ]
     },
+    "dmg": {
+      "sign": true,
+      "writeUpdateInfo": false
+    },
+    "artifactBuildCompleted": "./scripts/notarize-dmg.mjs",
     "files": [
       "assets/app-icon.png",
       "out/**/*",

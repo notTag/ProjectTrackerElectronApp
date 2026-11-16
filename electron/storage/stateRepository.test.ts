@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createSeedState,
@@ -12,7 +12,14 @@ import {
   type ProjectTrackerState
 } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
-import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
+import {
+  DATABASE_FILE_NAME,
+  LEGACY_BACKUP_FILE_NAME,
+  isSnapshotFileName,
+  SNAPSHOT_RETENTION_COUNT,
+  SNAPSHOTS_DIRECTORY_NAME,
+  StateRepository
+} from './stateRepository.js'
 
 const createdUserDataPaths: string[] = []
 
@@ -40,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -63,7 +70,15 @@ const stateWithBoard = (): ProjectTrackerState => {
             branchName: 'feat/a',
             worktreePath: '/code/app-a',
             pullRequestUrl: 'https://github.com/o/r/pull/8',
-            fullAuto: true
+            pullRequestState: 'merged',
+            pullRequestMergedAt: '2026-01-04T00:00:00Z',
+            fullAuto: true,
+            externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
+            moveToLaneId: 'prd',
+            moveOnComplete: true,
+            version: '1.4.0-rc.1',
+            agentId: 'codex',
+            model: 'gpt-5'
           },
           {
             id: 'ticket-b',
@@ -107,6 +122,8 @@ describe('StateRepository', () => {
     expect(board?.lanes.map((lane) => lane.id)).toEqual(['idea', 'prd'])
     expect(board?.lanes[1].agentFilePath).toBe('/tmp/prd.md')
     expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
+    expect(board?.lanes[1].orchestratorPrompt).toBe('Poll every 2 minutes.')
+    expect(board?.lanes[0].orchestratorPrompt).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
@@ -114,6 +131,12 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].autoRunWorktrees).toBe(true)
     expect(board?.lanes[1].fullAuto).toBe(true)
     expect(board?.lanes[0].fullAuto).toBe(false)
+    expect(board?.lanes[1].agentSetsVersion).toBe(true)
+    expect(board?.lanes[0].agentSetsVersion).toBe(false)
+    expect(board?.lanes[1]).toMatchObject({ orchestratorPollMinutes: 5, orchestratorPollActive: false })
+    expect(board?.lanes[0]).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
+    expect(board?.tickets[0].version).toBe('1.4.0-rc.1')
+    expect(board?.tickets[1].version).toBeUndefined()
     expect(board?.tickets[0].fullAuto).toBe(true)
     expect(board?.tickets[1].fullAuto).toBe(false)
     expect(board?.unassignedLane?.agentPrompt).toBe('Triage this.')
@@ -124,7 +147,12 @@ describe('StateRepository', () => {
     expect(board?.tickets[0].branchName).toBe('feat/a')
     expect(board?.tickets[0].worktreePath).toBe('/code/app-a')
     expect(board?.tickets[0].pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(board?.tickets[0].pullRequestState).toBe('merged')
+    expect(board?.tickets[0].pullRequestMergedAt).toBe('2026-01-04T00:00:00Z')
+    expect(board?.tickets[1].pullRequestState).toBeUndefined()
     expect(board?.tickets[1].worktreePath).toBeUndefined()
+    expect(board?.tickets[0].externalLinks).toEqual(['https://figma.com/f', 'https://slack.com/t'])
+    expect(board?.tickets[1].externalLinks).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
@@ -132,6 +160,10 @@ describe('StateRepository', () => {
     expect(board?.tickets[1].assigneeId).toBe('local')
     expect(board?.tickets[0].assigneeId).toBeUndefined()
     expect(board?.tickets[1].agentRun?.succeeded).toBe(true)
+    expect(board?.tickets[0].moveToLaneId).toBe('prd')
+    expect(board?.tickets[0].moveOnComplete).toBe(true)
+    expect(board?.tickets[1].moveToLaneId).toBeUndefined()
+    expect(board?.tickets[1].moveOnComplete).toBe(false)
   })
 
   it('adds ticket columns missing from a database created before they existed', () => {
@@ -139,6 +171,10 @@ describe('StateRepository', () => {
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN worktree_path')
     olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_url')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_state')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN pull_request_merged_at')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_to_lane_id')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_on_complete')
     olderDatabase.close()
 
     const repository = new StateRepository(userDataPath)
@@ -146,11 +182,112 @@ describe('StateRepository', () => {
     const migratedTicket = state.boards![projectPath].tickets[0]
     migratedTicket.worktreePath = '/code/app-a'
     migratedTicket.pullRequestUrl = 'https://github.com/o/r/pull/8'
+    migratedTicket.pullRequestState = 'open'
+    migratedTicket.pullRequestMergedAt = undefined
+    expect(migratedTicket.moveOnComplete).toBe(false)
+    migratedTicket.moveToLaneId = 'prd'
+    migratedTicket.moveOnComplete = true
     repository.saveState(state)
 
     const reopenedTicket = reopenedBoard(userDataPath, projectPath).tickets[0]
     expect(reopenedTicket.worktreePath).toBe('/code/app-a')
     expect(reopenedTicket.pullRequestUrl).toBe('https://github.com/o/r/pull/8')
+    expect(reopenedTicket).toMatchObject({ moveToLaneId: 'prd', moveOnComplete: true })
+    expect(reopenedTicket.pullRequestState).toBe('open')
+    expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
+  })
+
+  it('adds the version columns to a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN version')
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN agent_sets_version')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.tickets[0].version).toBeUndefined()
+    expect(board.lanes[1].agentSetsVersion).toBe(false)
+    board.tickets[0].version = '2.0.0'
+    board.lanes[1].agentSetsVersion = true
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.tickets[0].version).toBe('2.0.0')
+    expect(reopened.lanes[1].agentSetsVersion).toBe(true)
+  })
+
+  it('gives lanes the default orchestrator poll in a database created before it existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_minutes')
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_active')
+    olderDatabase.close()
+
+    const lanes = new StateRepository(userDataPath).getState().boards![projectPath].lanes
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
+    }
+  })
+
+  it('adds the next lane column to a database created before it existed, then round-trips it', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN next_lane_id')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.lanes.map((lane) => lane.nextLaneId)).toEqual(board.lanes.map(() => undefined))
+    board.lanes[0].nextLaneId = board.lanes[1].id
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[0].nextLaneId).toBe(board.lanes[1].id)
+    expect(reopened.lanes[1].nextLaneId).toBeUndefined()
+  })
+
+  it('adds the agent model columns to a database created before they existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    for (const column of ['auto_run_model', 'orchestrator_agent_id', 'orchestrator_model']) {
+      olderDatabase.exec(`ALTER TABLE swim_lanes DROP COLUMN ${column}`)
+    }
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN agent_id')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN model')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const board = state.boards![projectPath]
+    expect(board.lanes[1]).toMatchObject({ autoRunModel: undefined, orchestratorAgentId: undefined, orchestratorModel: undefined })
+    expect(board.tickets[0]).toMatchObject({ agentId: undefined, model: undefined })
+    board.lanes[1].orchestratorAgentId = 'opencode'
+    board.tickets[0].agentId = 'codex'
+    board.tickets[0].model = 'gpt-5'
+    repository.saveState(state)
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[1].orchestratorAgentId).toBe('opencode')
+    expect(reopened.tickets[0]).toMatchObject({ agentId: 'codex', model: 'gpt-5' })
+  })
+
+  it('loads tickets with no links from a database created before external links existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN external_links_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket.externalLinks).toBeUndefined()
+    migratedTicket.externalLinks = ['https://a.dev']
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].externalLinks).toEqual(['https://a.dev'])
   })
 
   it('removes lanes, tickets and paths the saved state no longer has', () => {
@@ -183,7 +320,7 @@ describe('row-level writes', () => {
     expect(created.number).toBe(3)
 
     repository.updateTicket('ticket-c', { title: 'C, retitled', labels: ['ui'] })
-    repository.moveTicket('ticket-c', 'prd')
+    repository.updateTicket('ticket-c', { laneId: 'prd' })
     const afterEdit = reopenedBoard(userDataPath, projectPath).tickets.find((ticket) => ticket.id === 'ticket-c')
     expect(afterEdit).toMatchObject({ number: 3, title: 'C, retitled', labels: ['ui'], laneId: 'prd' })
 
@@ -192,15 +329,238 @@ describe('row-level writes', () => {
     expect(remainingIds).toEqual(['ticket-a', 'ticket-b'])
   })
 
-  it('upserts and deletes a swim lane', () => {
+  it('creates, updates, reorders and deletes a swim lane', () => {
     const userDataPath = freshUserDataPath()
     const { repository, projectPath } = seededRepository(userDataPath)
 
-    repository.upsertSwimLane(projectPath, { id: 'idea', name: 'Ideas', agentPrompt: '', agentFilePath: '' }, 0)
+    const created = repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    expect(created.name).toBe('QA')
+    repository.updateSwimLane(projectPath, 'idea', { name: 'Ideas', autoRunModel: null })
+    repository.reorderSwimLanes(projectPath, ['qa', 'idea', 'prd'])
     repository.deleteSwimLane(projectPath, 'prd')
 
     const lanes = reopenedBoard(userDataPath, projectPath).lanes
-    expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['idea', 'Ideas']])
+    expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['qa', 'QA'], ['idea', 'Ideas']])
+  })
+
+  it('refuses to create a lane whose id is already stored, keeping its config', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    repository.updateSwimLane(projectPath, 'idea', { agentPrompt: 'keep me' })
+
+    const staleCopy = { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }
+    expect(() => repository.createSwimLane(projectPath, staleCopy)).toThrow('already exists')
+
+    const idea = reopenedBoard(userDataPath, projectPath).lanes.find((lane) => lane.id === 'idea')
+    expect(idea?.agentPrompt).toBe('keep me')
+  })
+
+  it('configures the unassigned column even before it has a row', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const projectPath = repository.getState().snapshot.projects[0].path
+
+    repository.updateSwimLane(projectPath, UNASSIGNED_LANE_ID, { agentPrompt: 'Sort it.' })
+
+    expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentPrompt).toBe('Sort it.')
+  })
+
+  it('stamps updatedAt only when the patch does not carry it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository } = seededRepository(userDataPath)
+
+    const stamped = repository.updateTicket('ticket-a', { title: 'A2' })
+    expect(stamped.updatedAt).toBeDefined()
+    const kept = repository.updateTicket('ticket-a', { title: 'A3', updatedAt: '2026-02-02T00:00:00.000Z' })
+    expect(kept.updatedAt).toBe('2026-02-02T00:00:00.000Z')
+    const cleared = repository.updateTicket('ticket-b', { assigneeId: null, updatedAt: null })
+    expect(cleared.updatedAt).toBeUndefined()
+    expect(cleared.assigneeId).toBeUndefined()
+  })
+
+  it('keeps a lane missing from a reorder on the board, after the listed ones', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    new StateRepository(userDataPath).createSwimLane(projectPath, { id: 'late', name: 'Late', agentPrompt: '', agentFilePath: '' })
+
+    repository.reorderSwimLanes(projectPath, ['prd', 'idea'])
+
+    expect(reopenedBoard(userDataPath, projectPath).lanes.map((lane) => lane.id)).toEqual(['prd', 'idea', 'late'])
+  })
+
+  it('updates only the hand-edited fields of a project', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+
+    const updated = repository.updateProject(projectPath, { notes: 'ship it', priority: 'high' })
+
+    const reloaded = new StateRepository(userDataPath).getState().snapshot.projects[0]
+    expect(reloaded).toEqual(updated)
+    expect(reloaded).toMatchObject({ notes: 'ship it', priority: 'high' })
+  })
+})
+
+const OTHER_PROJECT_PATH = '/Users/example/Projects/other'
+
+// Two projects with boards, so a write to one can be checked against the other.
+const twoProjectRepository = (userDataPath: string) => {
+  const repository = new StateRepository(userDataPath)
+  const base = stateWithBoard()
+  const otherProject = { ...base.snapshot.projects[0], path: OTHER_PROJECT_PATH, name: 'other' }
+  const otherBoard = {
+    lanes: [
+      { id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' },
+      { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '' }
+    ],
+    tickets: [{ id: 'ticket-x', number: 1, laneId: 'idea', title: 'X', description: '', createdAt: '2026-01-01T00:00:00.000Z' }]
+  }
+  const projectPath = base.snapshot.projects[0].path
+  repository.saveState({
+    ...base,
+    snapshot: { ...base.snapshot, projects: [...base.snapshot.projects, otherProject] },
+    boards: { ...base.boards, [OTHER_PROJECT_PATH]: otherBoard }
+  })
+  return { repository, projectPath }
+}
+
+type DumpedRows = Record<string, unknown>[]
+const dumpRows = (userDataPath: string) => {
+  const db = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+  const rows = {
+    tickets: db.prepare('SELECT * FROM tickets ORDER BY id').all() as DumpedRows,
+    lanes: db.prepare('SELECT * FROM swim_lanes ORDER BY project_path, id').all() as DumpedRows,
+    projects: db.prepare('SELECT * FROM projects ORDER BY path').all() as DumpedRows
+  }
+  db.close()
+  return rows
+}
+const ticketRowsExcept = (rows: DumpedRows, ticketId: string) => rows.filter((row) => row.id !== ticketId)
+const laneRowsOf = (rows: DumpedRows, projectPath: string) => rows.filter((row) => row.project_path === projectPath)
+const laneRowsExcept = (rows: DumpedRows, projectPath: string, laneId: string) =>
+  rows.filter((row) => !(row.project_path === projectPath && row.id === laneId))
+
+describe('per-entity writes leave unrelated rows alone', () => {
+  it('ticket create, update, move and delete touch only that ticket', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.createTicket(projectPath, { id: 'ticket-c', laneId: 'idea', title: 'C', description: '', createdAt: '2026-01-05T00:00:00.000Z' })
+    repository.updateTicket('ticket-c', { title: 'C2' })
+    repository.updateTicket('ticket-c', { laneId: 'prd' })
+    const afterEdits = dumpRows(userDataPath)
+    repository.deleteTicket('ticket-c')
+    const afterDelete = dumpRows(userDataPath)
+
+    expect(ticketRowsExcept(afterEdits.tickets, 'ticket-c')).toEqual(before.tickets)
+    expect(afterDelete.tickets).toEqual(before.tickets)
+    expect(afterDelete.lanes).toEqual(before.lanes)
+    expect(afterDelete.projects).toEqual(before.projects)
+  })
+
+  it('lane create, update and delete touch only that lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.updateSwimLane(projectPath, 'qa', { name: 'In QA' })
+    const afterEdits = dumpRows(userDataPath)
+    repository.deleteSwimLane(projectPath, 'qa')
+    const afterDelete = dumpRows(userDataPath)
+
+    expect(laneRowsExcept(afterEdits.lanes, projectPath, 'qa')).toEqual(before.lanes)
+    expect(afterDelete).toEqual(before)
+  })
+
+  it('a lane reorder touches only that board', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.reorderSwimLanes(projectPath, ['prd', 'idea'])
+    const after = dumpRows(userDataPath)
+
+    expect(laneRowsOf(after.lanes, OTHER_PROJECT_PATH)).toEqual(laneRowsOf(before.lanes, OTHER_PROJECT_PATH))
+    expect(after.tickets).toEqual(before.tickets)
+    expect(after.projects).toEqual(before.projects)
+  })
+
+  it('a project update touches only that project row', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    const before = dumpRows(userDataPath)
+
+    repository.updateProject(projectPath, { notes: 'n' })
+    const after = dumpRows(userDataPath)
+
+    expect(after.projects.filter((row) => row.path !== projectPath)).toEqual(
+      before.projects.filter((row) => row.path !== projectPath)
+    )
+    expect(after.tickets).toEqual(before.tickets)
+    expect(after.lanes).toEqual(before.lanes)
+  })
+
+  it('keeps what a second connection changed between the read and the write', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    repository.getState()
+    const otherWriter = new StateRepository(userDataPath)
+    otherWriter.updateTicket('ticket-x', { title: 'X by agent' })
+    otherWriter.updateSwimLane(OTHER_PROJECT_PATH, 'prd', { name: 'PRD by agent' })
+    otherWriter.updateProject(OTHER_PROJECT_PATH, { notes: 'agent notes' })
+    const afterOtherWriter = dumpRows(userDataPath)
+
+    repository.updateTicket('ticket-a', { title: 'A edited' })
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.reorderSwimLanes(projectPath, ['qa', 'prd', 'idea'])
+    repository.updateProject(projectPath, { notes: 'mine' })
+    const after = dumpRows(userDataPath)
+
+    expect(ticketRowsExcept(after.tickets, 'ticket-a')).toEqual(ticketRowsExcept(afterOtherWriter.tickets, 'ticket-a'))
+    expect(laneRowsOf(after.lanes, OTHER_PROJECT_PATH)).toEqual(laneRowsOf(afterOtherWriter.lanes, OTHER_PROJECT_PATH))
+    expect(after.projects.find((row) => row.path === OTHER_PROJECT_PATH)?.notes).toBe('agent notes')
+  })
+})
+
+describe('per-entity writes and the save baseline', () => {
+  // The renderer splices each written entity into its state, so a later
+  // whole-state save (a scan, board preferences) carries them unchanged. With
+  // the baseline patched they diff as nothing, and an agent's later edit to the
+  // same rows survives instead of being overwritten from the renderer's copy.
+  it('a later whole-state save does not write them back over an outside edit', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = twoProjectRepository(userDataPath)
+    repository.getState()
+
+    repository.updateTicket('ticket-a', { title: 'A edited' })
+    repository.createTicket(projectPath, { id: 'ticket-c', laneId: 'idea', title: 'C', description: '', createdAt: '2026-01-05T00:00:00.000Z' })
+    repository.deleteTicket('ticket-b')
+    repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
+    repository.updateSwimLane(projectPath, 'idea', { name: 'Ideas' })
+    repository.reorderSwimLanes(projectPath, ['qa', 'prd', 'idea'])
+    repository.updateProject(projectPath, { notes: 'mine' })
+    const rendererState = new StateRepository(userDataPath).getState()
+
+    const agent = new StateRepository(userDataPath)
+    agent.updateTicket('ticket-a', { title: 'A by agent' })
+    agent.updateSwimLane(projectPath, 'idea', { name: 'Ideas by agent' })
+    agent.updateProject(projectPath, { notes: 'agent notes' })
+    repository.saveState({ ...rendererState, scanDirectories: [...rendererState.scanDirectories, '/Users/example/More'] })
+
+    const reloaded = new StateRepository(userDataPath).getState()
+    const board = reloaded.boards![projectPath]
+    expect(board.tickets.map((ticket) => [ticket.id, ticket.title])).toEqual([
+      ['ticket-a', 'A by agent'],
+      ['ticket-c', 'C']
+    ])
+    expect(board.lanes.map((lane) => [lane.id, lane.name])).toEqual([
+      ['qa', 'QA'],
+      ['prd', 'PRD'],
+      ['idea', 'Ideas by agent']
+    ])
+    expect(reloaded.snapshot.projects.find((project) => project.path === projectPath)?.notes).toBe('agent notes')
+    expect(reloaded.scanDirectories).toContain('/Users/example/More')
   })
 })
 
@@ -395,6 +755,7 @@ describe('legacy databases', () => {
     expect(state.snapshot.projects.map((project) => project.name)).toEqual(['Legacy'])
     expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js', 'Kept'])
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
@@ -532,5 +893,290 @@ describe('StateRepository archived projects', () => {
     database.close()
     expect(row).toEqual({ id: UNASSIGNED_LANE_ID, agent_file_path: agentFilePath })
     expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentFilePath).toBe(agentFilePath)
+  })
+})
+
+describe('closed_at triggers (#27)', () => {
+  const setUp = () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const state = stateWithBoard()
+    const projectPath = state.snapshot.projects[0].path
+    state.boards[projectPath].lanes.push(
+      { id: 'in-dev', name: 'In Dev', agentPrompt: '', agentFilePath: '', closesTicket: true },
+      { id: 'in-production', name: 'In Production', agentPrompt: '', agentFilePath: '', closesTicket: true }
+    )
+    repository.saveState(state)
+    // A second connection stands in for an agent running the sqlite3 CLI.
+    const cli = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const closedAt = (ticketId: string) =>
+      cli.prepare('SELECT closed_at FROM tickets WHERE id = ?').get(ticketId)?.closed_at as string | null
+    const moveWithCli = (ticketId: string, laneId: string) =>
+      cli.prepare('UPDATE tickets SET lane_id = ? WHERE id = ?').run(laneId, ticketId)
+    return { userDataPath, repository, projectPath, cli, closedAt, moveWithCli }
+  }
+
+  it('stamps on a move into a closing lane, keeps it closing to closing, clears it on the way out', () => {
+    const { cli, closedAt, moveWithCli } = setUp()
+    expect(closedAt('ticket-a')).toBeNull()
+
+    moveWithCli('ticket-a', 'in-dev')
+    const stamped = closedAt('ticket-a')
+    expect(stamped).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
+
+    cli.prepare("UPDATE tickets SET closed_at = '2026-01-05T00:00:00.000Z' WHERE id = 'ticket-a'").run()
+    moveWithCli('ticket-a', 'in-production')
+    expect(closedAt('ticket-a')).toBe('2026-01-05T00:00:00.000Z')
+
+    moveWithCli('ticket-a', 'idea')
+    expect(closedAt('ticket-a')).toBeNull()
+    cli.close()
+  })
+
+  it('stamps a ticket created straight into a closing lane, and an app-side move', () => {
+    const { repository, projectPath, cli, closedAt } = setUp()
+    const created = repository.createTicket(projectPath, {
+      id: 'ticket-c',
+      laneId: 'in-dev',
+      title: 'C',
+      description: '',
+      createdAt: '2026-01-01T00:00:00.000Z'
+    })
+    expect(closedAt(created.id)).not.toBeNull()
+
+    repository.updateTicket('ticket-b', { laneId: 'in-production' })
+    expect(closedAt('ticket-b')).not.toBeNull()
+    cli.close()
+  })
+
+  it('an app save that rewrites the row, lane_id included, leaves closed_at alone', () => {
+    const { repository, projectPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.prepare("UPDATE tickets SET closed_at = '2026-01-05T00:00:00.000Z' WHERE id = 'ticket-a'").run()
+
+    const state = repository.getState()
+    const ticket = state.boards[projectPath].tickets.find((entry) => entry.id === 'ticket-a')!
+    ticket.title = 'Renamed'
+    repository.saveState(state)
+
+    expect(closedAt('ticket-a')).toBe('2026-01-05T00:00:00.000Z')
+    cli.close()
+  })
+
+  it('flagging a lane later closes what sits in it; unflagging reopens them', () => {
+    const { repository, projectPath, cli, closedAt } = setUp()
+    const state = repository.getState()
+    state.boards[projectPath] = updateLaneInBoard(state.boards[projectPath], 'idea', { closesTicket: true })
+    repository.saveState(state)
+    expect(closedAt('ticket-a')).toBe('2026-01-01T00:00:00.000Z')
+
+    const next = repository.getState()
+    next.boards[projectPath] = updateLaneInBoard(next.boards[projectPath], 'idea', { closesTicket: false })
+    repository.saveState(next)
+    expect(closedAt('ticket-a')).toBeNull()
+    cli.close()
+  })
+
+  it('a lane row first inserted already flagged closes what sits in it', () => {
+    const { projectPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'later-lane')
+    cli
+      .prepare(
+        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, closes_ticket) VALUES ('later-lane', ?, 'Later', '', '', 99, 1)`
+      )
+      .run(projectPath)
+    expect(closedAt('ticket-a')).not.toBeNull()
+    cli.close()
+  })
+
+  it('a closing → closing move stamps a ticket that never got a closed_at', () => {
+    const { cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.exec("UPDATE tickets SET closed_at = NULL WHERE id = 'ticket-a'")
+    moveWithCli('ticket-a', 'in-production')
+    expect(closedAt('ticket-a')).not.toBeNull()
+    cli.close()
+  })
+
+  it('upgrading an older file seeds the closing lanes once and backfills their tickets', () => {
+    const { userDataPath, cli, closedAt, moveWithCli } = setUp()
+    moveWithCli('ticket-a', 'in-dev')
+    cli.exec(`
+      UPDATE swim_lanes SET closes_ticket = 0;
+      UPDATE tickets SET closed_at = NULL, updated_at = '2026-02-02T00:00:00.000Z' WHERE id = 'ticket-a';
+      UPDATE schema_meta SET version = 4;
+    `)
+
+    new StateRepository(userDataPath)
+    const seeded = cli.prepare("SELECT id FROM swim_lanes WHERE closes_ticket = 1 ORDER BY id").all().map((row) => row.id)
+    expect(seeded).toEqual(['in-dev', 'in-production'])
+    expect(closedAt('ticket-a')).toBe('2026-02-02T00:00:00.000Z')
+
+    // Already at the current version: a lane the user unflagged stays unflagged.
+    cli.exec("UPDATE swim_lanes SET closes_ticket = 0 WHERE id = 'in-dev'")
+    new StateRepository(userDataPath)
+    const flag = cli.prepare("SELECT closes_ticket FROM swim_lanes WHERE id = 'in-dev'").get()?.closes_ticket
+    expect(flag).toBe(0)
+    cli.close()
+  })
+
+  it('counts closed tickets per window, only for visible, non-archived projects', () => {
+    const { repository, projectPath, cli } = setUp()
+    cli.exec(`
+      UPDATE tickets SET lane_id = 'in-dev' WHERE id IN ('ticket-a', 'ticket-b');
+      UPDATE tickets SET closed_at = '2026-11-09T10:00:00.000Z' WHERE id = 'ticket-a';
+      UPDATE tickets SET closed_at = '2026-03-01T10:00:00.000Z' WHERE id = 'ticket-b';
+    `)
+    const windows = {
+      today: '2026-11-09T05:00:00.000Z',
+      week: '2026-11-02T10:00:00.000Z',
+      month: '2026-11-01T04:00:00.000Z',
+      year: '2026-01-01T05:00:00.000Z'
+    }
+    const [metrics] = repository.closedTicketMetrics([projectPath, '/not/a/project'], windows)
+    expect(metrics).toMatchObject({
+      projectPath,
+      hasClosingLanes: true,
+      closed: { today: 1, week: 1, month: 1, year: 2 }
+    })
+    expect(repository.closedTicketMetrics(['/not/a/project'], windows)).toEqual([])
+
+    cli.exec(`UPDATE projects SET archived = 1`)
+    expect(repository.closedTicketMetrics([projectPath], windows)).toEqual([])
+    cli.close()
+  })
+})
+
+describe('snapshots', () => {
+  const snapshotsIn = (userDataPath: string) => path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
+  const snapshotNames = (userDataPath: string) => {
+    const fileNames = readdirSync(snapshotsIn(userDataPath))
+    return fileNames.filter(isSnapshotFileName).sort()
+  }
+  const integrityOf = (snapshotPath: string) => {
+    const snapshot = new DatabaseSync(snapshotPath)
+    const result = snapshot.prepare('PRAGMA integrity_check').get()?.integrity_check
+    snapshot.close()
+    return result
+  }
+  const backdate = (filePath: string, hours: number) => {
+    const past = new Date(Date.now() - hours * 60 * 60 * 1000)
+    utimesSync(filePath, past, past)
+  }
+
+  it('skips a brand-new database and snapshots an existing one on launch', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    expect(existsSync(snapshotsIn(userDataPath))).toBe(false)
+
+    new StateRepository(userDataPath)
+    const names = snapshotNames(userDataPath)
+    expect(names).toHaveLength(1)
+    expect(integrityOf(path.join(snapshotsIn(userDataPath), names[0]))).toBe('ok')
+  })
+
+  it('takes at most one launch snapshot per 24 hours', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    const [firstName] = snapshotNames(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(1)
+
+    backdate(path.join(snapshotsIn(userDataPath), firstName), 25)
+    new StateRepository(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(2)
+  })
+
+  it(`keeps only the newest ${SNAPSHOT_RETENTION_COUNT} snapshots and leaves other files alone`, () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    mkdirSync(snapshotsIn(userDataPath), { recursive: true })
+    const oldNames = [1, 2, 3, 4, 5, 6, 7, 8].map((day) => `project-tracker-2000-01-0${day}T00-00-00-000Z.sqlite`)
+    for (const name of oldNames) writeFileSync(path.join(snapshotsIn(userDataPath), name), '')
+    writeFileSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'), '')
+
+    const newPath = repository.backUpNow()
+
+    const remaining = snapshotNames(userDataPath)
+    expect(remaining).toHaveLength(SNAPSHOT_RETENTION_COUNT)
+    expect(remaining).toContain(path.basename(newPath))
+    expect(remaining).not.toContain(oldNames[0])
+    expect(remaining).not.toContain(oldNames[1])
+    expect(existsSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'))).toBe(true)
+  })
+
+  it('includes WAL-only commits and excludes other connections uncommitted rows', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const otherWriter = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    otherWriter.exec('PRAGMA wal_autocheckpoint = 0')
+    otherWriter.exec("CREATE TABLE probe (value TEXT); INSERT INTO probe VALUES ('committed')")
+    otherWriter.exec("BEGIN IMMEDIATE; INSERT INTO probe VALUES ('uncommitted')")
+
+    try {
+      const snapshotPath = repository.backUpNow()
+      const snapshot = new DatabaseSync(snapshotPath)
+      const values = snapshot.prepare('SELECT value FROM probe').all().map((row) => row.value)
+      snapshot.close()
+      expect(values).toEqual(['committed'])
+      expect(integrityOf(snapshotPath)).toBe('ok')
+    } finally {
+      otherWriter.exec('ROLLBACK')
+      otherWriter.close()
+    }
+  })
+
+  it('never blocks startup when the snapshot fails', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    // A file where the directory should be fails for root too, unlike chmod.
+    writeFileSync(snapshotsIn(userDataPath), '')
+
+    const repository = new StateRepository(userDataPath)
+    expect(repository.getState()).toBeDefined()
+    expect(statSync(snapshotsIn(userDataPath)).isFile()).toBe(true)
+  })
+
+  it('does not delete an existing snapshot when the new one collides with its name', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
+    try {
+      const existingPath = repository.backUpNow()
+      expect(() => repository.backUpNow()).toThrow(/already exists/)
+      expect(integrityOf(existingPath)).toBe('ok')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('StateRepository on a bad database file', () => {
+  it('a corrupt file throws on open and is left byte-identical', () => {
+    const userDataPath = freshUserDataPath()
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const garbage = Buffer.from('this is not a sqlite database, just some bytes '.repeat(200))
+    writeFileSync(databasePath, garbage)
+
+    expect(() => new StateRepository(userDataPath)).toThrow(/not a database/)
+    expect(readFileSync(databasePath).equals(garbage)).toBe(true)
+    expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(false)
+  })
+
+  // root opens files whatever their mode, so the open would succeed.
+  it.skipIf(process.getuid?.() === 0)('an unreadable file throws on open instead of being replaced', () => {
+    const userDataPath = freshUserDataPath()
+    const seeded = new StateRepository(userDataPath)
+    seeded.saveState(stateWithBoard())
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    chmodSync(databasePath, 0o000)
+    try {
+      expect(() => new StateRepository(userDataPath)).toThrow()
+    } finally {
+      chmodSync(databasePath, 0o644)
+    }
+    expect(new StateRepository(userDataPath).getState().scanDirectories).toEqual(['/Users/example/Projects'])
   })
 })

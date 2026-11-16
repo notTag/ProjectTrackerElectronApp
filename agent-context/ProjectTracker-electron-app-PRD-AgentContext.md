@@ -1,0 +1,6 @@
+- Determine if a PRD is required for the feature, if it is then proceed on to the next steps. If not then move the ticket to the "In Development" Swimlane.
+- Create a Project Requirements Doc for the ticket to be used as additional context for the development phase. 
+- Add the PRD to the ticket. 
+- If there are no open questions move the ticket, update the ticket status to 'In Development'. 
+- If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
+- As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen. 

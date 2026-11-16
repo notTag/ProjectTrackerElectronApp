@@ -1,0 +1,20 @@
+{
+  "ticket": {
+    "title": "Add a CONTRIBUTING.md",
+    "description": "Add CONTRIBUTING.md at the repo root with one line: \"Open a PR against main.\" No other changes. There are no tests in this repo.",
+    "branchName": "t9046-add-contributing"
+  },
+  "expect": {
+    "endLane": "in-pr",
+    "fields": {
+      "branch_name": "nonEmpty",
+      "worktree_path": "nonEmpty"
+    }
+  },
+  "rubric": [
+    "The trajectory shows the agent checked for an existing branch, worktree or pull request before starting work.",
+    "The work happened in a separate git worktree on a non-main branch, not directly on main.",
+    "The new commit adds CONTRIBUTING.md containing the line \"Open a PR against main.\" and changes no other files.",
+    "The agent verified the work (for example ran tests or noted there are none) before moving the ticket."
+  ]
+}

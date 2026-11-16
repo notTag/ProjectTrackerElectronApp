@@ -27,7 +27,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 | Menu | Items |
 |------|-------|
 | Project Tracker | About, Services, Hide, Hide Others, Show All, Quit |
-| File | Close |
+| File | Back Up Database Now (reveals the new snapshot in Finder), Show Backups in Finder, Close |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All |
 | View | Reload, Force Reload, Toggle DevTools, Reset Zoom, Zoom In, Zoom Out, Toggle Full Screen |
 | Window | Minimize, Zoom, Bring All to Front |
@@ -69,9 +69,11 @@ Shown in both title strips.
 
 ### 1.7 Notices and errors
 
-Shown below the title strip in both views.
+Overlay toasts in the top-right corner, just below the title strip, in both views (`src/components/MessageBanners.vue`). They float over the content, so showing one never pushes the board down.
 
-- A red **error** banner and a neutral **notice** banner, each closed with ×.
+- A red **error** banner and a neutral **notice** banner, each closed with ×. Both fade in and out.
+- Notices close on their own 30 seconds after they appear (timer in `src/App.vue`, so switching views doesn't restart it). A new notice restarts the 30 seconds. Errors stay until you close them.
+- Banners are at most 360px wide; long text and line breaks wrap.
 - Every store action reports here: scans, saves, GitHub calls, Open In, Auto Run and agent runs.
 
 ### 1.8 Picking up outside changes
@@ -178,6 +180,7 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
     - ★ stars and ⑂ forks
     - "pushed <date>"
   - GitHub errors say what to do: private repo with no token, token rejected, rate limited, other HTTP failure.
+  - **Offline**: every local feature keeps working. Manual GitHub actions say "GitHub is unreachable…"; background pulls on board open (issues, PR states) stay silent and retry on the next board open.
 - Clicking anywhere else on the card expands or collapses it. Escape collapses it.
 
 #### Expanded card, Details tab
@@ -237,7 +240,8 @@ From left to right:
 
 See 1.7. Board notices include:
 
-- "Imported N issues (M already on the board)."
+- "Imported N issues into X (M already on the board)." Pull results and pull errors ("X: <message>") name the project, so a pull that finishes after you switch boards isn't mistaken for the open board's.
+- "Imported N issues into X, moved N to <lane>, removed N closed, kept N closed with local work." (only non-zero parts); a sync with no imports reads "X: Moved N to <lane>, …"
 - "Auto Run opened N tabs in X."
 - "Agent running on #N…" and "Agent finished #N."
 - "Running the agent command in X."
@@ -247,6 +251,7 @@ See 1.7. Board notices include:
 From left to right:
 
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
+  - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
 - **All swim lanes** select: limits the board to a single column.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
@@ -278,11 +283,12 @@ From left to right:
   - **Labels** as chips
   - **☑ done/total** checklist progress
   - **⑂ branch**
+  - **v1.4.0** semantic version
 
 ### 3.5 Display settings modal (⚙ Display)
 
-- **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch). All are on by default.
-- **Columns**: checkboxes to show or hide No status and GitHub Issues.
+- **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
+- **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
@@ -290,6 +296,7 @@ From left to right:
 
 - **Title** input. Enter saves.
 - **Status** select: No status or any lane. It defaults to the lane you started from.
+- **Next Lane** select: None, No status, or any lane. Prefilled from the Status lane's Next Lane (3.9) and follows Status changes until you pick a value. A pick that matches the lane default is saved as no override, so the ticket keeps inheriting. A ticket saved with a resolved Next Lane starts armed (the ticket modal's footer checkbox is ticked).
 - **Description** textarea, prefilled with a template:
   ```
   ## Context
@@ -324,7 +331,16 @@ In graph view this opens as a side panel instead of a centered modal.
 | Labels | Comma-separated. Spaces and duplicates are cleaned up. "Searchable from the filter box." |
 | Branch | e.g. `feat/board-ticket-fields`. Cleared when left empty |
 | Worktree | Absolute path to a worktree. Cleared when left empty |
+| Version | Semantic version, `MAJOR.MINOR.PATCH` with optional `-prerelease` / `+build`. A leading `v` is dropped. Anything else shows "Use MAJOR.MINOR.PATCH, like 1.4.0" and isn't saved. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
+
+**External Links**
+
+- Any number of extra links per ticket (design docs, Figma, Slack threads, related issues). Stored as `external_links_json` on the ticket row.
+- Type a URL and press **Add** or Enter. The link joins the list above, and the input clears and keeps focus for the next one.
+- Only http(s) URLs are added. Anything else keeps its text and shows "Use an http(s) URL". Duplicates are skipped.
+- Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
+- Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
 
 **Checklist**
 
@@ -334,14 +350,26 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Agent completion**
 
-- **Agent** select: Claude Code (the default), Codex, Hermes, and any custom agents saved in state.
+- **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
+- **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it.
+- **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
+  - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
+  - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
+  - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
+  - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
-  - The run can write files but can't run shell commands.
+  - Claude Code and Codex runs can write files but can't run shell commands.
+  - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
   - It keeps showing as running if you leave the board and come back.
+  - Each run starts a fresh Claude Code session under an id the app picks, saved on the ticket before the agent starts.
+  - A network drop, timeout, overload, rate limit or 5xx retries up to 2× (after 30 s, then 2 min), resuming the same session. A notice says "retrying in…". A missing CLI or the 30-minute timeout never retries.
+- **⏯ Resume** (next to ▶ Run, Claude Code only): shown when the last run in this lane was interrupted or failed. Opens a terminal tab in the directory the session started in, running `claude --resume <id>` with a "you were interrupted, check git status and continue" prompt. ▶ Run still starts over clean.
+- **Interrupted** badge (amber ⏸) on the card: a run still marked running whose app process died (headless, after an app restart) or whose terminal tab is gone (checked at launch and every 60 s; Terminal, iTerm2 and Ghostty by tab title, Warp by age only, after 45 min). Auto Run and full-auto tabs are tracked the same way. An interrupted full-auto ticket doesn't hand off; a notice says "Full auto paused on #N: agent interrupted".
 - **⌁ Run in <Open In app>**:
-  - Terminals open a new window in the project folder and run the command there, so you can watch and approve each step.
+  - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
   - Editors open the folder and put the command on the clipboard.
   - The command is copied to the clipboard in both cases.
 
@@ -354,9 +382,9 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Actions**
 
-- **Delete** removes the ticket right away, with no confirmation.
-- **Assign to me** / **Unassign me** toggles your assignment.
-- **Done** closes the modal. So do clicking the backdrop and Escape.
+- **Trash icon** (left) asks "Are you sure you want to delete ticket #N?". Delete removes it, and Cancel, Escape or a backdrop click keep it.
+- **Cancel** undoes the edits made since the modal opened, then closes it.
+- **Done** closes the modal and keeps edits. So do clicking the backdrop and Escape.
 
 ### 3.9 Lane settings modal (⚙ on a lane)
 
@@ -369,10 +397,20 @@ In graph view this opens as a side panel instead of a centered modal.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
+- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
+  - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
+  - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
+  - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
+  - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
-  - **Agent** select.
+  - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
+  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
+- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
+- **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
+- **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
 - **Delete lane** moves the lane's tickets to No status; no ticket is deleted. No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
 - **Done** closes the modal.
 
@@ -384,6 +422,12 @@ In graph view this opens as a side panel instead of a centered modal.
   - title from the issue title, description from the issue body
   - `externalId` set to `github:<n>`, and a link back to the issue
 - Running it again is safe: issues already on the board are skipped, and edits to imported tickets are never overwritten.
+- Each pull (manual or the auto pull on board open) also syncs imported tickets with GitHub's closed state:
+  - closed as completed → moved to the rightmost lane that closes tickets; stays put if no lane does or it's already there
+  - closed for any other reason (not planned, duplicate, none) → removed from the board, unless the ticket has a worktree or PR, then kept and reported
+  - still open, reopened, or missing from GitHub → untouched
+  - closed issues are fetched with `since` = the oldest imported ticket's creation time; no imported tickets → no closed fetch
+- Nothing added, moved or removed → no DB write; the auto pull stays silent.
 
 ### 3.11 Auto Run (▶ on a lane)
 
@@ -394,15 +438,21 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
+- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
 
-- A three-level tree: **Project** node, then **Swim lane** nodes ("Swim lane · N"), then **Ticket** nodes (#N and title), joined by curved lines.
-- It uses the same visible lanes and filtered tickets as the swimlane view.
+- A state diagram of the board's workflow. Each **Swim lane** is a state ("Swim lane · N"), laid out left to right in board order with No status first. Its **Ticket** nodes (#N and title) stack underneath it.
+- **Transitions**: an arrow from a lane to its Next Lane. Arrows to a lane further right curve above the row; arrows back to an earlier lane curve below it.
+- **Ticket overrides**: tickets whose own Next Lane differs from their lane's add a dashed arrow to their target. Overrides with the same source and target share one arrow, labeled with the ticket count ("2 tickets"). Built by `laneTransitions` in `projectTypes.ts`.
+- **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane with no incoming arrow is dimmed. Tickets can still be dragged there, so this is only a hint.
+- Armed tickets (they move on completion) show **▶** next to their number.
+- It uses the same visible lanes and filtered tickets as the swimlane view. Arrows into hidden, filtered-out or deleted lanes are not drawn.
 - **Details sidebar**:
-  - With the project selected: the number of swim lanes, and a list of lanes with ticket counts that you can click to select.
-  - With a lane selected: its ticket count and a list of tickets you can click to open, or "No tickets match the current filters."
+  - Nothing selected: the number of swim lanes, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
+  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), and a list of tickets you can click to open, or "No tickets match the current filters."
 - Clicking a ticket node or a list entry opens the Ticket modal as a side panel, and the sidebar makes room for it.
 
 ---
@@ -427,6 +477,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - SQLite through the built-in `node:sqlite`, at `~/Library/Application Support/Project Tracker/project-tracker.sqlite`.
 - WAL mode with a 5-second busy timeout, so other processes can read and write while the app is open.
+- Snapshots in `snapshots/` next to the DB, via `VACUUM INTO`: one on launch when the newest is over 24h old (before migrations), plus File → Back Up Database Now. Newest 7 kept. A failed snapshot logs a warning and startup continues. Restore steps in `README.md`.
 - Tables: `users`, `projects`, `project_members`, `swim_lanes`, `tickets`, `project_paths`, `user_paths`, `user_settings`, `schema_meta`.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
@@ -440,9 +491,10 @@ In graph view this opens as a side panel instead of a centered modal.
 | Claude Code (default) | `claude` | `-p --permission-mode acceptEdits` | — |
 | Codex | `codex` | `exec --sandbox workspace-write` | — |
 | Hermes | `hermes` | `-z` | `chat -q` |
+| opencode | `opencode` | `run` | `--prompt` |
 | Custom | from `state.agents` | as configured | as configured |
 
-- A saved agent with the same id as Codex or Hermes replaces it. Claude Code can't be replaced.
+- A saved agent with the same id as Codex, Hermes or opencode replaces it. Claude Code can't be replaced.
 - Packaged apps don't get your shell PATH, so the app looks for agent CLIs in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin` and `/usr/local/bin`.
 - A missing CLI produces "X CLI (`cmd`) was not found. Install it or add it to your PATH."
 
@@ -455,8 +507,9 @@ The parts below are joined in this order, and empty parts are left out:
 3. Ticket metadata:
    - `Ticket #N: title`
    - `Status: <lane>`
-   - then, where set: Assignee, Labels, Branch, Worktree, Pull request, Source URL, and the checklist as `- [x]` / `- [ ]` lines
+   - then, where set: Assignee, Labels, Branch, Worktree, Version, Pull request, Source URL, and the checklist as `- [x]` / `- [ ]` lines
 4. The ticket description.
+   - Lanes with **Agent sets semantic version** on add the version instruction after it.
 5. `Output: <target>`, with the standing instruction to use that location as-is or create it.
 
 If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doesn't read it as an option. For the terminal command, the prompt is wrapped in single quotes, so text from GitHub issues is passed as one literal argument and never runs as code.
@@ -478,6 +531,21 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
+- `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+
+### 4.7 Lane prompt evals — `evals/`
+
+- Static tier, part of `bun run test`:
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
+- Behavioral tier, `bun run eval`:
+  - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
+  - The prompt gets the temp DB path through `TicketPromptContext.databasePath` plus an appended system prompt, so the agent never writes to the real DB.
+  - Graded on outcome (end lane, move count from a SQLite trigger, required fields, stub calls), then by an LLM judge (`evals/judge.ts`) on the case's rubric using the agent's tool-call trajectory.
+  - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
+  - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
+  - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
+  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
 
 ---
 

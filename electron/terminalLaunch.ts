@@ -12,9 +12,33 @@
  * that tests can reach.
  */
 
-import { shellQuote, type TerminalTab } from '../src/shared/projectTypes.js'
+import { shellQuote, type TabLiveness, type TerminalTab } from '../src/shared/projectTypes.js'
 
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
+
+// Formatting is ticketTabTitle's job; this only refuses garbage, and an
+// oversized title is dropped rather than failing the run over a nicety.
+const TAB_TITLE_MAX_LENGTH = 200
+// Control characters could smuggle terminal escape sequences into the title.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
+export const usableTabTitle = (title: unknown): string | undefined => {
+  if (typeof title !== 'string' || !title) return undefined
+  if (title.length > TAB_TITLE_MAX_LENGTH || CONTROL_CHARACTERS.test(title)) return undefined
+  return title
+}
+
+// The orchestrator tab is only told apart from ticket tabs by its title, so
+// unlike a ticket title a bad one fails the run instead of being dropped.
+export const orchestratorTab = (value: unknown): TerminalTab | undefined => {
+  if (value === undefined) return undefined
+  const candidate = value as Partial<TerminalTab> | null
+  const isObject = typeof candidate === 'object' && candidate !== null
+  const title = isObject ? usableTabTitle(candidate.title) : undefined
+  if (!isObject || typeof candidate.command !== 'string' || !candidate.command || !title) {
+    throw new Error('Invalid Auto Run orchestrator.')
+  }
+  return { command: candidate.command, title }
+}
 
 // JSON's string syntax is a subset of a YAML double-quoted scalar, so this
 // carries the newlines and quotes of a ticket prompt through intact without
@@ -86,20 +110,32 @@ const titleAfterShellStartup = (tabListName: string, ...setTitleStatements: stri
   'end repeat'
 ]
 
+// A terminal that is not running opens its own blank window when started by
+// `activate` (or by any command sent to it), because those launch it with an
+// open-application event. `launch` starts it without one, so the script makes
+// the only window; `activate` then brings that window forward. Already running
+// → `launch` does nothing.
+// ponytail: a terminal's own session restore (Warp, Ghostty's
+// window-save-state) still reopens last session's windows; that follows the
+// user's setting in that terminal.
+const LAUNCH_WITHOUT_DEFAULT_WINDOW = 'launch'
+
 // Terminal's dictionary can open a window running something (`do script`) but
 // has no verb for a new tab, so later tabs come from pressing ⌘T through System
 // Events — which needs Accessibility permission for Project Tracker. A keystroke
 // goes to whatever is frontmost, so Terminal is brought forward first and the
 // tab count is polled: if no tab appears the script errors rather than typing
 // the next command into the previous ticket's running agent. A single command
-// never touches System Events.
+// (Open In, or a full-auto handoff of one ticket) never touches System Events;
+// Auto Run always has 2+ tabs since the orchestrator opens with every run.
 export const terminalOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
   osascriptArgs(
     [
       'on run argv',
       'tell application "Terminal"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set newTab to do script (item 1 of argv)',
+      'activate',
       'set targetWindow to front window',
       'set openedTabs to {}',
       'repeat with i from 1 to (count of argv) div 2',
@@ -135,8 +171,9 @@ export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): st
     [
       'on run argv',
       'tell application "iTerm"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set targetWindow to (create window with default profile)',
+      'activate',
       'set tabSessions to {}',
       'repeat with i from 1 to (count of argv) div 2',
       'if i > 1 then tell targetWindow to create tab with default profile',
@@ -152,33 +189,83 @@ export const itermOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): st
 
 // Ghostty 1.3+ scripting: `initial input` is typed into the tab's own shell
 // rather than replacing it (as `command` would), so the shell outlives the
-// agent with no exec trick. argv item 1 is the directory, then [command, title]
-// pairs; the commands are not cd-prefixed, the configuration sets the directory.
+// agent with no exec trick. argv item 1 is the directory, item 2 the id of a
+// window to add tabs to ('' = none), then [command, title] pairs; the commands
+// are not cd-prefixed, the configuration sets the directory.
+// #53: the window id is one this script returned earlier, so tabs only ever go
+// into a window Project Tracker opened, never the user's own front window. A
+// closed window's reference errors on first use, which falls back to a new one.
 // The tab's `name override` (1.4+) pins its title over the terminal's own. It is
 // written as its raw event code: AppleScript resolves dictionary terms at
 // compile time, so the bare term would fail the whole script on 1.3, where the
 // raw code only fails inside `try` and the tab keeps its default title.
-export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[]): string[] =>
+export const ghosttyOsascriptArgs = (projectPath: string, tabs: TerminalTab[], reuseWindowId = ''): string[] =>
   osascriptArgs(
     [
       'on run argv',
       'tell application "Ghostty"',
-      'activate',
+      LAUNCH_WITHOUT_DEFAULT_WINDOW,
       'set surfaceConfig to new surface configuration',
       'set initial working directory of surfaceConfig to (item 1 of argv)',
-      'repeat with i from 1 to ((count of argv) - 1) div 2',
-      'set initial input of surfaceConfig to (item (2 * i) of argv) & linefeed',
-      'if i = 1 then',
+      'set targetWindow to missing value',
+      'set reuseWindowId to item 2 of argv',
+      'if reuseWindowId is not "" then',
+      'try',
+      'set targetWindow to window id reuseWindowId',
+      'get id of targetWindow',
+      'on error',
+      'set targetWindow to missing value',
+      'end try',
+      'end if',
+      'repeat with i from 1 to ((count of argv) - 2) div 2',
+      'set initial input of surfaceConfig to (item (2 * i + 1) of argv) & linefeed',
+      'if targetWindow is missing value then',
       'set targetWindow to new window with configuration surfaceConfig',
       'set newTab to tab 1 of targetWindow',
       'else',
       'set newTab to new tab in targetWindow with configuration surfaceConfig',
       'end if',
-      'set tabTitle to item (2 * i + 1) of argv',
+      'set tabTitle to item (2 * i + 2) of argv',
       ...setTitleIfGiven('set «class GTno» of newTab to tabTitle'),
       'end repeat',
+      'activate',
+      // The tabs are already running by now, so a missing id must not fail the launch.
+      'try',
+      'return id of targetWindow',
+      'on error',
+      'return ""',
+      'end try',
       'end tell',
       'end run'
     ],
-    [projectPath, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
+    [projectPath, reuseWindowId, ...tabs.flatMap((tab) => [tab.command, tab.title ?? ''])]
   )
+
+// Only Terminal can be asked: its custom title is a property of its own that
+// title escapes never touch. iTerm2 session names and Ghostty tab names follow
+// whatever the agent sets (Claude Code retitles its tab), so a live tab there
+// would read as gone and get resumed a second time. Undefined = can't be asked.
+export const tabTitlesOsascriptArgs = (targetId: string): string[] | undefined => {
+  if (targetId !== 'terminal') return undefined
+  const scriptLines = [
+    'if application "Terminal" is not running then return ""',
+    'set titles to {}',
+    'tell application "Terminal"',
+    'repeat with w in windows',
+    'repeat with t in tabs of w',
+    'set end of titles to custom title of t',
+    'end repeat',
+    'end repeat',
+    'end tell',
+    'set AppleScript\'s text item delimiters to linefeed',
+    'return titles as text'
+  ]
+  return scriptLines.flatMap((line) => ['-e', line])
+}
+
+// No listing (unsupported terminal, osascript error) → nobody can say.
+export const tabLiveness = (openTitles: string[] | undefined, wantedTitles: string[]): TabLiveness[] =>
+  wantedTitles.map((title) => {
+    if (!openTitles) return 'unknown'
+    return openTitles.includes(title) ? 'alive' : 'gone'
+  })

@@ -3,15 +3,19 @@ import DOMPurify from 'dompurify'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import CardMetrics from '@/components/CardMetrics.vue'
+import MetricsPanel from '@/components/MetricsPanel.vue'
+import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
 import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import type { ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
+import { projectTrackerApi } from '@/services/projectTrackerApi'
+import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
-type ProjectTab = 'details' | 'readme'
+type ProjectTab = 'details' | 'readme' | 'metrics'
 type SortField = 'name' | 'status' | 'priority'
 type SortDirection = 'asc' | 'desc'
 
@@ -81,6 +85,8 @@ const getProjectDisplayName = (project: ProjectRecord) => {
   const relativePath = project.path.slice(scanDirectory.length).replace(/^\//, '')
   return relativePath.includes('/') ? relativePath : project.name
 }
+
+const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
 
 const filteredProjects = computed(() =>
   store.projects.filter((project) => {
@@ -181,6 +187,10 @@ const setMetricFilter = (metric: Exclude<MetricFilter, null>) => {
   selectedStatuses.value = [activeMetric.value]
 }
 
+// Called at setup (not onMounted) so the first render is already filtered.
+// The view remounts on every return from a board, so this also resets to Active then.
+setMetricFilter('active')
+
 const clearFilters = () => {
   query.value = ''
   selectedStatuses.value = []
@@ -242,9 +252,42 @@ const openBoard = (project: ProjectRecord) => {
   void router.push(`/board/${encodeURIComponent(project.path)}`)
 }
 
+interface CardMetricsState {
+  requestId: number
+  loading: boolean
+  metrics?: ProjectMetrics
+  error?: string
+  fetchedAt?: Date
+}
+
+// Only one card expands at a time, so one slot holds its metrics. Each load
+// replaces the slot, so stale numbers never show as current, and a reply from
+// an older request (collapse + re-expand, or another card) is dropped.
+const cardMetricsState = ref<CardMetricsState | null>(null)
+let latestCardMetricsRequest = 0
+
+const loadCardMetrics = async (projectPath: string) => {
+  latestCardMetricsRequest += 1
+  const requestId = latestCardMetricsRequest
+  cardMetricsState.value = { requestId, loading: true }
+  const isLatestRequest = () => cardMetricsState.value?.requestId === requestId
+  try {
+    const [metrics] = await projectTrackerApi.getMetrics([projectPath])
+    if (!isLatestRequest()) return
+    const missingMessage = metrics ? undefined : 'No metrics returned for this project'
+    cardMetricsState.value = { requestId, loading: false, metrics, error: missingMessage, fetchedAt: new Date() }
+  } catch (error) {
+    if (!isLatestRequest()) return
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    cardMetricsState.value = { requestId, loading: false, error: errorMessage }
+  }
+}
+
 const toggleProject = (project: ProjectRecord) => {
-  expandedProjectPath.value = expandedProjectPath.value === project.path ? null : project.path
+  const isExpanding = expandedProjectPath.value !== project.path
+  expandedProjectPath.value = isExpanding ? project.path : null
   activeTabs.value[project.path] ??= 'details'
+  if (isExpanding) void loadCardMetrics(project.path)
 }
 
 const selectTab = (project: ProjectRecord, tab: ProjectTab) => {
@@ -345,6 +388,7 @@ const renderMarkdown = (markdown: string | null) => {
   <header class="titlebar">
     <span class="titlebar-title">Project Tracker</span>
     <div class="titlebar-actions">
+      <MetricsPanel :project-paths="metricsProjectPaths" scope="dashboard" />
       <OpenInPicker />
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
@@ -379,16 +423,7 @@ const renderMarkdown = (markdown: string | null) => {
       <p v-else>No scan directories selected.</p>
     </section>
 
-    <section v-if="store.error || store.notice" class="message-row">
-      <div v-if="store.error" class="message error">
-        {{ store.error }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.error = null">×</button>
-      </div>
-      <div v-if="store.notice" class="message notice">
-        {{ store.notice }}
-        <button class="icon-button message-dismiss" title="Dismiss" @click="store.notice = null">×</button>
-      </div>
-    </section>
+    <MessageBanners />
 
     <section class="metrics">
       <button class="metric" :class="{ selected: activeMetric === 'total' }" @click="setMetricFilter('total')">
@@ -517,7 +552,7 @@ const renderMarkdown = (markdown: string | null) => {
           <div class="tabs" @click.stop>
             <button
               class="tab-button"
-              :class="{ selected: activeTabs[project.path] !== 'readme' }"
+              :class="{ selected: (activeTabs[project.path] ?? 'details') === 'details' }"
               @click="selectTab(project, 'details')"
             >
               Details
@@ -529,9 +564,26 @@ const renderMarkdown = (markdown: string | null) => {
             >
               README
             </button>
+            <button
+              class="tab-button"
+              :class="{ selected: activeTabs[project.path] === 'metrics' }"
+              @click="selectTab(project, 'metrics')"
+            >
+              Metrics
+            </button>
           </div>
 
-          <div v-if="activeTabs[project.path] !== 'readme'" class="tab-panel" @click.stop>
+          <div v-if="activeTabs[project.path] === 'metrics'" class="tab-panel card-metrics" @click.stop>
+            <p v-if="cardMetricsState?.loading" class="field-hint">Loading metrics…</p>
+            <p v-else-if="cardMetricsState?.error" class="metrics-error">{{ cardMetricsState.error }}</p>
+            <CardMetrics
+              v-else-if="cardMetricsState?.metrics"
+              :metrics="cardMetricsState.metrics"
+              :fetched-at="cardMetricsState.fetchedAt"
+            />
+          </div>
+
+          <div v-else-if="activeTabs[project.path] !== 'readme'" class="tab-panel" @click.stop>
             <div class="project-controls">
               <label>
                 Status
