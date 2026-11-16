@@ -76,6 +76,11 @@ export interface ScanFailure {
   message: string
 }
 
+export interface ScanProgress {
+  directoriesSeen: number
+  currentPath: string
+}
+
 export interface ScanResult {
   snapshot: ProjectSnapshot
   failures: ScanFailure[]
