@@ -16,6 +16,7 @@ import {
   availableAgents,
   DEFAULT_AGENT,
   findAgent,
+  SWIMLANE_PROMPT_DIRECTORY,
   ticketAgentPrompt,
   type Agent,
   type ProjectRecord
@@ -66,7 +67,10 @@ const createFixtureRepo = (root: string, evalCase: EvalCase): string => {
   git(repoPath, 'init', '-q', '-b', 'main')
   writeFileSync(path.join(repoPath, 'README.md'), '# eval-fixture\n')
   // Lanes linked to a markdown file reference it repo-relative, so it has to be here.
-  cpSync(path.join(REPO_ROOT, 'agent-context'), path.join(repoPath, 'agent-context'), { recursive: true })
+  for (const promptDirectory of ['agent-context', SWIMLANE_PROMPT_DIRECTORY]) {
+    const sourceDirectory = path.join(REPO_ROOT, promptDirectory)
+    if (existsSync(sourceDirectory)) cpSync(sourceDirectory, path.join(repoPath, promptDirectory), { recursive: true })
+  }
   git(repoPath, 'add', '.')
   git(repoPath, 'commit', '-q', '-m', 'Initial commit')
   git(repoPath, 'remote', 'add', 'origin', originPath)

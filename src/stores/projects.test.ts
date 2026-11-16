@@ -8,6 +8,7 @@ import {
   GITHUB_UNREACHABLE_MESSAGE,
   type ProjectRecord,
   type ProjectTrackerState,
+  type ScanProgress,
   type Ticket
 } from '@/shared/projectTypes'
 
@@ -16,6 +17,8 @@ const api = vi.hoisted(() => ({
   refreshProjectState: vi.fn(),
   saveProjectState: vi.fn(),
   scanProjectDirectories: vi.fn(),
+  onScanProgress: vi.fn((_callback: (progress: ScanProgress) => void) => () => undefined),
+  cancelScan: vi.fn(async () => undefined),
   createTicket: vi.fn(),
   updateTicket: vi.fn(),
   deleteTicket: vi.fn(),
@@ -647,6 +650,63 @@ describe('refreshBoardPullRequests', () => {
   })
 })
 
+describe('moveTickets', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockEntityWrites()
+  })
+
+  const stateWithThreeTickets = (): ProjectTrackerState => {
+    const state = stateWithTicketIn('idea')
+    const board = state.boards![PROJECT_PATH]
+    const [ideaTicket] = board.tickets
+    const secondIdeaTicket = { ...ideaTicket, id: 'ticket-2', number: 8 }
+    const prdTicket = { ...ideaTicket, id: 'ticket-3', number: 9, laneId: 'prd' }
+    const tickets = [ideaTicket, secondIdeaTicket, prdTicket]
+    return { ...state, boards: { [PROJECT_PATH]: { ...board, tickets } } }
+  }
+
+  it('moves every id in one board edit with a shared updatedAt', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const updateBoard = vi.spyOn(store, 'updateBoard')
+
+    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-2', 'ticket-3'], 'dev')
+
+    expect(updateBoard).toHaveBeenCalledTimes(1)
+    expect(api.updateTicket).toHaveBeenCalledTimes(3)
+    const sentPatches = api.updateTicket.mock.calls.map(([, patch]) => patch)
+    const sentUpdatedAts = new Set(sentPatches.map((patch) => patch.updatedAt))
+    expect(sentPatches.every((patch) => patch.laneId === 'dev')).toBe(true)
+    expect(sentUpdatedAts.size).toBe(1)
+    expect(store.board(PROJECT_PATH).tickets.every((ticket) => ticket.laneId === 'dev')).toBe(true)
+  })
+
+  it('leaves a ticket already in the target lane untouched', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const prdTicketBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+
+    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
+
+    const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+    expect(api.updateTicket).toHaveBeenCalledTimes(1)
+    expect(prdTicketAfter?.updatedAt).toBe(prdTicketBefore?.updatedAt)
+  })
+
+  it('writes nothing for an empty id list', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const updateBoard = vi.spyOn(store, 'updateBoard')
+
+    await store.moveTickets(PROJECT_PATH, [], 'dev')
+
+    expect(updateBoard).not.toHaveBeenCalled()
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+})
+
 describe('per-entity writes', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -855,5 +915,79 @@ describe('mid-session failure recovery', () => {
 
     expect(storedRun(store)?.status).toBe('running')
     expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+})
+
+describe('scan progress and cancel', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+  })
+
+  const emptyScan = { snapshot: { projects: [] }, failures: [] }
+
+  it('shows progress while scanning and clears it after', async () => {
+    const store = useProjectsStore()
+    let emitProgress: (progress: ScanProgress) => void = () => undefined
+    const unsubscribe = vi.fn()
+    api.onScanProgress.mockImplementation((callback) => {
+      emitProgress = callback
+      return unsubscribe
+    })
+    let progressDuringScan: unknown
+    api.scanProjectDirectories.mockImplementation(async () => {
+      emitProgress({ directoriesSeen: 7, currentPath: '/code/app' })
+      progressDuringScan = store.scanProgress
+      return emptyScan
+    })
+
+    expect(await store.scan('/code')).toBe(true)
+
+    expect(progressDuringScan).toEqual({ directoriesSeen: 7, currentPath: '/code/app' })
+    expect(store.scanProgress).toBeNull()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(saveProjectState).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['the scan rejects with AbortError', 'reject'],
+    ['the scan resolves anyway', 'resolve']
+  ])('cancel skips the save when %s', async (_label, outcome) => {
+    const store = useProjectsStore()
+    const before = toPlainJson(store.state)
+    api.scanProjectDirectories.mockImplementation(async () => {
+      await store.cancelScan()
+      if (outcome === 'reject') throw new Error("Error invoking remote method 'projects:scan': AbortError")
+      return { snapshot: { projects: [{ path: '/code/new' }] }, failures: [] }
+    })
+
+    expect(await store.scan('/code')).toBe(false)
+
+    expect(api.cancelScan).toHaveBeenCalledOnce()
+    expect(saveProjectState).not.toHaveBeenCalled()
+    expect(store.state).toEqual(before)
+    expect(store.notice).toBe('Scan cancelled.')
+    expect(store.error).toBeNull()
+    expect(store.scanning).toBe(false)
+  })
+
+  it('a second scan while one runs is ignored and leaves the first one scanning', async () => {
+    const store = useProjectsStore()
+    let finishFirstScan: (result: typeof emptyScan) => void = () => undefined
+    api.scanProjectDirectories.mockImplementation(() => new Promise((resolve) => (finishFirstScan = resolve)))
+
+    const firstScan = store.scan('/code')
+    expect(await store.scan('/code')).toBe(false)
+    expect(store.scanning).toBe(true)
+
+    finishFirstScan(emptyScan)
+    expect(await firstScan).toBe(true)
+    expect(api.scanProjectDirectories).toHaveBeenCalledOnce()
+  })
+
+  it('cancel does nothing when no scan is running', async () => {
+    await useProjectsStore().cancelScan()
+    expect(api.cancelScan).not.toHaveBeenCalled()
   })
 })

@@ -6,6 +6,7 @@ import type {
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
+  ScanProgress,
   SwimLane,
   TerminalTab,
   Ticket,
@@ -40,6 +41,12 @@ contextBridge.exposeInMainWorld('projectTracker', {
   createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
   updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
   deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
+  pickTicketImages: (ticketId: string) => invokePlain('ticket-images:pick', { ticketId }),
+  saveTicketImageBytes: (ticketId: string, bytes: Uint8Array, mimeType: string) =>
+    ipcRenderer.invoke('ticket-images:save-bytes', { ticketId, bytes, mimeType }),
+  removeTicketImage: (ticketId: string, imagePath: string) =>
+    invokePlain('ticket-images:remove', { ticketId, imagePath }),
+  openTicketImage: (imagePath: string) => invokePlain('ticket-images:open', imagePath),
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
   updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
     invokePlain('lane:update', { projectPath, laneId, patch }),
@@ -56,6 +63,12 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
+  onScanProgress: (callback: (progress: ScanProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => callback(progress)
+    ipcRenderer.on('projects:scan-progress', listener)
+    return () => ipcRenderer.removeListener('projects:scan-progress', listener)
+  },
+  cancelScan: () => ipcRenderer.invoke('projects:scan-cancel'),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),

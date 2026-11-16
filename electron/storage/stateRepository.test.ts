@@ -47,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -74,6 +74,7 @@ const stateWithBoard = (): ProjectTrackerState => {
             pullRequestMergedAt: '2026-01-04T00:00:00Z',
             fullAuto: true,
             externalLinks: ['https://figma.com/f', 'https://slack.com/t'],
+            images: ['/data/attachments/t/a.png'],
             moveToLaneId: 'prd',
             moveOnComplete: true,
             version: '1.4.0-rc.1',
@@ -124,6 +125,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
     expect(board?.lanes[1].orchestratorPrompt).toBe('Poll every 2 minutes.')
     expect(board?.lanes[0].orchestratorPrompt).toBe('')
+    expect(board?.lanes[1].orchestratorPromptOverride).toBe('Watch {{tickets}}')
+    expect(board?.lanes[0].orchestratorPromptOverride).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
@@ -153,6 +156,8 @@ describe('StateRepository', () => {
     expect(board?.tickets[1].worktreePath).toBeUndefined()
     expect(board?.tickets[0].externalLinks).toEqual(['https://figma.com/f', 'https://slack.com/t'])
     expect(board?.tickets[1].externalLinks).toBeUndefined()
+    expect(board?.tickets[0].images).toEqual(['/data/attachments/t/a.png'])
+    expect(board?.tickets[1].images).toBeUndefined()
     expect(board?.tickets[1].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(loaded.scanDirectories).toEqual(['/Users/example/Projects'])
     expect(loaded.userId).toBe('local')
@@ -272,6 +277,22 @@ describe('StateRepository', () => {
     const reopened = reopenedBoard(userDataPath, projectPath)
     expect(reopened.lanes[1].orchestratorAgentId).toBe('opencode')
     expect(reopened.tickets[0]).toMatchObject({ agentId: 'codex', model: 'gpt-5' })
+  })
+
+  it('loads tickets with no images from a database created before images existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN images_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket.images).toBeUndefined()
+    migratedTicket.images = ['/data/attachments/t/a.png']
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0].images).toEqual(['/data/attachments/t/a.png'])
   })
 
   it('loads tickets with no links from a database created before external links existed', () => {
@@ -756,6 +777,7 @@ describe('legacy databases', () => {
     expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js', 'Kept'])
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].orchestratorPromptOverride).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 

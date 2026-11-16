@@ -10,6 +10,7 @@ import {
   type ProjectRecord,
   type ProjectTrackerState,
   type ProjectWritePatch,
+  type ScanProgress,
   type ScanResult,
   type SwimLane,
   type TerminalTab,
@@ -183,8 +184,34 @@ export const projectTrackerApi = {
     return response.json() as Promise<ScanResult>
   },
 
+  // The browser fallback scan is one HTTP round trip: no progress, nothing to cancel.
+  onScanProgress(callback: (progress: ScanProgress) => void): () => void {
+    if (window.projectTracker) return window.projectTracker.onScanProgress(callback)
+    return () => undefined
+  },
+
+  async cancelScan(): Promise<void> {
+    if (window.projectTracker) await window.projectTracker.cancelScan()
+  },
+
   pickScanDirectory() {
     return requireElectron().pickScanDirectory()
+  },
+
+  pickTicketImages(ticketId: string) {
+    return requireElectron().pickTicketImages(ticketId)
+  },
+
+  saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string) {
+    return requireElectron().saveTicketImageBytes(ticketId, bytes, mimeType)
+  },
+
+  removeTicketImage(ticketId: string, imagePath: string) {
+    return requireElectron().removeTicketImage(ticketId, imagePath)
+  },
+
+  openTicketImage(imagePath: string) {
+    return requireElectron().openTicketImage(imagePath)
   },
 
   openProjectIn(path: string, targetId: string, command?: string, title?: string) {
