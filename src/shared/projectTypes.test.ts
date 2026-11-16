@@ -595,6 +595,13 @@ describe('ticketShellCommand', () => {
     expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
   })
 
+  it('defaults Claude Code to Opus 5.5, one of its listed models', () => {
+    expect(DEFAULT_AGENT.defaultModel).toBe('claude-opus-5-5')
+    expect(DEFAULT_AGENT.models).toContain('claude-opus-5-5')
+    const defaultModelCommand = agentShellCommand(DEFAULT_AGENT, 'go', { model: DEFAULT_AGENT.defaultModel })
+    expect(defaultModelCommand).toBe("claude --model 'claude-opus-5-5' 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
     expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
