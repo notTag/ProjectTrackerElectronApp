@@ -45,6 +45,7 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
+  type LaneMarkdownKind,
   type LaneWritePatch,
   type ProjectWritePatch
 } from '../src/shared/projectTypes.js'
@@ -259,7 +260,7 @@ const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
-  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
+  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true
 }
 const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
 const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
@@ -833,9 +834,10 @@ const registerIpc = () => {
 
   ipcMain.handle('lane:save-agent-markdown', (event, request: unknown) => {
     assertTrustedSender(event)
-    const { projectPath, laneName, agentFilePath, content } = (request ?? {}) as Record<string, unknown>
-    const fieldsAreStrings = [projectPath, laneName, agentFilePath, content].every((field) => typeof field === 'string')
-    if (!fieldsAreStrings) throw new Error('Invalid save request.')
+    const { kind, projectPath, laneName, filePath: requestedFilePath, content } = (request ?? {}) as Record<string, unknown>
+    const fieldsAreStrings = [projectPath, laneName, requestedFilePath, content].every((field) => typeof field === 'string')
+    const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
+    if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid save request.')
 
     const normalized = assertScannedProjectPath(projectPath as string)
     // The name comes from our own state, not the renderer, since it becomes part of a path.
@@ -843,17 +845,18 @@ const registerIpc = () => {
     if (!project) throw new Error('Unknown project.')
 
     const target = {
+      kind: kind as LaneMarkdownKind,
       projectPath: normalized,
       projectName: project.name,
       laneName: laneName as string,
-      agentFilePath: agentFilePath as string
+      filePath: requestedFilePath as string
     }
     // Same boundary as every other path IPC: keeps a typed path from reaching
     // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.
     const filePath = resolveAgentMarkdownPath(target)
     const scanDirectories = stateRepository.getState().scanDirectories.map(normalizePath)
     if (!isInsideAny(filePath, scanDirectories)) {
-      throw new Error('Agent markdown file must be inside a scanned directory.')
+      throw new Error('Markdown file must be inside a scanned directory.')
     }
     return saveAgentMarkdown(filePath, content as string)
   })

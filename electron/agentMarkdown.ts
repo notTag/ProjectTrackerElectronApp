@@ -1,14 +1,26 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { AGENT_CONTEXT_DIRECTORY, agentMarkdownFileName } from '../src/shared/projectTypes.js'
+import {
+  AGENT_CONTEXT_DIRECTORY,
+  agentMarkdownFileName,
+  orchestratorMarkdownFileName,
+  type LaneMarkdownKind
+} from '../src/shared/projectTypes.js'
 
 export interface AgentMarkdownTarget {
+  kind: LaneMarkdownKind
   projectPath: string
   projectName: string
   laneName: string
-  agentFilePath: string
+  // The explicit path for this kind: the lane's agentFilePath or orchestratorFilePath.
+  filePath: string
 }
+
+const MARKDOWN_KINDS = {
+  agent: { fieldLabel: 'Agent markdown file', defaultFileName: agentMarkdownFileName },
+  orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', defaultFileName: orchestratorMarkdownFileName }
+} as const
 
 // An empty field gets the generated name under <project>/agent-context/; the
 // sanitized name has no separators or leading dots, so it can't climb out.
@@ -17,17 +29,18 @@ export interface AgentMarkdownTarget {
 // scan directories.
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
-  const explicitPath = target.agentFilePath.trim()
+  const explicitPath = target.filePath.trim()
+  const { fieldLabel, defaultFileName } = MARKDOWN_KINDS[target.kind]
 
   if (explicitPath) {
     const resolved = path.resolve(projectPath, explicitPath)
     if (path.extname(resolved).toLowerCase() !== '.md') {
-      throw new Error('Agent markdown file must end in .md.')
+      throw new Error(`${fieldLabel} must end in .md.`)
     }
     return resolved
   }
 
-  const fileName = agentMarkdownFileName(target.projectName, target.laneName)
+  const fileName = defaultFileName(target.projectName, target.laneName)
   return path.join(projectPath, AGENT_CONTEXT_DIRECTORY, fileName)
 }
 

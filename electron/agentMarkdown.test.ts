@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { LaneMarkdownKind } from '../src/shared/projectTypes.js'
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 
 const createdProjectPaths: string[] = []
@@ -20,11 +21,12 @@ afterEach(() => {
   }
 })
 
-const target = (projectPath: string, agentFilePath = '') => ({
+const target = (projectPath: string, filePath = '', kind: LaneMarkdownKind = 'agent') => ({
+  kind,
   projectPath,
   projectName: 'ProjectTracker/electron-app',
   laneName: 'PRD',
-  agentFilePath
+  filePath
 })
 
 describe('resolveAgentMarkdownPath', () => {
@@ -44,6 +46,28 @@ describe('resolveAgentMarkdownPath', () => {
 
   it('rejects an explicit path that is not markdown', () => {
     expect(() => resolveAgentMarkdownPath(target('/code/app', '/Users/me/.zshrc'))).toThrow('must end in .md')
+  })
+
+  describe('orchestrator kind', () => {
+    it('defaults to its own generated name under agent-context/', () => {
+      const resolved = resolveAgentMarkdownPath(target('/code/app', '', 'orchestrator'))
+      expect(resolved).toBe('/code/app/agent-context/ProjectTracker-electron-app-PRD-AgentOrchestratorContext.md')
+    })
+
+    it('keeps a traversal lane name inside agent-context/', () => {
+      const traversal = { ...target('/code/app', '', 'orchestrator'), laneName: '../../etc' }
+      expect(path.dirname(resolveAgentMarkdownPath(traversal))).toBe('/code/app/agent-context')
+    })
+
+    it('resolves a relative explicit path against the project', () => {
+      const resolved = resolveAgentMarkdownPath(target('/code/app', 'docs/orchestrator.md', 'orchestrator'))
+      expect(resolved).toBe('/code/app/docs/orchestrator.md')
+    })
+
+    it('rejects a non-markdown path, naming its own field', () => {
+      const notMarkdown = target('/code/app', 'notes.txt', 'orchestrator')
+      expect(() => resolveAgentMarkdownPath(notMarkdown)).toThrow('Agent Orchestrator markdown file must end in .md.')
+    })
   })
 })
 

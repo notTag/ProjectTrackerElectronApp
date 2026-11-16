@@ -53,8 +53,10 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type ProjectTrackerState,
+  type LaneMarkdownKind,
   type SwimLane,
   type Ticket,
+  LANE_MARKDOWN_FIELDS,
   UNASSIGNED_LANE_ID
 } from '@/shared/projectTypes'
 
@@ -313,9 +315,11 @@ export const useProjectsStore = defineStore('projects', {
     // File first, DB second: a failed write throws before the lane is touched.
     // The prompt is saved alongside the path because the textarea only commits
     // on blur, so the text being written may not be in state yet.
-    async saveLaneAgentMarkdown(projectPath: string, lane: SwimLane, agentPrompt: string, agentFilePath: string) {
-      const saved = await projectTrackerApi.saveLaneAgentMarkdown(projectPath, lane.name, agentFilePath, agentPrompt)
-      const persisted = await this.updateLane(projectPath, lane.id, { agentPrompt, agentFilePath: saved.filePath })
+    async saveLaneMarkdown(projectPath: string, lane: SwimLane, kind: LaneMarkdownKind, prompt: string, filePath: string) {
+      const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt)
+      const fields = LANE_MARKDOWN_FIELDS[kind]
+      const patch: Partial<Omit<SwimLane, 'id'>> = { [fields.prompt]: prompt, [fields.filePath]: saved.filePath }
+      const persisted = await this.updateLane(projectPath, lane.id, patch)
       if (!persisted) throw new Error(this.error ?? 'Saved the file but could not update the lane.')
       return saved
     },

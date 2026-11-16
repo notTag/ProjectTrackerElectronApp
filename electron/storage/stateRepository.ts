@@ -103,7 +103,8 @@ const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
   const normalizeLane = (lane: SwimLane): SwimLane => ({
     ...lane,
     outputTarget: lane.outputTarget ?? '',
-    orchestratorPrompt: lane.orchestratorPrompt ?? ''
+    orchestratorPrompt: lane.orchestratorPrompt ?? '',
+    orchestratorFilePath: lane.orchestratorFilePath ?? ''
   })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
@@ -161,6 +162,7 @@ const laneFromRow = (row: Row): SwimLane => ({
     agentFilePath: String(row.agent_file_path),
     outputTarget: String(row.output_target),
     orchestratorPrompt: String(row.orchestrator_prompt),
+    orchestratorFilePath: String(row.orchestrator_file_path),
     autoRunAgentId: asText(row.auto_run_agent_id),
     autoRunTerminalId: asText(row.auto_run_terminal_id),
     autoRunWorktrees: asBool(row.auto_run_worktrees),
@@ -650,8 +652,8 @@ export class StateRepository {
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
-         orchestrator_poll_minutes, orchestrator_poll_active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
@@ -661,7 +663,8 @@ export class StateRepository {
          agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
          auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
          orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id,
-         orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active`,
+         orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
+         orchestrator_file_path = excluded.orchestrator_file_path`,
       [
         lane.id,
         projectPath,
@@ -683,7 +686,8 @@ export class StateRepository {
         lane.orchestratorModel ?? '',
         lane.nextLaneId ?? null,
         orchestratorPollMinutes(lane),
-        orchestratorPollActive(lane) ? 1 : 0
+        orchestratorPollActive(lane) ? 1 : 0,
+        lane.orchestratorFilePath ?? ''
       ]
     )
   }

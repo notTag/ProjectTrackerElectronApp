@@ -224,6 +224,9 @@ export interface SwimLane {
   // Appended, never substituted: the generated orchestrator prompt carries the
   // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
+  // Markdown twin of orchestratorPrompt, referenced (not inlined) by the
+  // orchestrator launch prompt. Optional so older lanes load.
+  orchestratorFilePath?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
@@ -648,6 +651,17 @@ const fileNamePart = (value: string, fallback: string): string => {
 export const agentMarkdownFileName = (projectName: string, laneName: string): string =>
   `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentContext.md`
 
+export const orchestratorMarkdownFileName = (projectName: string, laneName: string): string =>
+  `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentOrchestratorContext.md`
+
+export type LaneMarkdownKind = 'agent' | 'orchestrator'
+
+// Each kind's prompt and its markdown twin on the lane.
+export const LANE_MARKDOWN_FIELDS = {
+  agent: { prompt: 'agentPrompt', filePath: 'agentFilePath' },
+  orchestrator: { prompt: 'orchestratorPrompt', filePath: 'orchestratorFilePath' }
+} as const satisfies Record<LaneMarkdownKind, { prompt: keyof SwimLane; filePath: keyof SwimLane }>
+
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
 // embedded quote cannot appear inside them at all — it has to close the string,
@@ -974,8 +988,12 @@ const LANE_INSTRUCTIONS_PRECEDENCE =
 
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
-  if (!laneInstructions) return ''
-  return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
+  const instructionsFilePath = lane.orchestratorFilePath?.trim() ?? ''
+  if (!laneInstructions && !instructionsFilePath) return ''
+
+  const fileReference = instructionsFilePath ? `Follow the guidance in ${instructionsFilePath}.` : ''
+  const lines = ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions, fileReference]
+  return lines.filter(Boolean).join('\n')
 }
 
 // The orchestrator only reports: it shares the DB with the app and the ticket

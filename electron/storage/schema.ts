@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   agent_file_path TEXT NOT NULL,
   output_target TEXT NOT NULL DEFAULT '',
   orchestrator_prompt TEXT NOT NULL DEFAULT '',
+  orchestrator_file_path TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
@@ -171,7 +172,8 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'next_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
-  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' }
+  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' },
+  { table: 'swim_lanes', column: 'orchestrator_file_path', definition: "TEXT NOT NULL DEFAULT ''" }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by

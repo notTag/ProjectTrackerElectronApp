@@ -1294,6 +1294,37 @@ describe('Auto Run orchestrator', () => {
       }
     })
 
+    it('points at the orchestrator markdown file when only the file is set', () => {
+      const linked = { ...inDev, orchestratorFilePath: ' /code/app/agent-context/orchestrator.md ' }
+      const expectedSection = [
+        'Lane instructions',
+        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
+        'Follow the guidance in /code/app/agent-context/orchestrator.md.'
+      ].join('\n')
+      expect(orchestratorPrompt(linked, entries, context('ghostty', 'Ghostty'))).toBe(`${prompt}\n\n${expectedSection}`)
+    })
+
+    it('puts the lane text before the file reference, under the precedence line', () => {
+      const both = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md' }
+      const expectedSection = [
+        'Lane instructions',
+        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
+        'Poll every 2 minutes.',
+        'Follow the guidance in docs/orch.md.'
+      ].join('\n')
+      expect(orchestratorPrompt(both, entries, context('ghostty', 'Ghostty'))).toBe(`${prompt}\n\n${expectedSection}`)
+    })
+
+    it('is unchanged by a whitespace-only orchestrator file path', () => {
+      const lane = { ...inDev, orchestratorFilePath: '  ' }
+      expect(orchestratorPrompt(lane, entries, context('ghostty', 'Ghostty'))).toBe(prompt)
+    })
+
+    it("never puts the orchestrator markdown file in a ticket agent's prompt", () => {
+      const linked = { ...inDev, orchestratorFilePath: 'docs/orch.md' }
+      expect(ticketAgentPrompt(ticket(12, 'First thing'), linked)).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
+    })
+
     it("never puts the orchestrator prompt in a ticket agent's prompt", () => {
       const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
       const agentPrompt = ticketAgentPrompt(ticket(12, 'First thing'), steered)

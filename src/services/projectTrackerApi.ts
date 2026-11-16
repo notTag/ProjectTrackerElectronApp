@@ -6,6 +6,7 @@ import {
   type AgentRetryEvent,
   type AutoRunTicketLaunch,
   type Clearable,
+  type LaneMarkdownKind,
   type ProjectBoard,
   type ProjectRecord,
   type ProjectTrackerState,
@@ -223,8 +224,8 @@ export const projectTrackerApi = {
   readProjectReadme(path: string) {
     return requireElectron().readProjectReadme(path)
   },
-  saveLaneAgentMarkdown(projectPath: string, laneName: string, agentFilePath: string, content: string) {
-    return requireElectron().saveLaneAgentMarkdown(projectPath, laneName, agentFilePath, content)
+  saveLaneMarkdown(kind: LaneMarkdownKind, projectPath: string, laneName: string, filePath: string, content: string) {
+    return requireElectron().saveLaneMarkdown(kind, projectPath, laneName, filePath, content)
   },
 
   fetchProjectGithub(githubUrl: string) {

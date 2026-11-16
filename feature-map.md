@@ -418,6 +418,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
 - **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Save to Agent Orchestrator Markdown** button, under the Orchestrator prompt. Same rules as Save to Agent Markdown, but the default file is `<project>/agent-context/<PROJECT>-<LANE>-AgentOrchestratorContext.md` and the path lands in **Agent Orchestrator markdown file**.
+- **Agent Orchestrator markdown file**: a path to a markdown guide for the orchestrator. Its launch prompt gets "Follow the guidance in <path>." under Lane instructions, still below the report-only rule. Ticket agents never see it.
 - **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.

@@ -4,6 +4,7 @@ import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
   GithubIssueLists,
+  LaneMarkdownKind,
   LaneWritePatch,
   ProjectGithubData,
   ProjectMetrics,
@@ -72,10 +73,11 @@ interface ProjectTrackerElectronApi {
   appStartedAt(): Promise<string>
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
-  saveLaneAgentMarkdown(
+  saveLaneMarkdown(
+    kind: LaneMarkdownKind,
     projectPath: string,
     laneName: string,
-    agentFilePath: string,
+    filePath: string,
     content: string
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
