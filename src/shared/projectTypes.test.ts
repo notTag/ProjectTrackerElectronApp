@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
+  githubErrorMessage,
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
@@ -1546,5 +1547,19 @@ describe('laneTransitions', () => {
     const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
     const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
     expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
+  })
+})
+
+describe('githubErrorMessage', () => {
+  it('shows only the offline label for a wrapped unreachable error', () => {
+    const wrapped = new Error(
+      `Error invoking remote method 'ticket:fetch-pull-request': Error: ${GITHUB_UNREACHABLE_MESSAGE}`
+    )
+    expect(githubErrorMessage(wrapped)).toBe('Offline Mode')
+  })
+
+  it('passes other errors through', () => {
+    expect(githubErrorMessage(new Error('Repository not found on GitHub.'))).toBe('Repository not found on GitHub.')
+    expect(githubErrorMessage('boom')).toBe('boom')
   })
 })
