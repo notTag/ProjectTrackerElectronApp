@@ -1383,6 +1383,12 @@ code {
   font-size: 0.82rem;
 }
 
+.orchestrator-prompt {
+  min-height: 320px;
+  white-space: pre;
+  overflow: auto;
+}
+
 .agent-file-path {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.82rem;

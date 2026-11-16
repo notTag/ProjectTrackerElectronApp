@@ -103,7 +103,8 @@ const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
   const normalizeLane = (lane: SwimLane): SwimLane => ({
     ...lane,
     outputTarget: lane.outputTarget ?? '',
-    orchestratorPrompt: lane.orchestratorPrompt ?? ''
+    orchestratorPrompt: lane.orchestratorPrompt ?? '',
+    orchestratorPromptOverride: lane.orchestratorPromptOverride ?? ''
   })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
@@ -161,6 +162,7 @@ const laneFromRow = (row: Row): SwimLane => ({
     agentFilePath: String(row.agent_file_path),
     outputTarget: String(row.output_target),
     orchestratorPrompt: String(row.orchestrator_prompt),
+    orchestratorPromptOverride: String(row.orchestrator_prompt_override ?? ''),
     autoRunAgentId: asText(row.auto_run_agent_id),
     autoRunTerminalId: asText(row.auto_run_terminal_id),
     autoRunWorktrees: asBool(row.auto_run_worktrees),
@@ -647,15 +649,15 @@ export class StateRepository {
   private upsertLaneRow(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
          orchestrator_poll_minutes, orchestrator_poll_active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
-         orchestrator_prompt = excluded.orchestrator_prompt,
+         orchestrator_prompt = excluded.orchestrator_prompt, orchestrator_prompt_override = excluded.orchestrator_prompt_override,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
@@ -670,6 +672,7 @@ export class StateRepository {
         lane.agentFilePath,
         lane.outputTarget ?? '',
         lane.orchestratorPrompt ?? '',
+        lane.orchestratorPromptOverride ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,

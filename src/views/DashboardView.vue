@@ -13,6 +13,8 @@ import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
+import * as projectFilters from '@/shared/projectFilters'
+import type { ProjectFilters } from '@/shared/projectFilters'
 import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
@@ -72,10 +74,10 @@ const priorityRank: Record<ProjectPriority, number> = {
 }
 
 const isProjectHidden = (project: ProjectRecord) =>
-  project.status === 'hidden' || store.state.hiddenPaths.includes(project.path)
+  projectFilters.isProjectHidden(project, store.state.hiddenPaths)
 
 const isProjectThirdParty = (project: ProjectRecord) =>
-  store.state.thirdPartyPaths.includes(project.path)
+  projectFilters.isProjectThirdParty(project, store.state.thirdPartyPaths)
 
 const getProjectDisplayName = (project: ProjectRecord) => {
   const scanDirectory = [...store.state.scanDirectories]
@@ -94,23 +96,23 @@ const scanProgressLabel = computed(() => {
   return `Scanned ${progress.directoriesSeen} ${folderWord}`
 })
 
-const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
+const filteredProjects = computed(() => {
+  const filters: ProjectFilters = {
+    query: query.value,
+    statuses: selectedStatuses.value,
+    priorities: selectedPriorities.value,
+    thirdPartyOnly: activeMetric.value === 'thirdparty',
+    hiddenPaths: store.state.hiddenPaths,
+    thirdPartyPaths: store.state.thirdPartyPaths
+  }
+  const matchesCurrentFilters = (project: ProjectRecord) => {
+    const displayName = getProjectDisplayName(project)
+    return projectFilters.projectMatchesFilters(project, displayName, filters)
+  }
+  return store.projects.filter(matchesCurrentFilters)
+})
 
-const filteredProjects = computed(() =>
-  store.projects.filter((project) => {
-    const text = `${getProjectDisplayName(project)} ${project.name} ${project.path} ${project.notes}`.toLowerCase()
-    const matchesQuery = text.includes(query.value.toLowerCase())
-    const matchesStatus =
-      selectedStatuses.value.length === 0 || selectedStatuses.value.includes(project.status)
-    const matchesPriority =
-      selectedPriorities.value.length === 0 || selectedPriorities.value.includes(project.priority)
-    const matchesMetric = activeMetric.value !== 'thirdparty' || isProjectThirdParty(project)
-    const shouldShowHidden = selectedStatuses.value.includes('hidden')
-    return (
-      matchesQuery && matchesStatus && matchesPriority && matchesMetric && (shouldShowHidden || !isProjectHidden(project))
-    )
-  })
-)
+const metricsProjectPaths = computed(() => filteredProjects.value.map((project) => project.path))
 
 const sortedProjects = computed(() => {
   const direction = sortDirection.value === 'asc' ? 1 : -1
