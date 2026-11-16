@@ -642,6 +642,15 @@ describe('ticketShellCommand', () => {
     expect(ticketAgentPrompt(ticket({ externalLinks: [] }), lane())).not.toContain('Links:')
   })
 
+  it('lists attached image paths only when the ticket has some', () => {
+    const imageTicket = ticket({ images: ['/data/attachments/t1/a.png', '/data/attachments/t1/b.jpg'] })
+    expect(ticketAgentPrompt(imageTicket, lane())).toContain(
+      'Images (open each path to view it):\n- /data/attachments/t1/a.png\n- /data/attachments/t1/b.jpg'
+    )
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Images')
+    expect(ticketAgentPrompt(ticket({ images: [] }), lane())).not.toContain('Images')
+  })
+
   it('ends with the lane output target and permission to reuse an existing location', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ outputTarget: 'a new folder called PRD' }))
     const outputSection = prompt.split('\n\n').at(-1)

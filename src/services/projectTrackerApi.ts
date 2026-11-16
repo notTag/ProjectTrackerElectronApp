@@ -198,6 +198,22 @@ export const projectTrackerApi = {
     return requireElectron().pickScanDirectory()
   },
 
+  pickTicketImages(ticketId: string) {
+    return requireElectron().pickTicketImages(ticketId)
+  },
+
+  saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string) {
+    return requireElectron().saveTicketImageBytes(ticketId, bytes, mimeType)
+  },
+
+  removeTicketImage(ticketId: string, imagePath: string) {
+    return requireElectron().removeTicketImage(ticketId, imagePath)
+  },
+
+  openTicketImage(imagePath: string) {
+    return requireElectron().openTicketImage(imagePath)
+  },
+
   openProjectIn(path: string, targetId: string, command?: string, title?: string) {
     return requireElectron().openProjectIn(path, targetId, command, title)
   },

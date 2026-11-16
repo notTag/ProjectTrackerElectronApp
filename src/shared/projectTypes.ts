@@ -358,6 +358,8 @@ export interface Ticket {
   fullAuto?: boolean
   // Any further http(s) links: design docs, threads, related issues. Absent means none.
   externalLinks?: string[]
+  // Absolute paths of image copies under <userData>/attachments/<ticketId>/. Absent means none.
+  images?: string[]
   // The ticket's own Next Lane, overriding its lane's. Cleared once a completion
   // move lands, so the ticket then inherits; moveOnComplete is what arms it.
   moveToLaneId?: string
@@ -557,6 +559,7 @@ export interface TicketPromptContext {
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
   const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
+  const imageLines = (ticket.images ?? []).map((imagePath) => `- ${imagePath}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -568,6 +571,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
+    imageLines.length ? ['Images (open each path to view it):', ...imageLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')

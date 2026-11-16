@@ -370,6 +370,13 @@ In graph view this opens as a side panel instead of a centered modal.
 - Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
 - Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
 
+**Images**
+
+- Attach png/jpg/jpeg/gif/webp images: **Add image** (native picker, multi-select), Cmd+V anywhere in the ticket panel (text pastes still go to the field), or drop files onto the section. 20 MB cap per image.
+- Each image is copied to `<userData>/attachments/<ticketId>/<uuid>.<ext>`, so moving or deleting the original doesn't break the ticket. Paths are stored as `images_json` on the ticket row.
+- Thumbnails load through the `ticket-image:` scheme, which only serves files inside the attachments folder. Clicking one opens it in the OS viewer; **×** removes it and deletes the copy.
+- Passed to agents as an `Images (open each path to view it):` block of absolute paths, only when the ticket has images. Deleting the ticket deletes its attachments folder.
+
 **Checklist**
 
 - The heading shows done/total.
