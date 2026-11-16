@@ -1049,7 +1049,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" @edit-lane="editLane" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>

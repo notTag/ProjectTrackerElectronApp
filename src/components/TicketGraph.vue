@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { effectiveNextLaneId, laneTransitions, type LaneTransition, type SwimLane, type Ticket } from '@/shared/projectTypes'
+import { effectiveNextLaneId, laneTransitions, promptRules, rulesToPrompt, type LaneTransition, type SwimLane, type Ticket } from '@/shared/projectTypes'
+
+type PromptField = 'agentPrompt' | 'orchestratorPrompt'
 
 const props = defineProps<{ projectName: string; lanes: SwimLane[]; boardLanes: SwimLane[]; tickets: Ticket[]; ticketOpen: boolean }>()
-const emit = defineEmits<{ ticket: [id: string]; selection: [] }>()
+const emit = defineEmits<{ ticket: [id: string]; selection: []; editLane: [lane: SwimLane, patch: Partial<Pick<SwimLane, PromptField>>] }>()
 
 // ponytail: hand-rolled layout, one row of states. Swap for a layered layout
 // (e.g. dagre) if wide boards make the arcs unreadable.
@@ -130,8 +132,42 @@ const selectedLaneDetails = computed(() => {
   return { nextLaneName: laneLabel(nextLaneId), hasNextLane: Boolean(nextLaneId), incoming: uniqueIncoming, overrides }
 })
 
+const promptSections: { field: PromptField; title: string }[] = [
+  { field: 'agentPrompt', title: 'Agent prompt' },
+  { field: 'orchestratorPrompt', title: 'Orchestrator prompt' }
+]
+const addingRuleTo = ref<PromptField | null>(null)
+const vFocus = { mounted: (element: HTMLElement) => element.focus() }
+const laneRules = (lane: SwimLane, field: PromptField) => promptRules(lane[field] ?? '')
+const agentFileName = (lane: SwimLane) => lane.agentFilePath.trim().split('/').pop()
+
+function saveRules(lane: SwimLane, field: PromptField, rules: string[]) {
+  const keptRules = rules.map(rule => rule.trim()).filter(Boolean)
+  emit('editLane', lane, { [field]: rulesToPrompt(keptRules) })
+}
+function editRule(lane: SwimLane, field: PromptField, index: number, text: string) {
+  const rules = laneRules(lane, field)
+  rules[index] = text
+  saveRules(lane, field, rules)
+}
+function deleteRule(lane: SwimLane, field: PromptField, index: number) {
+  const remainingRules = laneRules(lane, field).filter((_, ruleIndex) => ruleIndex !== index)
+  saveRules(lane, field, remainingRules)
+}
+function addRule(lane: SwimLane, field: PromptField, text: string) {
+  addingRuleTo.value = null
+  if (text.trim()) saveRules(lane, field, [...laneRules(lane, field), text])
+}
+// Enter commits the rule (blur fires change); Shift+Enter still adds a line break.
+function commitOnEnter(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey) return
+  event.preventDefault()
+  ;(event.target as HTMLTextAreaElement).blur()
+}
+
 function selectLane(id: string | null) {
   selectedLaneId.value = id
+  addingRuleTo.value = null
   emit('selection')
 }
 </script>
@@ -181,9 +217,31 @@ function selectLane(id: string | null) {
           <h3 class="graph-details-heading">Ticket overrides</h3>
           <button v-for="override in selectedLaneDetails.overrides" :key="override.ticket.id" class="graph-list-item secondary" @click="emit('ticket', override.ticket.id)">#{{ override.ticket.number }} → {{ override.targetName }}</button>
         </template>
-        <h3 class="graph-details-heading">Tickets</h3>
-        <button v-for="ticket in laneTickets(selectedLane.id)" :key="ticket.id" class="graph-list-item secondary" @click="emit('ticket', ticket.id)">#{{ ticket.number }} · {{ ticket.title }}</button>
-        <p v-if="!laneTickets(selectedLane.id).length">No tickets match the current filters.</p>
+        <section v-for="section in promptSections" :key="section.field" class="graph-rules" :aria-label="section.title">
+          <h3 class="graph-details-heading">{{ section.title }}</h3>
+          <p v-if="section.field === 'agentPrompt' && agentFileName(selectedLane)" class="field-hint">Also follows: {{ agentFileName(selectedLane) }}</p>
+          <div v-for="(rule, index) in laneRules(selectedLane, section.field)" :key="`${index}:${rule}`" class="graph-rule">
+            <textarea
+              rows="1"
+              :value="rule"
+              :aria-label="`${section.title} rule ${index + 1}`"
+              @keydown="commitOnEnter"
+              @change="editRule(selectedLane, section.field, index, ($event.target as HTMLTextAreaElement).value)"
+            />
+            <button class="secondary graph-rule-delete" :aria-label="`Delete rule ${index + 1}`" title="Delete rule" @click="deleteRule(selectedLane, section.field, index)">×</button>
+          </div>
+          <p v-if="!laneRules(selectedLane, section.field).length && addingRuleTo !== section.field">No rules yet</p>
+          <div v-if="addingRuleTo === section.field" class="graph-rule">
+            <textarea
+              v-focus
+              rows="1"
+              :aria-label="`New ${section.title} rule`"
+              @keydown="commitOnEnter"
+              @blur="addRule(selectedLane, section.field, ($event.target as HTMLTextAreaElement).value)"
+            />
+          </div>
+          <button v-else class="secondary graph-rule-add" @click="addingRuleTo = section.field">+ Add rule</button>
+        </section>
       </template>
       <template v-else>
         <p>{{ lanes.length }} swim lanes</p>
