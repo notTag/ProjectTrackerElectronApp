@@ -288,6 +288,11 @@ From left to right:
 #### Ticket card
 
 - Draggable between lanes. Clicking a card opens the Ticket modal (3.8).
+- **Select checkbox** (title "Select (run / move)"): checked cards feed Auto Run's ticket set and bulk drag. Selection is in memory only and clears when you switch project.
+- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`ticketIdsToMove` in `projectTypes.ts`, `moveTickets` in `stores/projects.ts`).
+  - Dragging an unchecked card moves only that card.
+  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
+  - Moved tickets stay checked.
 - The title always shows. These fields show only when switched on in Display:
   - **#number**
   - **Description** preview

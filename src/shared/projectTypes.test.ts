@@ -45,6 +45,7 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketIdsToMove,
   ticketsToRun,
   agentForTicket,
   availableAgents,
@@ -863,6 +864,37 @@ describe('ticketsToRun', () => {
 
   it('runs every ticket when the only checks are in another lane', () => {
     expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
+  })
+})
+
+describe('ticketIdsToMove', () => {
+  const tickets = [
+    { id: 'a', laneId: 'idea' },
+    { id: 'b', laneId: 'prd' },
+    { id: 'c', laneId: 'idea' },
+    { id: 'd', laneId: 'dev' }
+  ] as Ticket[]
+
+  it('moves only the dragged card when it is unchecked', () => {
+    expect(ticketIdsToMove('a', new Set(['b', 'c']), tickets, 'dev')).toEqual(['a'])
+  })
+
+  it('moves every checked visible ticket when the dragged card is checked', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'c']), tickets, 'dev')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('skips a checked ticket that is not visible', () => {
+    const visibleTickets = tickets.filter((ticket) => ticket.id !== 'b')
+    expect(ticketIdsToMove('a', new Set(['a', 'b']), visibleTickets, 'dev')).toEqual(['a'])
+  })
+
+  it('skips checked tickets already in the target lane', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'd']), tickets, 'dev')).toEqual(['a', 'b'])
+  })
+
+  it('moves nothing when every carried ticket is already there', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'c']), tickets, 'idea')).toEqual([])
+    expect(ticketIdsToMove('d', new Set(), tickets, 'dev')).toEqual([])
   })
 })
 

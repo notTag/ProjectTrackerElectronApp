@@ -361,9 +361,9 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
-    // Every ticket edit funnels through here — modal fields, checklist toggles,
-    // and drag-and-drop between lanes alike — so this is the only place that has
-    // to stamp updatedAt for all of them.
+    // Every single-ticket edit funnels through here — modal fields and checklist
+    // toggles alike — so this is the only place that has to stamp updatedAt for
+    // them. Lane drags go through moveTickets.
     async updateTicket(
       projectPath: string,
       ticketId: string,
@@ -382,6 +382,21 @@ export const useProjectsStore = defineStore('projects', {
         }),
         alsoCompletedIds
       )
+    },
+
+    // Drag-and-drop between lanes, for one card or every checked one: a single
+    // board edit, so all moved tickets share one updatedAt. The lane check runs
+    // on the board the save queue hands over, not the one the view saw, so a
+    // ticket that got to the lane in the meantime keeps its updatedAt.
+    async moveTickets(projectPath: string, ticketIds: string[], laneId: string) {
+      if (ticketIds.length === 0) return
+      const movingIds = new Set(ticketIds)
+      const updatedAt = new Date().toISOString()
+      const needsMove = (ticket: Ticket) => movingIds.has(ticket.id) && ticket.laneId !== laneId
+      await this.updateBoard(projectPath, (board) => ({
+        ...board,
+        tickets: board.tickets.map((ticket) => (needsMove(ticket) ? { ...ticket, laneId, updatedAt } : ticket))
+      }))
     },
 
     // Matched against the run saved at write time, not the one the caller saw:

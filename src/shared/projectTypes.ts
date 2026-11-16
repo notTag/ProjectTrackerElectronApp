@@ -1644,6 +1644,22 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
   return nothingSelectedHere ? tickets : selectedTickets
 }
 
+// Dragging a checked card carries every checked ticket the user can see;
+// dragging an unchecked one moves just that card. Tickets already in the
+// target lane are left out so their updatedAt stays put.
+export const ticketIdsToMove = (
+  draggedTicketId: string,
+  selectedTicketIds: ReadonlySet<string>,
+  visibleTickets: Ticket[],
+  targetLaneId: string
+): string[] => {
+  const draggedIsSelected = selectedTicketIds.has(draggedTicketId)
+  const isCarried = (ticket: Ticket) =>
+    draggedIsSelected ? selectedTicketIds.has(ticket.id) : ticket.id === draggedTicketId
+  const ticketsToMove = visibleTickets.filter((ticket) => isCarried(ticket) && ticket.laneId !== targetLaneId)
+  return ticketsToMove.map((ticket) => ticket.id)
+}
+
 // Per-entity patches cross IPC as JSON, which drops undefined keys, so an
 // explicit clear travels as null.
 export type Clearable<T> = { [K in keyof T]?: T[K] | null }
