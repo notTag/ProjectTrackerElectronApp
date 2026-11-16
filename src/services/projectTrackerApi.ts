@@ -3,6 +3,7 @@ import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
   Clearable,
+  LaneMarkdownKind,
   ProjectRecord,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -149,8 +150,8 @@ export const projectTrackerApi = {
     return bridge().readProjectReadme(path)
   },
 
-  saveLaneAgentMarkdown(projectPath: string, laneName: string, agentFilePath: string, content: string) {
-    return bridge().saveLaneAgentMarkdown(projectPath, laneName, agentFilePath, content)
+  saveLaneMarkdown(kind: LaneMarkdownKind, projectPath: string, laneName: string, filePath: string, content: string) {
+    return bridge().saveLaneMarkdown(kind, projectPath, laneName, filePath, content)
   },
 
   fetchProjectGithub(githubUrl: string) {

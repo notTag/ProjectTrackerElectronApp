@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { AGENT_PROMPT_FILE_NAME, ORCHESTRATOR_PROMPT_FILE_NAME } from '../src/shared/projectTypes.js'
+import type { LaneMarkdownKind } from '../src/shared/projectTypes.js'
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 
 const createdProjectPaths: string[] = []
@@ -21,11 +21,11 @@ afterEach(() => {
   }
 })
 
-const target = (projectPath: string, filePath = '') => ({
+const target = (projectPath: string, filePath = '', kind: LaneMarkdownKind = 'agent') => ({
+  kind,
   projectPath,
   laneName: 'In Review',
-  filePath,
-  fileName: AGENT_PROMPT_FILE_NAME
+  filePath
 })
 
 describe('resolveAgentMarkdownPath', () => {
@@ -35,7 +35,7 @@ describe('resolveAgentMarkdownPath', () => {
   })
 
   it('puts the orchestrator file in the same lane folder', () => {
-    const resolved = resolveAgentMarkdownPath({ ...target('/code/app'), fileName: ORCHESTRATOR_PROMPT_FILE_NAME })
+    const resolved = resolveAgentMarkdownPath(target('/code/app', '', 'orchestrator'))
     expect(resolved).toBe('/code/app/SwimlaneAgentPrompt/In-Review/AgentOrchestratorPrompt.md')
   })
 
@@ -59,6 +59,24 @@ describe('resolveAgentMarkdownPath', () => {
 
   it('rejects an explicit path that is not markdown', () => {
     expect(() => resolveAgentMarkdownPath(target('/code/app', '/Users/me/.zshrc'))).toThrow('must end in .md')
+  })
+
+  describe('orchestrator kind', () => {
+    it('keeps a traversal lane name inside SwimlaneAgentPrompt/', () => {
+      const traversal = { ...target('/code/app', '', 'orchestrator'), laneName: '../../etc' }
+      const laneFolder = path.dirname(resolveAgentMarkdownPath(traversal))
+      expect(path.dirname(laneFolder)).toBe('/code/app/SwimlaneAgentPrompt')
+    })
+
+    it('resolves a relative explicit path against the project', () => {
+      const resolved = resolveAgentMarkdownPath(target('/code/app', 'docs/orchestrator.md', 'orchestrator'))
+      expect(resolved).toBe('/code/app/docs/orchestrator.md')
+    })
+
+    it('rejects a non-markdown path, naming its own field', () => {
+      const notMarkdown = target('/code/app', 'notes.txt', 'orchestrator')
+      expect(() => resolveAgentMarkdownPath(notMarkdown)).toThrow('Agent Orchestrator markdown file must end in .md.')
+    })
   })
 })
 

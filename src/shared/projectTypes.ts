@@ -230,6 +230,10 @@ export interface SwimLane {
   // Folded into orchestratorPromptOverride on the first edit, and unused while
   // one is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
+  // Where Save to Agent Orchestrator Markdown writes the full orchestrator
+  // prompt. Never added to the prompt itself: the file is a copy of it, so a
+  // reference would make each save differ from the last. Optional so older lanes load.
+  orchestratorFilePath?: string
   // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
   // are filled in. Empty means the generated prompt. Optional so older lanes load.
   orchestratorPromptOverride?: string
@@ -447,6 +451,9 @@ export interface Agent {
   promptArgs?: string[]
   modelArgs?: string[]
   models?: string[]
+  // Model the Auto Run dialog starts on when the lane saved none; absent means
+  // the dialog starts on "CLI default".
+  defaultModel?: string
   sessionNameArgs?: string[]
   // `{sessionId}` is replaced with the run's session id. sessionArgs start a
   // session under that id, resumeArgs pick it back up. No resumeArgs means the
@@ -475,6 +482,7 @@ export const DEFAULT_AGENT: Agent = {
     'claude-sonnet-5-5',
     'claude-haiku-5-5'
   ],
+  defaultModel: 'claude-opus-5-5',
   sessionNameArgs: ['--name'],
   sessionArgs: ['--session-id', SESSION_ID_TOKEN],
   resumeArgs: ['--resume', SESSION_ID_TOKEN]
@@ -664,6 +672,14 @@ const fileNamePart = (value: string, fallback: string): string => {
 }
 
 export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
+
+export type LaneMarkdownKind = 'agent' | 'orchestrator'
+
+// The lane field holding each kind's markdown file path.
+export const LANE_MARKDOWN_FILE_PATH_FIELD = {
+  agent: 'agentFilePath',
+  orchestrator: 'orchestratorFilePath'
+} as const satisfies Record<LaneMarkdownKind, keyof SwimLane>
 
 // Only unindented markers start a rule: indented sub-bullets and sub-steps stay
 // inside their parent rule, indentation intact.

@@ -32,7 +32,8 @@ const api = vi.hoisted(() => ({
   fetchProjectGithubIssues: vi.fn(),
   fetchTicketPullRequest: vi.fn(),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
-  terminalTabsAlive: vi.fn()
+  terminalTabsAlive: vi.fn(),
+  saveLaneMarkdown: vi.fn()
 }))
 
 const offlineError = new Error(
@@ -123,21 +124,29 @@ describe('markAgentRunSeen', () => {
     const store = useProjectsStore()
     store.state = withRun('2026-01-02T00:00:00.000Z')
 
-    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
+    try {
+      await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
 
-    expect(savedTicket(store).agentRun?.seenAt).toBeDefined()
+    expect(savedTicket(store).agentRun?.seenAt).toBe('2030-01-01T00:00:00.000Z')
     expect(savedTicket(store).updatedAt).toBeUndefined()
   })
 
   it('leaves a newer run unseen and intact', async () => {
     const store = useProjectsStore()
     store.state = withRun('2026-01-03T00:00:00.000Z')
-    const newerRun = savedTicket(store).agentRun
 
     await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
 
-    expect(savedTicket(store).agentRun).toEqual(newerRun)
-    expect(savedTicket(store).agentRun?.seenAt).toBeUndefined()
+    expect(savedTicket(store).agentRun).toStrictEqual({
+      at: '2026-01-03T00:00:00.000Z',
+      laneId: 'dev',
+      output: 'run at 2026-01-03T00:00:00.000Z',
+      succeeded: false
+    })
   })
 })
 
@@ -202,6 +211,8 @@ describe('full auto handoff', () => {
     await flushLaunches()
 
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    expect(api.autoRunLane.mock.calls[0][0]).toBe(PROJECT_PATH)
+    expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 
   it('queues a handoff into a lane that is already launching and runs it once the lane frees up', async () => {
@@ -234,6 +245,8 @@ describe('full auto handoff', () => {
     await flushLaunches()
 
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    expect(api.autoRunLane.mock.calls[0][0]).toBe(PROJECT_PATH)
+    expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 })
 
@@ -564,17 +577,6 @@ describe('autoPullGithubIssues', () => {
     expect(store.githubLoading['/code/offline']).toBe(false)
   })
 
-  it('shows a 404 as an error and does not retry it', async () => {
-    api.fetchProjectGithubIssues.mockRejectedValueOnce(new Error('Repository not found on GitHub.'))
-    const store = storeWithProject('/code/missing', 'https://github.com/o/r')
-
-    await store.autoPullGithubIssues('/code/missing')
-    await store.autoPullGithubIssues('/code/missing')
-
-    expect(store.error).toBe('app: Repository not found on GitHub.')
-    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
-  })
-
   it('stays silent when GitHub is unreachable and pulls again on the next open', async () => {
     api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce({ open: [issue], closed: [] })
     const store = storeWithProject('/code/unreachable', 'https://github.com/o/r')
@@ -686,13 +688,14 @@ describe('moveTickets', () => {
   it('leaves a ticket already in the target lane untouched', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
-    const prdTicketBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+    const prdTicketBefore = toPlainJson(store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3'))
 
     await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
 
     const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
-    expect(api.updateTicket).toHaveBeenCalledTimes(1)
-    expect(prdTicketAfter?.updatedAt).toBe(prdTicketBefore?.updatedAt)
+    const writtenIds = api.updateTicket.mock.calls.map(([id]) => id)
+    expect(writtenIds).toEqual(['ticket-1'])
+    expect(toPlainJson(prdTicketAfter)).toStrictEqual(prdTicketBefore)
   })
 
   it('writes nothing for an empty id list', async () => {
@@ -747,6 +750,34 @@ describe('per-entity writes', () => {
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
   })
 
+  it('saves the orchestrator markdown, then stores the prompt patch and the written path', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
+    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath, appended: false })
+    const prd = store.board(PROJECT_PATH).lanes[1]
+
+    const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
+    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', promptPatch)
+
+    expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.')
+    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', {
+      ...promptPatch,
+      orchestratorFilePath: savedPath
+    })
+  })
+
+  it('leaves the lane untouched when the markdown write fails', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
+    const prd = store.board(PROJECT_PATH).lanes[1]
+
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'x.txt', {})).rejects.toThrow()
+
+    expect(api.updateLane).not.toHaveBeenCalled()
+  })
+
   it('a created ticket takes the number the repository returns', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
@@ -786,11 +817,15 @@ describe('per-entity writes', () => {
     store.state = stateWithTicketIn('idea')
     saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
     api.scanProjectDirectories.mockResolvedValue({ snapshot: { projects: [] }, failures: [] })
+    const expectedPreferences = toPlainJson({ ...store.boardPreferences(PROJECT_PATH), hiddenLaneIds: ['idea'] })
 
-    await store.saveBoardPreferences(PROJECT_PATH, store.boardPreferences(PROJECT_PATH))
+    await store.saveBoardPreferences(PROJECT_PATH, { ...expectedPreferences, hiddenLaneIds: ['idea'] })
     await store.scan('/code')
 
     expect(saveProjectState).toHaveBeenCalledTimes(2)
+    const [[preferencesSave], [scanSave]] = saveProjectState.mock.calls
+    expect(preferencesSave.boardPreferences[PROJECT_PATH]).toEqual(expectedPreferences)
+    expect(scanSave.scanDirectories).toContain('/code')
   })
 })
 

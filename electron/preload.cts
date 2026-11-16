@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
+  LaneMarkdownKind,
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -92,8 +93,8 @@ contextBridge.exposeInMainWorld('projectTracker', {
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
-  saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
-    invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
+  saveLaneMarkdown: (kind: LaneMarkdownKind, projectPath: string, laneName: string, filePath: string, content: string) =>
+    invokePlain('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string, since?: string) =>

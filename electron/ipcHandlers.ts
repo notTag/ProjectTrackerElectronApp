@@ -32,7 +32,6 @@ import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicke
 import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
-  AGENT_PROMPT_FILE_NAME,
   availableAgents,
   isUuid,
   pullRequestNumber,
@@ -48,6 +47,7 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
+  type LaneMarkdownKind,
   type LaneWritePatch,
   type ProjectWritePatch,
   type ScanProgress
@@ -238,12 +238,15 @@ const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   orchestratorPromptOverride: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
-  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
+  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true
 }
 const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
 const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
 // NOT NULL text columns: a patch may change them but never clear them.
 const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
+// NOT NULL text columns whose SwimLane field is optional: the repository stores
+// absent or null as '', but any other non-string is rejected.
+const OPTIONAL_TEXT_KEYS = new Set(['outputTarget', 'orchestratorPrompt', 'orchestratorPromptOverride', 'orchestratorFilePath'])
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
 const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 
@@ -251,7 +254,10 @@ const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
   if (!isPlainObject(value)) return false
   return Object.entries(value).every(([key, fieldValue]) => {
     if (!allowedKeys.has(key)) return false
-    return !REQUIRED_TEXT_KEYS.has(key) || typeof fieldValue === 'string'
+    const isString = typeof fieldValue === 'string'
+    if (REQUIRED_TEXT_KEYS.has(key)) return isString
+    if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
+    return true
   })
 }
 
@@ -716,25 +722,26 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     },
 
     'lane:save-agent-markdown': (request, { repository }) => {
-      const { projectPath, laneName, agentFilePath, content } = (request ?? {}) as Record<string, unknown>
-      const fieldsAreStrings = [projectPath, laneName, agentFilePath, content].every((field) => typeof field === 'string')
-      if (!fieldsAreStrings) throw new Error('Invalid save request.')
+      const { kind, projectPath, laneName, filePath: requestedFilePath, content } = (request ?? {}) as Record<string, unknown>
+      const fieldsAreStrings = [projectPath, laneName, requestedFilePath, content].every((field) => typeof field === 'string')
+      const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
+      if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid save request.')
 
       const normalized = assertScannedProjectPath(repository, projectPath as string)
       const project = repository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
       if (!project) throw new Error('Unknown project.')
 
       const target = {
+        kind: kind as LaneMarkdownKind,
         projectPath: normalized,
         laneName: laneName as string,
-        filePath: agentFilePath as string,
-        fileName: AGENT_PROMPT_FILE_NAME
+        filePath: requestedFilePath as string
       }
       // Same boundary as every other path IPC: keeps a typed path from reaching
       // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.
       const filePath = resolveAgentMarkdownPath(target)
       if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
-        throw new Error('Agent markdown file must be inside a scanned directory.')
+        throw new Error('Markdown file must be inside a scanned directory.')
       }
       return saveAgentMarkdown(filePath, content as string)
     }
