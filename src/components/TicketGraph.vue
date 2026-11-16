@@ -160,7 +160,7 @@ function addRule(lane: SwimLane, field: PromptField, text: string) {
 }
 // Enter commits the rule (blur fires change); Shift+Enter still adds a line break.
 function commitOnEnter(event: KeyboardEvent) {
-  if (event.key !== 'Enter' || event.shiftKey) return
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
   ;(event.target as HTMLTextAreaElement).blur()
 }

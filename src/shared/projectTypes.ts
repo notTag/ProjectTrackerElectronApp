@@ -648,9 +648,11 @@ const fileNamePart = (value: string, fallback: string): string => {
 export const agentMarkdownFileName = (projectName: string, laneName: string): string =>
   `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentContext.md`
 
-const BULLET_RULE = /^\s*[-*]\s+(.*)$/
+// Only unindented markers start a rule: indented sub-bullets and sub-steps stay
+// inside their parent rule, indentation intact.
+const BULLET_RULE = /^[-*]\s+(.*)$/
 // Numbered rules keep their number in the text: prompts refer back to "steps 1-5".
-const NUMBERED_RULE = /^\s*\d+[.)]\s/
+const NUMBERED_RULE = /^\d+[.)]\s/
 
 // A lane prompt read as a list of rules: a bullet or numbered line starts a rule,
 // other lines continue the one before. Text above the first bullet is a rule too.

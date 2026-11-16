@@ -1593,6 +1593,13 @@ describe('promptRules / rulesToPrompt', () => {
     expect(rulesToPrompt(promptRules(bulletPrompt))).toBe(promptRules(bulletPrompt).map(rule => `- ${rule}`).join('\n'))
   })
 
+  it('keeps indented sub-bullets and sub-steps inside their parent rule', () => {
+    const nestedPrompt = '1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step\n- Post the link.'
+    const rules = promptRules(nestedPrompt)
+    expect(rules).toEqual(['1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step', 'Post the link.'])
+    expect(rulesToPrompt(rules)).toBe(nestedPrompt)
+  })
+
   it('maps an empty prompt to no rules and back', () => {
     expect(promptRules('  \n\n')).toEqual([])
     expect(rulesToPrompt([])).toBe('')
