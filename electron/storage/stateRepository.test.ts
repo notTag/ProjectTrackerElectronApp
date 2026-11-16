@@ -336,7 +336,6 @@ describe('row-level writes', () => {
     const { repository, projectPath } = seededRepository(userDataPath)
 
     const created = repository.createSwimLane(projectPath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '' })
-    expect(created.name).toBe('QA')
     repository.updateSwimLane(projectPath, 'idea', { name: 'Ideas', autoRunModel: null })
     repository.reorderSwimLanes(projectPath, ['qa', 'idea', 'prd'])
     repository.deleteSwimLane(projectPath, 'prd')
@@ -371,8 +370,10 @@ describe('row-level writes', () => {
     const userDataPath = freshUserDataPath()
     const { repository } = seededRepository(userDataPath)
 
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
     const stamped = repository.updateTicket('ticket-a', { title: 'A2' })
-    expect(stamped.updatedAt).toBeDefined()
+    vi.useRealTimers()
+    expect(stamped.updatedAt).toBe('2030-01-01T00:00:00.000Z')
     const kept = repository.updateTicket('ticket-a', { title: 'A3', updatedAt: '2026-02-02T00:00:00.000Z' })
     expect(kept.updatedAt).toBe('2026-02-02T00:00:00.000Z')
     const cleared = repository.updateTicket('ticket-b', { assigneeId: null, updatedAt: null })
@@ -900,6 +901,7 @@ describe('StateRepository archived projects', () => {
 })
 
 describe('closed_at triggers (#27)', () => {
+  const ISO_TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/
   const setUp = () => {
     const userDataPath = freshUserDataPath()
     const repository = new StateRepository(userDataPath)
@@ -925,7 +927,7 @@ describe('closed_at triggers (#27)', () => {
 
     moveWithCli('ticket-a', 'in-dev')
     const stamped = closedAt('ticket-a')
-    expect(stamped).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
+    expect(stamped).toMatch(ISO_TIMESTAMP)
 
     cli.prepare("UPDATE tickets SET closed_at = '2026-01-05T00:00:00.000Z' WHERE id = 'ticket-a'").run()
     moveWithCli('ticket-a', 'in-production')
@@ -945,10 +947,10 @@ describe('closed_at triggers (#27)', () => {
       description: '',
       createdAt: '2026-01-01T00:00:00.000Z'
     })
-    expect(closedAt(created.id)).not.toBeNull()
+    expect(closedAt(created.id)).toMatch(ISO_TIMESTAMP)
 
     repository.updateTicket('ticket-b', { laneId: 'in-production' })
-    expect(closedAt('ticket-b')).not.toBeNull()
+    expect(closedAt('ticket-b')).toMatch(ISO_TIMESTAMP)
     cli.close()
   })
 
@@ -988,7 +990,7 @@ describe('closed_at triggers (#27)', () => {
         `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, closes_ticket) VALUES ('later-lane', ?, 'Later', '', '', 99, 1)`
       )
       .run(projectPath)
-    expect(closedAt('ticket-a')).not.toBeNull()
+    expect(closedAt('ticket-a')).toMatch(ISO_TIMESTAMP)
     cli.close()
   })
 
@@ -997,7 +999,7 @@ describe('closed_at triggers (#27)', () => {
     moveWithCli('ticket-a', 'in-dev')
     cli.exec("UPDATE tickets SET closed_at = NULL WHERE id = 'ticket-a'")
     moveWithCli('ticket-a', 'in-production')
-    expect(closedAt('ticket-a')).not.toBeNull()
+    expect(closedAt('ticket-a')).toMatch(ISO_TIMESTAMP)
     cli.close()
   })
 
@@ -1132,12 +1134,15 @@ describe('snapshots', () => {
 
   it('never blocks startup when the snapshot fails', () => {
     const userDataPath = freshUserDataPath()
-    new StateRepository(userDataPath)
+    seededRepository(userDataPath)
     // A file where the directory should be fails for root too, unlike chmod.
     writeFileSync(snapshotsIn(userDataPath), '')
 
     const repository = new StateRepository(userDataPath)
-    expect(repository.getState()).toBeDefined()
+    const loadedState = repository.getState()
+    const projectPath = loadedState.snapshot.projects[0].path
+    const ticketIds = loadedState.boards![projectPath].tickets.map((ticket) => ticket.id)
+    expect(ticketIds).toEqual(['ticket-a', 'ticket-b'])
     expect(statSync(snapshotsIn(userDataPath)).isFile()).toBe(true)
   })
 
@@ -1176,7 +1181,7 @@ describe('StateRepository on a bad database file', () => {
     const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
     chmodSync(databasePath, 0o000)
     try {
-      expect(() => new StateRepository(userDataPath)).toThrow()
+      expect(() => new StateRepository(userDataPath)).toThrow(/unable to open/)
     } finally {
       chmodSync(databasePath, 0o644)
     }

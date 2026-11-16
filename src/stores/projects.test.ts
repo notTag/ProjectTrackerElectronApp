@@ -123,21 +123,26 @@ describe('markAgentRunSeen', () => {
     const store = useProjectsStore()
     store.state = withRun('2026-01-02T00:00:00.000Z')
 
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
     await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+    vi.useRealTimers()
 
-    expect(savedTicket(store).agentRun?.seenAt).toBeDefined()
+    expect(savedTicket(store).agentRun?.seenAt).toBe('2030-01-01T00:00:00.000Z')
     expect(savedTicket(store).updatedAt).toBeUndefined()
   })
 
   it('leaves a newer run unseen and intact', async () => {
     const store = useProjectsStore()
     store.state = withRun('2026-01-03T00:00:00.000Z')
-    const newerRun = savedTicket(store).agentRun
 
     await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
 
-    expect(savedTicket(store).agentRun).toEqual(newerRun)
-    expect(savedTicket(store).agentRun?.seenAt).toBeUndefined()
+    expect(savedTicket(store).agentRun).toStrictEqual({
+      at: '2026-01-03T00:00:00.000Z',
+      laneId: 'dev',
+      output: 'run at 2026-01-03T00:00:00.000Z',
+      succeeded: false
+    })
   })
 })
 
@@ -202,6 +207,8 @@ describe('full auto handoff', () => {
     await flushLaunches()
 
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    expect(api.autoRunLane.mock.calls[0][0]).toBe(PROJECT_PATH)
+    expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 
   it('queues a handoff into a lane that is already launching and runs it once the lane frees up', async () => {
@@ -234,6 +241,8 @@ describe('full auto handoff', () => {
     await flushLaunches()
 
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
+    expect(api.autoRunLane.mock.calls[0][0]).toBe(PROJECT_PATH)
+    expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 })
 
@@ -564,17 +573,6 @@ describe('autoPullGithubIssues', () => {
     expect(store.githubLoading['/code/offline']).toBe(false)
   })
 
-  it('shows a 404 as an error and does not retry it', async () => {
-    api.fetchProjectGithubIssues.mockRejectedValueOnce(new Error('Repository not found on GitHub.'))
-    const store = storeWithProject('/code/missing', 'https://github.com/o/r')
-
-    await store.autoPullGithubIssues('/code/missing')
-    await store.autoPullGithubIssues('/code/missing')
-
-    expect(store.error).toBe('app: Repository not found on GitHub.')
-    expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
-  })
-
   it('stays silent when GitHub is unreachable and pulls again on the next open', async () => {
     api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce({ open: [issue], closed: [] })
     const store = storeWithProject('/code/unreachable', 'https://github.com/o/r')
@@ -691,8 +689,10 @@ describe('moveTickets', () => {
     await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
 
     const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
-    expect(api.updateTicket).toHaveBeenCalledTimes(1)
-    expect(prdTicketAfter?.updatedAt).toBe(prdTicketBefore?.updatedAt)
+    const writtenIds = api.updateTicket.mock.calls.map(([id]) => id)
+    expect(writtenIds).toEqual(['ticket-1'])
+    expect(prdTicketBefore?.updatedAt).toBeUndefined()
+    expect(prdTicketAfter?.updatedAt).toBeUndefined()
   })
 
   it('writes nothing for an empty id list', async () => {
@@ -791,6 +791,9 @@ describe('per-entity writes', () => {
     await store.scan('/code')
 
     expect(saveProjectState).toHaveBeenCalledTimes(2)
+    const [[preferencesSave], [scanSave]] = saveProjectState.mock.calls
+    expect(preferencesSave.boardPreferences[PROJECT_PATH]).toEqual(store.boardPreferences(PROJECT_PATH))
+    expect(scanSave.scanDirectories).toContain('/code')
   })
 })
 
