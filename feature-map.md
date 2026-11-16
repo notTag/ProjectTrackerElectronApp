@@ -422,7 +422,13 @@ In graph view this opens as a side panel instead of a centered modal.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
-- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable.
+  - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
+  - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
+  - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
+  - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone.
+  - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
+  - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
 - **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.

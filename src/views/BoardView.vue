@@ -10,7 +10,7 @@ import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
+import { TERMINAL_TARGETS, resolveAutoRunTerminal, type OpenInTarget } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
@@ -28,6 +28,9 @@ import {
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
   orchestratorAgentChoice,
+  orchestratorPromptMissingTokens,
+  orchestratorPromptTemplate,
+  type OrchestratorPromptContext,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -842,6 +845,45 @@ const changeAutoRunConfirmAgent = () => {
 // the first click uses a terminal the user is known to have.
 const autoRunTerminal = (lane: SwimLane) => resolveAutoRunTerminal(lane.autoRunTerminalId, openInStore.selectedId)
 
+const orchestratorContextFor = (terminal: OpenInTarget): OrchestratorPromptContext => ({
+  projectPath: projectPath.value,
+  lanes: [...board.value.lanes, getUnassignedLane(board.value)],
+  terminalId: terminal.id,
+  terminalLabel: terminal.label
+})
+
+const openLaneOrchestratorTemplate = computed(() => {
+  const lane = openLane.value
+  if (!lane) return ''
+  const context = orchestratorContextFor(autoRunTerminal(lane))
+  return orchestratorPromptTemplate(lane, context)
+})
+
+// Blank counts as no override, the same as at launch.
+const openLaneOrchestratorOverride = computed(() => {
+  const override = openLane.value?.orchestratorPromptOverride ?? ''
+  return override.trim() ? override : ''
+})
+
+const openLaneMissingOrchestratorTokens = computed(() => {
+  const override = openLaneOrchestratorOverride.value
+  return override ? orchestratorPromptMissingTokens(override) : []
+})
+
+// Saving the untouched template, or clearing the box, keeps the lane on the
+// generated prompt, so app updates to it still arrive and the old extras stay.
+// An edit folds the extras into the override, since they are already part of
+// the text the user just saved.
+const saveOrchestratorPrompt = (lane: SwimLane, text: string) => {
+  const trimmedText = text.trim()
+  const isUnchangedTemplate = trimmedText === openLaneOrchestratorTemplate.value.trim()
+  if (!trimmedText || isUnchangedTemplate) {
+    editLane(lane, { orchestratorPromptOverride: '' })
+    return
+  }
+  editLane(lane, { orchestratorPromptOverride: text, orchestratorPrompt: '' })
+}
+
 const autoRunTickets = (lane: SwimLane) => {
   const visibleLaneTickets = ticketsInLane(lane.id)
   return ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
@@ -889,12 +931,7 @@ const confirmAutoRunLane = () => {
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  const orchestratorContext = {
-    projectPath: projectPath.value,
-    lanes: [...board.value.lanes, getUnassignedLane(board.value)],
-    terminalId: terminal.id,
-    terminalLabel: terminal.label
-  }
+  const orchestratorContext = orchestratorContextFor(terminal)
   const orchestratorSettings = {
     orchestratorAgentId: autoRunConfirmOrchestratorAgentId.value || undefined,
     orchestratorModel: autoRunConfirmOrchestratorModel.value
@@ -1732,13 +1769,27 @@ const runTicketAgent = (ticket: Ticket) => {
       <label>
         Orchestrator prompt
         <textarea
-          class="agent-prompt"
-          :value="openLane.orchestratorPrompt ?? ''"
-          placeholder="e.g. Flag PRs with failing checks."
-          @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
+          class="agent-prompt orchestrator-prompt"
+          :value="openLaneOrchestratorOverride || openLaneOrchestratorTemplate"
+          spellcheck="false"
+          @change="saveOrchestratorPrompt(openLane, ($event.target as HTMLTextAreaElement).value)"
         />
-        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run while Active)</span>
+        <span v-pre class="field-hint">
+          Sent to the Auto Run orchestrator (runs on every Auto Run while Active). {{tickets}}, {{ticket_numbers}},
+          {{lanes}}, {{terminal}} are filled in at launch.
+        </span>
+        <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
+          Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
+        </span>
       </label>
+      <button
+        v-if="openLaneOrchestratorOverride"
+        class="secondary save-agent-markdown"
+        type="button"
+        @click="editLane(openLane, { orchestratorPromptOverride: '' })"
+      >
+        Reset to default
+      </button>
 
       <div class="orchestrator-poll-row">
         <label>

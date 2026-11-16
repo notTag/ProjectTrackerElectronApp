@@ -257,6 +257,7 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
+  orchestratorPromptOverride: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
   nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
