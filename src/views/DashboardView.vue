@@ -13,7 +13,8 @@ import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
-import { isProjectHidden as isHidden, projectMatchesFilters, type ProjectFilters } from '@/shared/projectFilters'
+import * as projectFilters from '@/shared/projectFilters'
+import type { ProjectFilters } from '@/shared/projectFilters'
 import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
@@ -72,10 +73,11 @@ const priorityRank: Record<ProjectPriority, number> = {
   none: 0
 }
 
-const isProjectHidden = (project: ProjectRecord) => isHidden(project, store.state.hiddenPaths)
+const isProjectHidden = (project: ProjectRecord) =>
+  projectFilters.isProjectHidden(project, store.state.hiddenPaths)
 
 const isProjectThirdParty = (project: ProjectRecord) =>
-  store.state.thirdPartyPaths.includes(project.path)
+  projectFilters.isProjectThirdParty(project, store.state.thirdPartyPaths)
 
 const getProjectDisplayName = (project: ProjectRecord) => {
   const scanDirectory = [...store.state.scanDirectories]
@@ -96,7 +98,11 @@ const filteredProjects = computed(() => {
     hiddenPaths: store.state.hiddenPaths,
     thirdPartyPaths: store.state.thirdPartyPaths
   }
-  return store.projects.filter((project) => projectMatchesFilters(project, getProjectDisplayName(project), filters))
+  const matchesCurrentFilters = (project: ProjectRecord) => {
+    const displayName = getProjectDisplayName(project)
+    return projectFilters.projectMatchesFilters(project, displayName, filters)
+  }
+  return store.projects.filter(matchesCurrentFilters)
 })
 
 const metricsProjectPaths = computed(() => filteredProjects.value.map((project) => project.path))
