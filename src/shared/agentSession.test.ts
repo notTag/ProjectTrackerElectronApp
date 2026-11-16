@@ -72,11 +72,11 @@ describe('agentResumeCommand', () => {
   })
 
   it('refuses a session id that is not a uuid', () => {
-    expect(() => agentResumeCommand(DEFAULT_AGENT, { sessionId: "'; rm -rf ~'", cwd: '/tmp' }, 'go')).toThrow()
+    expect(() => agentResumeCommand(DEFAULT_AGENT, { sessionId: "'; rm -rf ~'", cwd: '/tmp' }, 'go')).toThrow('no session to resume')
   })
 
   it('refuses an agent without resumeArgs', () => {
-    expect(() => agentResumeCommand(CODEX, { sessionId: SESSION_ID, cwd: '/tmp' }, 'go')).toThrow()
+    expect(() => agentResumeCommand(CODEX, { sessionId: SESSION_ID, cwd: '/tmp' }, 'go')).toThrow('cannot resume a session')
   })
 })
 
