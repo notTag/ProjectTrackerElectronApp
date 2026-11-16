@@ -790,6 +790,11 @@ export const useProjectsStore = defineStore('projects', {
       const unsubscribeProgress = projectTrackerApi.onScanProgress((progress) => {
         this.scanProgress = progress
       })
+      const markScanCancelled = () => {
+        this.error = null
+        this.notice = 'Scan cancelled.'
+        return false
+      }
       const scanDirectories = unique(extraDirectory ? [...this.state.scanDirectories, extraDirectory] : this.state.scanDirectories)
 
       try {
@@ -798,7 +803,7 @@ export const useProjectsStore = defineStore('projects', {
           this.state.hiddenPaths,
           this.state.thirdPartyPaths
         )
-        if (this.scanCancelRequested) return this.markScanCancelled()
+        if (this.scanCancelRequested) return markScanCancelled()
         if (options?.requireProjects && result.snapshot.projects.length === 0 && result.failures.length > 0) {
           this.error = `Scan failed for ${result.failures[0].path}: ${result.failures[0].message}`
           return false
@@ -814,7 +819,7 @@ export const useProjectsStore = defineStore('projects', {
             : `Scan found ${result.snapshot.projects.length} project${result.snapshot.projects.length === 1 ? '' : 's'}.`
         return true
       } catch (error) {
-        if (this.scanCancelRequested) return this.markScanCancelled()
+        if (this.scanCancelRequested) return markScanCancelled()
         this.error = error instanceof Error ? error.message : String(error)
         return false
       } finally {
@@ -830,12 +835,6 @@ export const useProjectsStore = defineStore('projects', {
       if (!this.scanning) return
       this.scanCancelRequested = true
       await projectTrackerApi.cancelScan()
-    },
-
-    markScanCancelled() {
-      this.error = null
-      this.notice = 'Scan cancelled.'
-      return false
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {

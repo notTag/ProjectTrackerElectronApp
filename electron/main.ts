@@ -555,9 +555,19 @@ const registerIpc = () => {
 
     const scan = new AbortController()
     activeScan = scan
+    // A cancelled walk can still be finishing an fs call after a newer scan starts;
+    // its progress must not show up in the newer scan.
     const sendProgress = (progress: ScanProgress) => {
-      if (!event.sender.isDestroyed()) event.sender.send('projects:scan-progress', progress)
+      const isCurrentScan = activeScan === scan
+      if (isCurrentScan && !event.sender.isDestroyed()) event.sender.send('projects:scan-progress', progress)
     }
+    // A reload drops the renderer's scanning state and its Cancel button, so a hung
+    // scan would otherwise block every later scan until restart.
+    const abortOnReload = (navigation: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+      const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
+      if (isPageLoad) scan.abort()
+    }
+    event.sender.on('did-start-navigation', abortOnReload)
     try {
       const result = await scanProjectDirectories(
         candidate.scanDirectories.map(normalizePath),
@@ -568,6 +578,7 @@ const registerIpc = () => {
       return toPlainJson(result)
     } finally {
       activeScan = null
+      if (!event.sender.isDestroyed()) event.sender.off('did-start-navigation', abortOnReload)
     }
   })
 

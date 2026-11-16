@@ -27,7 +27,7 @@ afterEach(() => {
   tempRoot = undefined
 })
 
-describe('project scanner failures', async () => {
+describe('project scanner failures', () => {
   it('a missing root becomes one failure and the other roots still scan', async () => {
     const root = makeTempRoot()
     makeProject(path.join(root, 'app'))
@@ -67,7 +67,7 @@ describe('project scanner failures', async () => {
   })
 })
 
-describe('project scanner on large trees', async () => {
+describe('project scanner on large trees', () => {
   it('finds projects four levels down and nothing deeper', async () => {
     const root = makeTempRoot()
     makeProject(path.join(root, 'a', 'b', 'c', 'd'))
@@ -102,6 +102,16 @@ describe('project scanner on large trees', async () => {
     expect(await projectNames([root])).toEqual(['monorepo'])
   })
 
+  it('matches markers in any case, like the case-insensitive filesystem does', async () => {
+    const root = makeTempRoot()
+    mkdirSync(path.join(root, 'rusty'))
+    writeFileSync(path.join(root, 'rusty', 'cargo.toml'), '')
+    mkdirSync(path.join(root, 'webby'))
+    writeFileSync(path.join(root, 'webby', 'Package.json'), '{}')
+
+    expect(await projectNames([root])).toEqual(['rusty', 'webby'])
+  })
+
   it('returns every project in a wide tree', async () => {
     const root = makeTempRoot()
     const projectCount = 500
@@ -115,15 +125,15 @@ describe('project scanner on large trees', async () => {
   })
 })
 
-describe('project scanner', async () => {
-  it('detects extensionless and extension README files consistently', async () => {
+describe('project scanner', () => {
+  it('detects extensionless and extension README files consistently', () => {
     expect(hasReadme(['README'])).toBe(true)
     expect(hasReadme(['readme.md'])).toBe(true)
     expect(hasReadme(['README.txt'])).toBe(true)
     expect(hasReadme(['read-me.md'])).toBe(false)
   })
 
-  it('normalizes common GitHub remote URL formats', async () => {
+  it('normalizes common GitHub remote URL formats', () => {
     expect(toGithubUrl('git@github.com:owner/repo.git')).toBe('https://github.com/owner/repo')
     expect(toGithubUrl('ssh://git@github.com/owner/repo.git')).toBe('https://github.com/owner/repo')
     expect(toGithubUrl('https://github.com/owner/repo.git')).toBe('https://github.com/owner/repo')

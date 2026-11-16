@@ -35,7 +35,10 @@ const SKIP_NAMES = new Set([
 
 const normalizePath = (value: string) => path.resolve(value).split(path.sep).join(path.posix.sep)
 
-const hasAnyMarker = (entries: Set<string>) => PROJECT_MARKERS.some((marker) => entries.has(marker))
+// Entry sets hold lower-cased names: the old existsSync checks matched any case on
+// case-insensitive APFS, and a rescan must not drop projects found that way.
+const hasAnyMarker = (lowerCaseEntries: Set<string>) =>
+  PROJECT_MARKERS.some((marker) => lowerCaseEntries.has(marker.toLowerCase()))
 
 export const hasReadme = (entries: string[]) => entries.some((entry) => /^readme(\.|$)/i.test(entry))
 
@@ -120,10 +123,8 @@ export const scanProjectDirectories = async (
     if (isInsideAny(normalized, normalizedHidden)) return
 
     let dirents: Dirent[]
-    let lastModifiedAt: string
     try {
       dirents = await readdir(directory, { withFileTypes: true })
-      lastModifiedAt = (await stat(directory)).mtime.toISOString()
     } catch (error) {
       failures.push({ path: normalized, message: errorMessage(error) })
       return
@@ -134,8 +135,18 @@ export const scanProjectDirectories = async (
     reportProgress(false)
 
     const entryNames = dirents.map((dirent) => dirent.name)
-    const entries = new Set(entryNames)
+    const lowerCaseEntryNames = entryNames.map((name) => name.toLowerCase())
+    const entries = new Set(lowerCaseEntryNames)
     if (hasAnyMarker(entries)) {
+      // Only projects need an mtime, so non-project folders skip the stat.
+      let directoryStat
+      try {
+        directoryStat = await stat(directory)
+      } catch (error) {
+        failures.push({ path: normalized, message: errorMessage(error) })
+        return
+      }
+      const lastModifiedAt = directoryStat.mtime.toISOString()
       projects.set(normalized, {
         path: normalized,
         name: getProjectName(directory, scanRoot),
@@ -165,7 +176,8 @@ export const scanProjectDirectories = async (
       let isDirectory = dirent.isDirectory()
       if (dirent.isSymbolicLink()) {
         try {
-          isDirectory = (await stat(next)).isDirectory()
+          const symlinkTargetStat = await stat(next)
+          isDirectory = symlinkTargetStat.isDirectory()
         } catch (error) {
           failures.push({ path: normalizePath(next), message: errorMessage(error) })
           continue

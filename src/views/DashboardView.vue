@@ -402,7 +402,7 @@ const renderMarkdown = (markdown: string | null) => {
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
       <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
-<span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
+      <span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
         <span>{{ scanProgressLabel }}</span>
         <span v-if="store.scanProgress" class="scan-progress-path">{{ store.scanProgress.currentPath }}</span>
       </span>
