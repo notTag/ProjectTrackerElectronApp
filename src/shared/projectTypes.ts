@@ -1548,12 +1548,19 @@ export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
 // from the same branch.
 export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
 
-export const GITHUB_UNREACHABLE_MESSAGE = 'GitHub is unreachable. You look offline; local boards and tickets still work.'
+export const GITHUB_UNREACHABLE_MESSAGE = 'Offline Mode'
 
 // Matched by substring because IPC rewraps main-process errors as
 // "Error invoking remote method '…': Error: <message>".
 export const isGithubUnreachableError = (error: unknown) =>
   error instanceof Error && error.message.includes(GITHUB_UNREACHABLE_MESSAGE)
+
+// What a GitHub failure shows the user: offline collapses to the bare label,
+// without the IPC wrapper text around it.
+export const githubErrorMessage = (error: unknown) => {
+  if (isGithubUnreachableError(error)) return GITHUB_UNREACHABLE_MESSAGE
+  return error instanceof Error ? error.message : String(error)
+}
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200
