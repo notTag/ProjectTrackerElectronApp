@@ -17,7 +17,9 @@ export default defineConfig({
   },
   test: {
     // Behavioral evals run real agents; they're opt-in via `bun run eval`.
-    exclude: [...configDefaults.exclude, 'evals/behavioral/**']
+    // .worktrees/ holds full checkouts of other branches; collecting them runs
+    // every suite once per worktree and hangs the run.
+    exclude: [...configDefaults.exclude, 'evals/behavioral/**', '.worktrees/**']
   },
   server: {
     host: '127.0.0.1',
