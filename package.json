@@ -1,6 +1,6 @@
 {
   "name": "project-tracker",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Native macOS Project Tracker desktop app",
   "author": "Project Tracker",
   "type": "module",
@@ -14,7 +14,8 @@
     "dist": "node scripts/check-release-env.mjs --notarize-only && bun run build && electron-builder --mac",
     "release": "node scripts/check-release-env.mjs && bun run build && electron-builder --mac --publish always",
     "start:prod": "node scripts/open-packaged-app.mjs",
-    "start:dev": "electron ."
+    "start:dev": "electron .",
+    "web": "vite build --mode web && tsc -p tsconfig.electron.json && node out/main/electron/web/server.js"
   },
   "dependencies": {
     "@nick_tag_tech/themes": "^0.1.2",

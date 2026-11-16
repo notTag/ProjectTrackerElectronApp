@@ -8,6 +8,9 @@ import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { useProjectsStore } from '@/stores/projects'
 import { useThemeStore } from '@/stores/theme'
 
+// Electron only. The web build leaves find out and the browser's own ⌘F works.
+const hasPageFind = Boolean(window.projectTracker?.findInPage)
+
 // Pull in writes from other processes when the window comes back to the front
 // or the main process's poll sees one. Skipped while the user is typing: a
 // fresh value for the field under the cursor would replace their unsaved text.
@@ -69,5 +72,5 @@ watch(
 
 <template>
   <RouterView />
-  <PageFind />
+  <PageFind v-if="hasPageFind" />
 </template>

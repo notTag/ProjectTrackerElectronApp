@@ -25,7 +25,9 @@ Row-level methods exist but only tests call them so far: `createTicket`, `update
 
 ## Outside writers
 
-Other processes write to the same file: a second app instance, the `sqlite3` CLI, agents updating tickets.
+Other processes write to the same file: a second app instance, the `sqlite3` CLI, agents updating tickets, the local web server (`electron/web/server.ts`).
+
+The web server is a second caller of `StateRepository`. It opens one instance per browser tab, not one per server: one shared instance would share one diff baseline, so a stale tab's `saveState` could write old values over another tab's edits. With one connection per tab, a write from one tab moves `data_version` for the others and the poll below picks it up.
 
 - WAL mode plus `busy_timeout = 5000`, so readers don't block the writer and a competing writer waits instead of failing. Writes use `BEGIN IMMEDIATE`.
 - `hasExternalChanges()` compares `PRAGMA data_version` with its value at the last read. The value only moves when another connection commits.

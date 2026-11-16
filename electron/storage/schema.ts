@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   agent_file_path TEXT NOT NULL,
   output_target TEXT NOT NULL DEFAULT '',
   orchestrator_prompt TEXT NOT NULL DEFAULT '',
+  orchestrator_file_path TEXT NOT NULL DEFAULT '',
+  orchestrator_prompt_override TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
@@ -103,6 +105,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   external_url TEXT,
   full_auto INTEGER NOT NULL DEFAULT 0,
   external_links_json TEXT,
+  images_json TEXT,
   move_to_lane_id TEXT,
   move_on_complete INTEGER NOT NULL DEFAULT 0,
   -- Owned by the triggers in CLOSED_AT_TRIGGERS_SQL, never written by the app.
@@ -161,6 +164,7 @@ export const ADDED_COLUMNS = [
   { table: 'projects', column: 'archived', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'closes_ticket', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'orchestrator_prompt_override', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'tickets', column: 'closed_at', definition: 'TEXT' },
   { table: 'tickets', column: 'version', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'agent_sets_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -171,7 +175,9 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'next_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
-  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' }
+  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' },
+  { table: 'swim_lanes', column: 'orchestrator_file_path', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'tickets', column: 'images_json', definition: 'TEXT' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by

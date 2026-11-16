@@ -33,7 +33,10 @@ describe('releaseEnvProblems', () => {
   })
 
   it('reports a missing token and missing credentials together', () => {
-    expect(releaseEnvProblems({})).toHaveLength(2)
+    expect(releaseEnvProblems({})).toEqual([
+      expect.stringContaining('No GitHub token'),
+      expect.stringContaining('No notarization credentials')
+    ])
   })
 
   it('leaves process.env untouched', () => {

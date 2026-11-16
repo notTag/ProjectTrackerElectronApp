@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf, ticketWorktreePath } from './ticketWorktree.js'
 
@@ -117,9 +117,20 @@ describe('ticket worktrees', () => {
     expect(baseRef).toBe('main')
   })
 
+  // TMPDIR can sit inside a checkout (sandboxed runs), so git would walk up into
+  // that repo. The ceiling stops the walk at tmpdir. ticketWorktree.ts copies
+  // process.env when it loads, so the module is re-imported after stubbing.
   it('says so when the project is not a git repository', async () => {
-    const notARepository = mkdtempSync(path.join(tmpdir(), 'not-a-repo-'))
-    await expect(repositoryRootOf(notARepository)).rejects.toThrow('git repository')
-    rmSync(notARepository, { recursive: true, force: true })
+    const realTmpdir = realpathSync(tmpdir())
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', realTmpdir)
+    vi.resetModules()
+    const isolated = await import('./ticketWorktree.js')
+    const notARepository = mkdtempSync(path.join(realTmpdir, 'not-a-repo-'))
+    try {
+      await expect(isolated.repositoryRootOf(notARepository)).rejects.toThrow('git repository')
+    } finally {
+      rmSync(notARepository, { recursive: true, force: true })
+      vi.unstubAllEnvs()
+    }
   })
 })

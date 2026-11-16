@@ -103,7 +103,9 @@ const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
   const normalizeLane = (lane: SwimLane): SwimLane => ({
     ...lane,
     outputTarget: lane.outputTarget ?? '',
-    orchestratorPrompt: lane.orchestratorPrompt ?? ''
+    orchestratorPrompt: lane.orchestratorPrompt ?? '',
+    orchestratorFilePath: lane.orchestratorFilePath ?? '',
+    orchestratorPromptOverride: lane.orchestratorPromptOverride ?? ''
   })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
@@ -151,7 +153,8 @@ const ticketFromRow = (row: Row): Ticket => ({
   moveOnComplete: asBool(row.move_on_complete),
   version: asText(row.version),
   agentId: asText(row.agent_id),
-  model: asNonEmptyText(row.model)
+  model: asNonEmptyText(row.model),
+  images: parseJson<Ticket['images']>(row.images_json, undefined)
 })
 
 const laneFromRow = (row: Row): SwimLane => ({
@@ -161,6 +164,8 @@ const laneFromRow = (row: Row): SwimLane => ({
     agentFilePath: String(row.agent_file_path),
     outputTarget: String(row.output_target),
     orchestratorPrompt: String(row.orchestrator_prompt),
+    orchestratorFilePath: String(row.orchestrator_file_path ?? ''),
+    orchestratorPromptOverride: String(row.orchestrator_prompt_override ?? ''),
     autoRunAgentId: asText(row.auto_run_agent_id),
     autoRunTerminalId: asText(row.auto_run_terminal_id),
     autoRunWorktrees: asBool(row.auto_run_worktrees),
@@ -219,7 +224,8 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   ticket.moveOnComplete ? 1 : 0,
   ticket.version ?? null,
   ticket.agentId ?? null,
-  ticket.model ?? ''
+  ticket.model ?? '',
+  jsonOrNull(ticket.images)
 ]
 
 export class StateRepository {
@@ -263,6 +269,12 @@ export class StateRepository {
       this.recordSchemaVersion()
       this.ensureUser()
     })
+  }
+
+  // The web server opens one repository per browser tab and closes it when the
+  // tab goes away; the desktop app keeps its one for the process lifetime.
+  close() {
+    this.db.close()
   }
 
   get snapshotsDirectory() {
@@ -422,6 +434,11 @@ export class StateRepository {
 
   private dataVersion(): number {
     return Number(this.select('PRAGMA data_version')[0].data_version)
+  }
+
+  // False until the first getState: a saveState then has nothing to diff against.
+  get hasBaseline(): boolean {
+    return this.baseline !== undefined
   }
 
   // Cheap enough to poll: a header check, no table reads.
@@ -647,21 +664,22 @@ export class StateRepository {
   private upsertLaneRow(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
-         orchestrator_poll_minutes, orchestrator_poll_active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
-         orchestrator_prompt = excluded.orchestrator_prompt,
+         orchestrator_prompt = excluded.orchestrator_prompt, orchestrator_prompt_override = excluded.orchestrator_prompt_override,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
          auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
          orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id,
-         orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active`,
+         orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
+         orchestrator_file_path = excluded.orchestrator_file_path`,
       [
         lane.id,
         projectPath,
@@ -670,6 +688,7 @@ export class StateRepository {
         lane.agentFilePath,
         lane.outputTarget ?? '',
         lane.orchestratorPrompt ?? '',
+        lane.orchestratorPromptOverride ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
@@ -683,7 +702,8 @@ export class StateRepository {
         lane.orchestratorModel ?? '',
         lane.nextLaneId ?? null,
         orchestratorPollMinutes(lane),
-        orchestratorPollActive(lane) ? 1 : 0
+        orchestratorPollActive(lane) ? 1 : 0,
+        lane.orchestratorFilePath ?? ''
       ]
     )
   }
@@ -917,8 +937,8 @@ export class StateRepository {
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
          worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, version,
-         agent_id, model, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         agent_id, model, images_json, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -931,7 +951,7 @@ export class StateRepository {
          created_at = ?, updated_at = ?, branch_name = ?, labels_json = ?, checklist_json = ?,
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
          pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?, external_links_json = ?, move_to_lane_id = ?, move_on_complete = ?,
-         version = ?, agent_id = ?, model = ?
+         version = ?, agent_id = ?, model = ?, images_json = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
