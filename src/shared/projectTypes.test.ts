@@ -13,6 +13,9 @@ import {
   orchestratorAgentChoice,
   agentShellCommand,
   orchestratorPrompt,
+  orchestratorPromptMissingTokens,
+  orchestratorPromptTemplate,
+  ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
@@ -1093,6 +1096,74 @@ describe('Auto Run orchestrator', () => {
 
     it('never ends on a bare prefix', () => {
       expect(orchestratorTabTitle({ name: '   ' })).toBe('AUTORUN-ORCHESTRATOR-LANE')
+    })
+  })
+
+  describe('orchestratorPromptTemplate', () => {
+    const allTokens = Object.values(ORCHESTRATOR_PROMPT_TOKENS)
+
+    it('names the lane and holds every launch-time token', () => {
+      const template = orchestratorPromptTemplate(inDev, context('ghostty', 'Ghostty'))
+      expect(template).toContain('"In Development" lane')
+      expect(template).toContain('still in the in-dev lane')
+      for (const token of allTokens) expect(template).toContain(token)
+      expect(template).not.toContain('osascript')
+    })
+
+    it('includes existing lane instructions', () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
+      const template = orchestratorPromptTemplate(steered, context('ghostty', 'Ghostty'))
+      expect(template).toContain('Lane instructions')
+      expect(template).toContain('Poll every 2 minutes.')
+    })
+
+    it('reports only the missing ticket tokens', () => {
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{ticket_numbers}}')).toEqual([])
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{lanes}}')).toEqual(['{{ticket_numbers}}'])
+      expect(orchestratorPromptMissingTokens('nothing')).toEqual(['{{tickets}}', '{{ticket_numbers}}'])
+    })
+  })
+
+  describe('orchestratorPrompt with an override', () => {
+    const ghostty = context('ghostty', 'Ghostty')
+    const generated = orchestratorPrompt(inDev, entries, ghostty)
+
+    it('filling the unedited template gives the generated prompt', () => {
+      for (const terminalContext of [ghostty, context('warp', 'Warp')]) {
+        const template = orchestratorPromptTemplate(inDev, terminalContext)
+        const overridden = { ...inDev, orchestratorPromptOverride: template }
+        expect(orchestratorPrompt(overridden, entries, terminalContext)).toBe(orchestratorPrompt(inDev, entries, terminalContext))
+      }
+    })
+
+    it('fills known tokens with launch data and leaves unknown ones', () => {
+      const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
+      const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
+      expect(filled).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
+      expect(filled).toContain('IN (12, 13)')
+      expect(filled).toContain('- done — Done — agent work: no')
+      expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
+      expect(filled).toContain('{{foo}}')
+      for (const token of Object.values(ORCHESTRATOR_PROMPT_TOKENS)) expect(filled).not.toContain(token)
+      expect(filled).not.toContain('You report only')
+    })
+
+    it('follows the launch terminal in an edited prompt', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+    })
+
+    it('does not expand a token that appears inside a ticket title', () => {
+      const tricky = [ticket(14, 'About {{lanes}}'), ticket(15, 'Other')].map((entry) =>
+        buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
+      )
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}}' }
+      expect(orchestratorPrompt(lane, tricky, ghostty)).toContain('#14 About {{lanes}}')
+    })
+
+    it('uses the generated prompt for a whitespace-only override', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '  \n\t ' }
+      expect(orchestratorPrompt(lane, entries, ghostty)).toBe(generated)
     })
   })
 

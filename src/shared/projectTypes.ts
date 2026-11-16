@@ -224,6 +224,9 @@ export interface SwimLane {
   // Appended, never substituted: the generated orchestrator prompt carries the
   // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
+  // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
+  // are filled in. Empty means the generated prompt. Optional so older lanes load.
+  orchestratorPromptOverride?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
@@ -806,25 +809,29 @@ const laneInstructionsSection = (lane: SwimLane): string => {
   return ['Lane instructions', LANE_INSTRUCTIONS_PRECEDENCE, laneInstructions].join('\n')
 }
 
+export const ORCHESTRATOR_PROMPT_TOKENS = {
+  tickets: '{{tickets}}',
+  ticketNumbers: '{{ticket_numbers}}',
+  lanes: '{{lanes}}',
+  terminal: '{{terminal}}'
+} as const
+
+type OrchestratorPromptParts = Record<keyof typeof ORCHESTRATOR_PROMPT_TOKENS, string>
+
+// Without these the orchestrator has nothing to watch.
+const REQUIRED_ORCHESTRATOR_TOKENS = [ORCHESTRATOR_PROMPT_TOKENS.tickets, ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]
+
 // The orchestrator only reports: it shares the DB with the app and the ticket
 // agents, so it is told never to write, and never to steer the other agents.
-export const orchestratorPrompt = (
+// Shared by the launch and by the lane modal's template, so the two can't drift.
+const renderOrchestratorPrompt = (
   lane: SwimLane,
-  entries: AutoRunLaunchEntry[],
+  parts: OrchestratorPromptParts,
   context: OrchestratorPromptContext
 ): string => {
-  const launches = entries.map((entry) => entry.launch)
-  const ticketLines = entries.map(({ ticket, launch }) => {
-    const tabTitle = launch.title ?? `#${launch.number}`
-    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
-  })
-  const laneLines = context.lanes.map(
-    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
-  )
-  const ticketNumbers = launches.map((launch) => launch.number).join(', ')
   const ticketSql = [
     'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
-    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
@@ -833,14 +840,14 @@ export const orchestratorPrompt = (
   return [
     `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
     'You report only. Never write to the database, never move tickets, never edit files, never answer or message the ticket agents.',
-    ['Watch these tickets until each one is done:', ...ticketLines].join('\n'),
-    ['Board lanes (id — name — agent work):', ...laneLines].join('\n'),
+    ['Watch these tickets until each one is done:', parts.tickets].join('\n'),
+    ['Board lanes (id — name — agent work):', parts.lanes].join('\n'),
     ['Ticket state (read-only):', ticketQuery].join('\n'),
     [
       'PR state per ticket (use the branch_name from the database when it differs from the one above):',
       'gh pr list --head <branch> --state all --json number,url,state'
     ].join('\n'),
-    tabSection(context),
+    parts.terminal,
     [
       'Loop:',
       '1. On start, then every 60 seconds (sleep 60), gather the state above.',
@@ -855,6 +862,57 @@ export const orchestratorPrompt = (
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+const orchestratorPromptParts = (
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): OrchestratorPromptParts => {
+  const ticketLines = entries.map(({ ticket, launch }) => {
+    const tabTitle = launch.title ?? `#${launch.number}`
+    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+  })
+  const laneLines = context.lanes.map(
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+  )
+  const ticketNumbers = entries.map(({ launch }) => launch.number).join(', ')
+  return {
+    tickets: ticketLines.join('\n'),
+    ticketNumbers,
+    lanes: laneLines.join('\n'),
+    terminal: tabSection(context)
+  }
+}
+
+const TOKEN_NAME_BY_TEXT = new Map<string, keyof OrchestratorPromptParts>(
+  Object.entries(ORCHESTRATOR_PROMPT_TOKENS).map(([name, token]) => [token, name as keyof OrchestratorPromptParts])
+)
+
+// One pass, so a ticket title that happens to contain a token is never
+// expanded a second time. Unknown {{…}} is left as typed.
+const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts): string =>
+  template.replace(/\{\{\w+\}\}/g, (token) => {
+    const partName = TOKEN_NAME_BY_TEXT.get(token)
+    return partName ? parts[partName] : token
+  })
+
+// The default prompt for the lane, with launch-time tokens in place of the
+// tickets, lanes and terminal section.
+export const orchestratorPromptTemplate = (lane: SwimLane, context: OrchestratorPromptContext): string =>
+  renderOrchestratorPrompt(lane, ORCHESTRATOR_PROMPT_TOKENS, context)
+
+export const orchestratorPromptMissingTokens = (text: string): string[] =>
+  REQUIRED_ORCHESTRATOR_TOKENS.filter((token) => !text.includes(token))
+
+export const orchestratorPrompt = (
+  lane: SwimLane,
+  entries: AutoRunLaunchEntry[],
+  context: OrchestratorPromptContext
+): string => {
+  const parts = orchestratorPromptParts(entries, context)
+  const override = lane.orchestratorPromptOverride ?? ''
+  if (!override.trim()) return renderOrchestratorPrompt(lane, parts, context)
+  return fillOrchestratorTokens(override, parts)
 }
 
 // One ticket needs no watcher: its own tab already says everything.
