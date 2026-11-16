@@ -1,0 +1,6 @@
+import { ref } from 'vue'
+
+// Module scope, not component setup: App.vue remounts BoardView on Board <-> Dashboard
+// switches, and the chosen width should survive that.
+// ponytail: app-session only; move to settings if it must survive restart.
+export const ticketModalExpanded = ref(false)

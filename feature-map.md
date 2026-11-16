@@ -343,6 +343,8 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Header:** `#N · Created <date> · Updated <date time>`
 
+**Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both modals and kept until the app restarts. Not shown in the graph side panel.
+
 **Fields** (each saves when changed or when it loses focus; every edit updates `updatedAt`):
 
 | Field | Notes |
