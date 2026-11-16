@@ -665,6 +665,30 @@ const fileNamePart = (value: string, fallback: string): string => {
 
 export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
 
+// Only unindented markers start a rule: indented sub-bullets and sub-steps stay
+// inside their parent rule, indentation intact.
+const BULLET_RULE = /^[-*]\s+(.*)$/
+// Numbered rules keep their number in the text: prompts refer back to "steps 1-5".
+const NUMBERED_RULE = /^\d+[.)]\s/
+
+// A lane prompt read as a list of rules: a bullet or numbered line starts a rule,
+// other lines continue the one before. Text above the first bullet is a rule too.
+export const promptRules = (prompt: string): string[] => {
+  const rules: string[] = []
+  for (const rawLine of prompt.split('\n')) {
+    const line = rawLine.trimEnd()
+    if (!line.trim()) continue
+    const bulletText = BULLET_RULE.exec(line)?.[1]
+    const startsRule = bulletText !== undefined || NUMBERED_RULE.test(line) || rules.length === 0
+    if (startsRule) rules.push(bulletText ?? line.trim())
+    else rules[rules.length - 1] += `\n${line}`
+  }
+  return rules
+}
+
+export const rulesToPrompt = (rules: string[]): string =>
+  rules.map((rule) => (NUMBERED_RULE.test(rule) ? rule : `- ${rule}`)).join('\n')
+
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
 // embedded quote cannot appear inside them at all — it has to close the string,
