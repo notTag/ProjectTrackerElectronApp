@@ -40,6 +40,10 @@ const load = async () => {
   loading.value = true
   loadError.value = null
   rows.value = []
+  if (props.projectPaths.length === 0) {
+    loading.value = false
+    return
+  }
   try {
     const metrics = await projectTrackerApi.getMetrics(props.projectPaths)
     if (request === latestRequest) rows.value = metrics
@@ -67,11 +71,21 @@ onMounted(() => {
   window.addEventListener('pointerdown', closeOnOutsideClick)
   if (readStoredOpen()) setOpen(true)
 })
-onBeforeUnmount(() => window.removeEventListener('pointerdown', closeOnOutsideClick))
+// Each load runs git/gh per project; search typing changes paths per key, so
+// wait for the filters to settle before pulling.
+const RELOAD_DEBOUNCE_MS = 300
+let reloadTimer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', closeOnOutsideClick)
+  clearTimeout(reloadTimer)
+})
 watch(
   () => props.projectPaths.join('\n'),
   () => {
-    if (open.value) void load()
+    clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => {
+      if (open.value) void load()
+    }, RELOAD_DEBOUNCE_MS)
   }
 )
 
@@ -114,6 +128,7 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
       </div>
       <p v-if="loading" class="field-hint">Loading…</p>
       <p v-else-if="loadError" class="metrics-error">{{ loadError }}</p>
+      <p v-else-if="projectPaths.length === 0" class="field-hint">No projects match the current filters.</p>
       <template v-else>
         <table class="metrics-table">
           <thead>

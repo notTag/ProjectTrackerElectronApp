@@ -12,6 +12,7 @@ import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
+import { isProjectHidden as isHidden, projectMatchesFilters, type ProjectFilters } from '@/shared/projectFilters'
 import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
@@ -70,8 +71,7 @@ const priorityRank: Record<ProjectPriority, number> = {
   none: 0
 }
 
-const isProjectHidden = (project: ProjectRecord) =>
-  project.status === 'hidden' || store.state.hiddenPaths.includes(project.path)
+const isProjectHidden = (project: ProjectRecord) => isHidden(project, store.state.hiddenPaths)
 
 const isProjectThirdParty = (project: ProjectRecord) =>
   store.state.thirdPartyPaths.includes(project.path)
@@ -86,23 +86,19 @@ const getProjectDisplayName = (project: ProjectRecord) => {
   return relativePath.includes('/') ? relativePath : project.name
 }
 
-const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
+const filteredProjects = computed(() => {
+  const filters: ProjectFilters = {
+    query: query.value,
+    statuses: selectedStatuses.value,
+    priorities: selectedPriorities.value,
+    thirdPartyOnly: activeMetric.value === 'thirdparty',
+    hiddenPaths: store.state.hiddenPaths,
+    thirdPartyPaths: store.state.thirdPartyPaths
+  }
+  return store.projects.filter((project) => projectMatchesFilters(project, getProjectDisplayName(project), filters))
+})
 
-const filteredProjects = computed(() =>
-  store.projects.filter((project) => {
-    const text = `${getProjectDisplayName(project)} ${project.name} ${project.path} ${project.notes}`.toLowerCase()
-    const matchesQuery = text.includes(query.value.toLowerCase())
-    const matchesStatus =
-      selectedStatuses.value.length === 0 || selectedStatuses.value.includes(project.status)
-    const matchesPriority =
-      selectedPriorities.value.length === 0 || selectedPriorities.value.includes(project.priority)
-    const matchesMetric = activeMetric.value !== 'thirdparty' || isProjectThirdParty(project)
-    const shouldShowHidden = selectedStatuses.value.includes('hidden')
-    return (
-      matchesQuery && matchesStatus && matchesPriority && matchesMetric && (shouldShowHidden || !isProjectHidden(project))
-    )
-  })
-)
+const metricsProjectPaths = computed(() => filteredProjects.value.map((project) => project.path))
 
 const sortedProjects = computed(() => {
   const direction = sortDirection.value === 'asc' ? 1 : -1
