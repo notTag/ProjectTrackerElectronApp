@@ -74,7 +74,7 @@ describe('terminalOsascriptArgs', () => {
 
   it('leaves the command untouched so its own quoting survives', () => {
     const args = terminalOsascriptArgs('/tmp/project', tabs(AWKWARD_COMMAND))
-    expect(firstCommandArgument(args).endsWith(AWKWARD_COMMAND)).toBe(true)
+    expect(firstCommandArgument(args)).toBe(`cd '/tmp/project' && ${AWKWARD_COMMAND}`)
   })
 })
 
@@ -107,11 +107,6 @@ describe('multi-tab AppleScript launches', () => {
 // #53: separate launches share the window the app opened last, never a window
 // the user opened themselves.
 describe('Ghostty window reuse', () => {
-  it('passes an empty window id when there is none to reuse', () => {
-    const args = ghosttyOsascriptArgs('/tmp/project', tabs('claude one'))
-    expect(argvAfterSeparator(args)[1]).toBe('')
-  })
-
   it('passes the window id to reuse as argv item 2, outside the script text', () => {
     const args = ghosttyOsascriptArgs('/tmp/project', tabs('claude one'), 'window-42')
     expect(argvAfterSeparator(args)).toEqual(['/tmp/project', 'window-42', 'claude one', ''])

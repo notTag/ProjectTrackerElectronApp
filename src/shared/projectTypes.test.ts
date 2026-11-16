@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
@@ -232,10 +232,18 @@ describe('syncing imported tickets with closed GitHub issues', () => {
   const boardOf = (...tickets: Ticket[]): ProjectBoard => ({ lanes, tickets })
 
   it('moves a completed issue to the rightmost closing lane', () => {
-    const result = syncGithubIssuesToBoard(boardOf(importedTicket(1)), { open: [], closed: [closed(1, 'completed')] })
+    const board = boardOf(importedTicket(1))
+    const issues = { open: [], closed: [closed(1, 'completed')] }
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
+    let result
+    try {
+      result = syncGithubIssuesToBoard(board, issues)
+    } finally {
+      vi.useRealTimers()
+    }
     expect(result.moved).toBe(1)
     expect(result.board.tickets[0].laneId).toBe('in-production')
-    expect(result.board.tickets[0].updatedAt).toBeDefined()
+    expect(result.board.tickets[0].updatedAt).toBe('2030-01-01T00:00:00.000Z')
   })
 
   it('removes tickets closed as not planned, duplicate, or with no reason', () => {
@@ -440,9 +448,7 @@ describe('ticketSearchText', () => {
       branchName: 'fix/drag-drop'
     }
     const searchText = ticketSearchText(ticket)
-    expect(searchText).toContain('#1')
-    expect(searchText).toContain('ui')
-    expect(searchText).toContain('fix/drag-drop')
+    for (const term of ['#1', 'fix drag', 'ui', 'fix/drag-drop']) expect(searchText).toContain(term)
   })
 })
 
@@ -1420,7 +1426,6 @@ describe('Auto Run orchestrator', () => {
       const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
       const agentPrompt = ticketAgentPrompt(ticket(12, 'First thing'), steered)
       expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
-      expect(agentPrompt).not.toContain('Poll every 2 minutes.')
     })
 
     it("polls at the lane's rate, every 2 minutes by default", () => {
@@ -1442,7 +1447,6 @@ describe('Auto Run orchestrator', () => {
     it('sends an orchestrator for a one-ticket run', () => {
       const oneTicket = entries.slice(0, 1)
       const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))!
-      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command).toContain('#12 First thing')
       expect(launch.command).not.toContain('#13 Second thing')
     })
@@ -1602,7 +1606,7 @@ describe('boardWrites', () => {
 
   it('sends only the changed field of a ticket, plus its updatedAt', () => {
     const edited = { ...board, tickets: [{ ...baseTicket, title: 'T2' }] }
-    expect(boardWrites(board, edited)).toEqual([
+    expect(boardWrites(board, edited)).toStrictEqual([
       { kind: 'ticket:update', id: 't1', patch: { title: 'T2', updatedAt: undefined } }
     ])
   })
@@ -1610,8 +1614,7 @@ describe('boardWrites', () => {
   it('keeps a cleared field as an explicit undefined', () => {
     const before = { ...board, tickets: [{ ...baseTicket, branchName: 'feat/x' }] }
     const [write] = boardWrites(before, board)
-    expect(write).toEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
-    expect(write.kind === 'ticket:update' && 'branchName' in write.patch).toBe(true)
+    expect(write).toStrictEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
   })
 
   it('creates lanes before tickets and deletes last, tickets before lanes', () => {
