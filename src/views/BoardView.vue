@@ -1,3 +1,10 @@
+<script lang="ts">
+// `ref` comes from the <script setup> import below; both blocks compile into one module.
+// Module scope, not setup: App.vue remounts BoardView on Board <-> Dashboard switches,
+// and the width choice should survive that. ponytail: app-session only; move to settings if it must survive restart.
+const ticketModalExpanded = ref(false)
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -1264,8 +1271,25 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="ticketDraft" class="modal-backdrop" @click.self="ticketDraft = null">
-    <section class="modal ticket-modal">
-      <p class="eyebrow">New ticket</p>
+    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }">
+      <div class="ticket-modal-header">
+        <p class="eyebrow">New ticket</p>
+        <button
+          type="button"
+          class="icon-button"
+          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
+          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
+          :aria-pressed="ticketModalExpanded"
+          @click="ticketModalExpanded = !ticketModalExpanded"
+        >
+          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        </button>
+      </div>
       <input
         v-model="ticketDraft.title"
         class="ticket-title-input"
@@ -1317,11 +1341,33 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @click.self="closeModals">
     <!-- Refresh before editing so fields include writes from other processes. -->
-    <section class="modal ticket-modal" @focusin="store.refresh()">
-      <p class="eyebrow">
-        #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
-        <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
-      </p>
+    <section
+      class="modal ticket-modal"
+      :class="{ expanded: ticketModalExpanded && boardView !== 'graph' }"
+      @focusin="store.refresh()"
+    >
+      <div class="ticket-modal-header">
+        <p class="eyebrow">
+          #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
+          <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
+        </p>
+        <button
+          v-if="boardView !== 'graph'"
+          type="button"
+          class="icon-button"
+          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
+          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
+          :aria-pressed="ticketModalExpanded"
+          @click="ticketModalExpanded = !ticketModalExpanded"
+        >
+          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        </button>
+      </div>
       <input
         class="ticket-title-input"
         :value="openTicket.title"
