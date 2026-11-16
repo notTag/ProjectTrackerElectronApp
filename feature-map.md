@@ -444,7 +444,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Save to Agent Orchestrator Markdown** button, under the Orchestrator prompt. Writes the text in the box (override or generated) with the same file rules as Save to Agent Markdown; default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, and the path lands in **Agent Orchestrator markdown file**. The text is stored with the same override rules as leaving the box, so saving the untouched default doesn't create an override.
 - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): where that save writes. The file is a copy for versioning and review; the launch prompt never reads or names it, so re-saving unchanged text stays a no-op. Ticket agents never see it.
 - **Orchestrator poll (minutes)** input with an unlabeled **Active** checkbox to its left, one row under the Orchestrator prompt; the checkbox sits centered on the input box (#84). Defaults: 2 minutes, Active.
-  - Hovering the checkbox shows "The Orchestrator agent will poll running agents every N minute(s)." or, when off, "…will not poll running agents."
+  - Hovering the checkbox shows "The Orchestrator agent will poll running agents every N minute(s)." or, when off, "Off: Auto Run launches no Orchestrator agent for this lane."
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
   - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.

@@ -72,7 +72,8 @@ import {
   UNASSIGNED_LANE_NAME,
   type SwimLane,
   type Ticket,
-  type TicketPatch
+  type TicketPatch,
+  plural
 } from '@/shared/projectTypes'
 
 const route = useRoute()
@@ -819,10 +820,9 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
 }
 
 const orchestratorPollTooltip = (lane: SwimLane): string => {
-  if (!orchestratorPollActive(lane)) return 'The Orchestrator agent will not poll running agents.'
-  const minutes = orchestratorPollMinutes(lane)
-  const unit = minutes === 1 ? 'minute' : 'minutes'
-  return `The Orchestrator agent will poll running agents every ${minutes} ${unit}.`
+  if (!orchestratorPollActive(lane)) return 'Off: Auto Run launches no Orchestrator agent for this lane.'
+  const pollInterval = plural(orchestratorPollMinutes(lane), 'minute')
+  return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
 const dropOnLane = async (laneId: string) => {
@@ -2002,7 +2002,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="saveOrchestratorPrompt(openLane, ($event.target as HTMLTextAreaElement).value)"
         />
         <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run while Active). {{tickets}}, {{ticket_numbers}},
+          Sent to the Auto Run orchestrator (runs on every Auto Run while the poll checkbox is on). {{tickets}}, {{ticket_numbers}},
           {{lanes}}, {{terminal}} are filled in at launch.
         </span>
         <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">

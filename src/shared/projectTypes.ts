@@ -1544,7 +1544,7 @@ export const oldestImportedCreatedAt = (board: ProjectBoard): string | undefined
   return importedCreatedAts.sort()[0]
 }
 
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 
 interface GithubSyncNoticeContext {
   openCount: number

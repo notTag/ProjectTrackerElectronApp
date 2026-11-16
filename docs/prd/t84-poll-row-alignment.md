@@ -1,7 +1,10 @@
 # PRD — Ticket #84: Align "Orchestrator poll (minutes)" and "Active" in the lane modal
 
 Branch: `t84-ticket-modal-view`
-Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t84`
+
+## Shipped (supersedes R1/R4 and D3's "no markup change")
+- After review the checkbox moved LEFT of the input and lost its "Active" text; its meaning is in a hover tooltip (`orchestratorPollTooltip`) plus `aria-label`.
+- The D3 `min-height: 40px` rule still does the centering. Line numbers below are as of `f9a3efb` and have since drifted.
 
 ## PRD needed?
 Barely. One CSS rule. Kept short so In Development has the verified root cause and the exact fix.
