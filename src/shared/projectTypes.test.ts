@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
+  githubErrorMessage,
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
@@ -1595,5 +1596,19 @@ describe('promptRules / rulesToPrompt', () => {
   it('maps an empty prompt to no rules and back', () => {
     expect(promptRules('  \n\n')).toEqual([])
     expect(rulesToPrompt([])).toBe('')
+  })
+})
+
+describe('githubErrorMessage', () => {
+  it('shows only the offline label for a wrapped unreachable error', () => {
+    const wrapped = new Error(
+      `Error invoking remote method 'ticket:fetch-pull-request': Error: ${GITHUB_UNREACHABLE_MESSAGE}`
+    )
+    expect(githubErrorMessage(wrapped)).toBe('Offline Mode')
+  })
+
+  it('passes other errors through', () => {
+    expect(githubErrorMessage(new Error('Repository not found on GitHub.'))).toBe('Repository not found on GitHub.')
+    expect(githubErrorMessage('boom')).toBe('boom')
   })
 })
