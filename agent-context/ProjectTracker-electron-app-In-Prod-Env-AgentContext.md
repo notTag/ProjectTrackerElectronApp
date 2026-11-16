@@ -1,0 +1,2 @@
+- Cross reference each ticket with their potential equivalent issue listed on github. If they are equivalent then update the github issue with relevant details and mark it as completed. 
+- Update the minor or patch fix version for all tickets in this lane. .

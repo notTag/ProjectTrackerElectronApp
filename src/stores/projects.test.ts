@@ -27,7 +27,9 @@ const api = vi.hoisted(() => ({
   autoRunLane: vi.fn(),
   runTicketAgent: vi.fn(),
   fetchProjectGithubIssues: vi.fn(),
-  fetchTicketPullRequest: vi.fn()
+  fetchTicketPullRequest: vi.fn(),
+  appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
+  terminalTabsAlive: vi.fn()
 }))
 
 const offlineError = new Error(
@@ -326,7 +328,8 @@ describe('Move to on completion', () => {
     await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
 
     expect(storedTicket(store)).toMatchObject({ laneId: 'dev', moveToLaneId: undefined, moveOnComplete: false })
-    expect(api.updateTicket).toHaveBeenCalledTimes(1)
+    // The first write is the running record; the result, move and disarm share the second.
+    expect(api.updateTicket).toHaveBeenCalledTimes(2)
     expect(saveProjectState).not.toHaveBeenCalled()
     expect(store.notice).toBe('Moved #7 to In Development.')
     expect(store.error).toBeNull()
@@ -368,29 +371,92 @@ describe('Move to on completion', () => {
   })
 })
 
-const storeWithProject = (path: string, githubUrl?: string) => {
-  const store = useProjectsStore()
-  const project: ProjectRecord = {
-    path,
-    name: 'app',
-    status: 'active',
-    priority: 'none',
-    notes: '',
-    source: 'first-party',
-    githubUrl,
-    hasGit: true,
-    hasPackageJson: true,
-    hasReadme: false,
-    lastScannedAt: '2026-01-01T00:00:00.000Z'
+const projectRecord = (path: string, githubUrl?: string, name = 'app'): ProjectRecord => ({
+  path,
+  name,
+  status: 'active',
+  priority: 'none',
+  notes: '',
+  source: 'first-party',
+  githubUrl,
+  hasGit: true,
+  hasPackageJson: true,
+  hasReadme: false,
+  lastScannedAt: '2026-01-01T00:00:00.000Z'
+})
+
+describe('refreshPullRequest', () => {
+  const PULL_REQUEST_URL = 'https://github.com/o/r/pull/9'
+  const SEEDED_UPDATED_AT = '2026-01-01T00:00:00.000Z'
+
+  const storeWithOpenPullRequest = () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    Object.assign(getBoard(state, PROJECT_PATH).tickets[0], {
+      pullRequestUrl: PULL_REQUEST_URL,
+      pullRequestState: 'open',
+      updatedAt: SEEDED_UPDATED_AT
+    })
+    const projects = [projectRecord(PROJECT_PATH, 'https://github.com/o/r')]
+    store.state = { ...state, snapshot: { ...state.snapshot, projects } }
+    return store
   }
-  store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects: [project] } }
+  const savedTicket = (store: ReturnType<typeof useProjectsStore>) => getBoard(store.state, PROJECT_PATH).tickets[0]
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('saves a PR state change without stamping updatedAt', async () => {
+    const mergedAt = '2026-01-05T00:00:00.000Z'
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'merged', mergedAt })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestState: 'merged', pullRequestMergedAt: mergedAt })
+    expect(savedTicket(store).updatedAt).toBe(SEEDED_UPDATED_AT)
+    const sentPatch = api.updateTicket.mock.calls[0][1]
+    expect(sentPatch).toMatchObject({ pullRequestState: 'merged', updatedAt: SEEDED_UPDATED_AT })
+  })
+
+  it('writes nothing when GitHub reports no change', async () => {
+    api.fetchTicketPullRequest.mockResolvedValue({ url: PULL_REQUEST_URL, state: 'open', mergedAt: undefined })
+    const store = storeWithOpenPullRequest()
+
+    await store.refreshPullRequest(PROJECT_PATH, savedTicket(store))
+
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('drops the answer when the URL changed while GitHub was asked', async () => {
+    const store = storeWithOpenPullRequest()
+    const pastedUrl = 'https://github.com/o/r/pull/10'
+    api.fetchTicketPullRequest.mockImplementation(async () => {
+      savedTicket(store).pullRequestUrl = pastedUrl
+      return { url: PULL_REQUEST_URL, state: 'merged', mergedAt: '2026-01-05T00:00:00.000Z' }
+    })
+
+    await store.refreshPullRequest(PROJECT_PATH, { ...savedTicket(store) })
+
+    expect(savedTicket(store)).toMatchObject({ pullRequestUrl: pastedUrl, pullRequestState: 'open' })
+    expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+})
+
+const storeWithProjects = (...projects: ProjectRecord[]) => {
+  const store = useProjectsStore()
+  store.state = { ...createSeedState(), snapshot: { ...createSeedState().snapshot, projects } }
   return store
 }
+
+const storeWithProject = (path: string, githubUrl?: string, name = 'app') =>
+  storeWithProjects(projectRecord(path, githubUrl, name))
 
 describe('autoPullGithubIssues', () => {
   // The pulled-once set lives for the module's lifetime (one app launch), so
   // each test uses its own project path.
-
   const issue = { number: 3, title: 'Crash on save', body: '', htmlUrl: 'https://github.com/o/r/issues/3' }
 
   beforeEach(() => {
@@ -401,7 +467,7 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('pulls once per project, however often the board is opened', async () => {
-    api.fetchProjectGithubIssues.mockResolvedValue([issue])
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [issue], closed: [] })
     const store = storeWithProject('/code/pull-once', 'https://github.com/o/r')
 
     await Promise.all([store.autoPullGithubIssues('/code/pull-once'), store.autoPullGithubIssues('/code/pull-once')])
@@ -410,7 +476,7 @@ describe('autoPullGithubIssues', () => {
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     const importedTitles = getBoard(store.state, '/code/pull-once').tickets.map((ticket) => ticket.title)
     expect(importedTitles).toEqual(['Crash on save'])
-    expect(store.notice).toBe('Imported 1 issue.')
+    expect(store.notice).toBe('Imported 1 issue into app.')
   })
 
   it('skips a project without a repo, with no error banner', async () => {
@@ -423,13 +489,64 @@ describe('autoPullGithubIssues', () => {
   })
 
   it('stays silent when nothing new arrived', async () => {
-    api.fetchProjectGithubIssues.mockResolvedValue([])
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [], closed: [] })
     const store = storeWithProject('/code/nothing-new', 'https://github.com/o/r')
 
     await store.autoPullGithubIssues('/code/nothing-new')
 
     expect(store.notice).toBeNull()
     expect(api.createTicket).not.toHaveBeenCalled()
+  })
+
+  it('omits the closed-issue cutoff when nothing is imported yet', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [], closed: [] })
+    const store = storeWithProject('/code/no-imports', 'https://github.com/o/r')
+
+    await store.pullGithubIssues('/code/no-imports')
+
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledWith('https://github.com/o/r', undefined)
+  })
+
+  it('moves and removes closed imports and reports both', async () => {
+    const path = '/code/sync-closed'
+    const store = storeWithProject(path, 'https://github.com/o/r')
+    const imported = (issueNumber: number): Ticket => ({
+      id: `t${issueNumber}`,
+      number: issueNumber,
+      laneId: 'github-issues',
+      title: `Issue ${issueNumber}`,
+      description: '',
+      createdAt: '2026-03-01T00:00:00.000Z',
+      externalId: `github:${issueNumber}`
+    })
+    const board = {
+      lanes: [
+        { id: 'github-issues', name: 'GitHub Issues', agentPrompt: '', agentFilePath: '' },
+        { id: 'in-production', name: 'In Prod Env', agentPrompt: '', agentFilePath: '', closesTicket: true }
+      ],
+      tickets: [imported(1), imported(2)]
+    }
+    store.state = { ...store.state, boards: { [path]: board } }
+    const closedIssue = (issueNumber: number, stateReason: string) => ({
+      number: issueNumber,
+      title: '',
+      body: '',
+      htmlUrl: '',
+      stateReason
+    })
+    api.fetchProjectGithubIssues.mockResolvedValue({
+      open: [],
+      closed: [closedIssue(1, 'completed'), closedIssue(2, 'not_planned')]
+    })
+
+    await store.pullGithubIssues(path)
+
+    expect(api.fetchProjectGithubIssues).toHaveBeenCalledWith('https://github.com/o/r', '2026-03-01T00:00:00.000Z')
+    expect(api.updateTicket).toHaveBeenCalledWith('t1', expect.objectContaining({ laneId: 'in-production' }))
+    expect(api.deleteTicket).toHaveBeenCalledWith('t2')
+    const tickets = getBoard(store.state, path).tickets
+    expect(tickets.map((ticket) => [ticket.id, ticket.laneId])).toEqual([['t1', 'in-production']])
+    expect(store.notice).toBe('app: Moved 1 to In Prod Env, removed 1 closed.')
   })
 
   it('shows a failed pull as an error and does not retry it', async () => {
@@ -439,7 +556,7 @@ describe('autoPullGithubIssues', () => {
     await store.autoPullGithubIssues('/code/offline')
     await store.autoPullGithubIssues('/code/offline')
 
-    expect(store.error).toBe('GitHub rate limit exceeded')
+    expect(store.error).toBe('app: GitHub rate limit exceeded')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
     expect(store.githubLoading['/code/offline']).toBe(false)
   })
@@ -451,12 +568,12 @@ describe('autoPullGithubIssues', () => {
     await store.autoPullGithubIssues('/code/missing')
     await store.autoPullGithubIssues('/code/missing')
 
-    expect(store.error).toBe('Repository not found on GitHub.')
+    expect(store.error).toBe('app: Repository not found on GitHub.')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(1)
   })
 
   it('stays silent when GitHub is unreachable and pulls again on the next open', async () => {
-    api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce([issue])
+    api.fetchProjectGithubIssues.mockRejectedValueOnce(offlineError).mockResolvedValueOnce({ open: [issue], closed: [] })
     const store = storeWithProject('/code/unreachable', 'https://github.com/o/r')
 
     await store.autoPullGithubIssues('/code/unreachable')
@@ -465,7 +582,46 @@ describe('autoPullGithubIssues', () => {
 
     await store.autoPullGithubIssues('/code/unreachable')
     expect(api.fetchProjectGithubIssues).toHaveBeenCalledTimes(2)
-    expect(store.notice).toBe('Imported 1 issue.')
+    expect(store.notice).toBe('Imported 1 issue into app.')
+  })
+
+  it('names the pulled project, not whichever board is open when the fetch resolves', async () => {
+    let resolveFetch: (issues: { open: (typeof issue)[]; closed: [] }) => void = () => undefined
+    api.fetchProjectGithubIssues
+      .mockReturnValueOnce(new Promise((resolve) => (resolveFetch = resolve)))
+      .mockResolvedValueOnce({ open: [], closed: [] })
+    const store = storeWithProjects(
+      projectRecord('/code/board-a', 'https://github.com/o/a', 'board-a'),
+      projectRecord('/code/board-b', 'https://github.com/o/b', 'board-b')
+    )
+
+    const pullForA = store.autoPullGithubIssues('/code/board-a')
+    // the user switches to board B while A's fetch is in flight
+    await store.autoPullGithubIssues('/code/board-b')
+    resolveFetch({ open: [issue], closed: [] })
+    await pullForA
+
+    expect(store.notice).toBe('Imported 1 issue into board-a.')
+  })
+
+  it('names the project when saving the pulled issues fails', async () => {
+    api.fetchProjectGithubIssues.mockResolvedValue({ open: [issue], closed: [] })
+    api.createLane.mockRejectedValue(new Error('disk full'))
+    api.createTicket.mockRejectedValue(new Error('disk full'))
+    const store = storeWithProject('/code/save-fails', 'https://github.com/o/r')
+
+    await store.pullGithubIssues('/code/save-fails')
+
+    expect(store.error).toBe('app: disk full')
+    expect(store.notice).toBeNull()
+  })
+
+  it('names the project when a manual pull has no repo', async () => {
+    const store = storeWithProject('/code/manual-no-repo')
+
+    await store.pullGithubIssues('/code/manual-no-repo')
+
+    expect(store.error).toBe('app has no linked GitHub repository.')
   })
 })
 
@@ -575,5 +731,129 @@ describe('per-entity writes', () => {
     await store.scan('/code')
 
     expect(saveProjectState).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('mid-session failure recovery', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockEntityWrites()
+    api.autoRunLane.mockResolvedValue({ worktreePaths: [] })
+  })
+  const storedRun = (store: ReturnType<typeof useProjectsStore>) => store.board(PROJECT_PATH).tickets[0].agentRun
+
+  it('records a running headless run with its session id before the agent starts', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    const ticket = store.board(PROJECT_PATH).tickets[0]
+    let runDuringAgent: ReturnType<typeof storedRun>
+    api.runTicketAgent.mockImplementation(async () => {
+      runDuringAgent = storedRun(store)
+      return { output: 'ok', succeeded: true, attempts: 2 }
+    })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude-code', 'prompt')
+
+    expect(runDuringAgent!).toMatchObject({ status: 'running', mode: 'headless', laneId: 'dev', cwd: PROJECT_PATH })
+    const sessionId = api.runTicketAgent.mock.calls[0][4]
+    expect(runDuringAgent!.sessionId).toBe(sessionId)
+    expect(storedRun(store)).toMatchObject({ status: 'succeeded', succeeded: true, attempts: 2, sessionId })
+  })
+
+  it('records each Auto Run tab as running before it opens, then points it at its worktree', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    const ticket = store.board(PROJECT_PATH).tickets[0]
+    let runDuringLaunch: ReturnType<typeof storedRun>
+    api.autoRunLane.mockImplementation(async () => {
+      runDuringLaunch = storedRun(store)
+      return { worktreePaths: ['/code/app/.worktrees/t7'] }
+    })
+    const launch = { number: 7, branchName: 't7-add', command: 'claude' }
+
+    await store.autoRunLane(PROJECT_PATH, 'dev', 'ghostty', 'Ghostty', [
+      { ticket, launch, agentId: 'claude-code', sessionId: '3b241101-e2bb-4255-8caf-4136c566a962' }
+    ], true)
+
+    expect(runDuringLaunch!).toMatchObject({ status: 'running', mode: 'terminal', terminalId: 'ghostty' })
+    expect(storedRun(store)).toMatchObject({ status: 'running', cwd: '/code/app/.worktrees/t7' })
+  })
+
+  it('marks a run whose tab is gone after a restart as interrupted, and says full auto paused', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('prd')
+    const ticket = getBoard(state, PROJECT_PATH).tickets[0]
+    ticket.agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'prd',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'ghostty',
+      seenAt: '2026-01-02T11:01:00.000Z'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['gone'])
+
+    await store.reconcileAgentRuns()
+
+    expect(api.terminalTabsAlive).toHaveBeenCalledWith('ghostty', ['#7 Add the thing'])
+    expect(storedRun(store)).toMatchObject({ status: 'interrupted', succeeded: false, seenAt: undefined })
+    expect(store.notice).toBe('Full auto paused on #7: agent interrupted')
+    expect(api.autoRunLane).not.toHaveBeenCalled()
+  })
+
+  it('looks for the title the tab opened with, not the ticket\'s current title', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    getBoard(state, PROJECT_PATH).tickets[0].agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'dev',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'terminal',
+      tabTitle: '#7 Old title'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['alive'])
+
+    await store.reconcileAgentRuns()
+
+    expect(api.terminalTabsAlive).toHaveBeenCalledWith('terminal', ['#7 Old title'])
+  })
+
+  it('offers no Resume for a headless run whose call never reached the agent', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    api.runTicketAgent.mockRejectedValue(new Error('Unknown agent'))
+
+    await store.runTicketAgent(PROJECT_PATH, store.board(PROJECT_PATH).tickets[0], 'claude-code', 'prompt')
+
+    expect(storedRun(store)).toMatchObject({ status: 'failed', sessionId: undefined })
+  })
+
+  it('leaves a run whose tab is still open', async () => {
+    const store = useProjectsStore()
+    const state = stateWithTicketIn('dev')
+    getBoard(state, PROJECT_PATH).tickets[0].agentRun = {
+      at: '2026-01-02T11:00:00.000Z',
+      startedAt: '2026-01-02T11:00:00.000Z',
+      laneId: 'dev',
+      output: '',
+      status: 'running',
+      mode: 'terminal',
+      terminalId: 'ghostty'
+    }
+    store.state = state
+    api.terminalTabsAlive.mockResolvedValue(['alive'])
+
+    await store.reconcileAgentRuns()
+
+    expect(storedRun(store)?.status).toBe('running')
+    expect(api.updateTicket).not.toHaveBeenCalled()
   })
 })

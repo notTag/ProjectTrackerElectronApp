@@ -27,7 +27,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 | Menu | Items |
 |------|-------|
 | Project Tracker | About, Services, Hide, Hide Others, Show All, Quit |
-| File | Close |
+| File | Back Up Database Now (reveals the new snapshot in Finder), Show Backups in Finder, Close |
 | Edit | Undo, Redo, Cut, Copy, Paste, Select All |
 | View | Reload, Force Reload, Toggle DevTools, Reset Zoom, Zoom In, Zoom Out, Toggle Full Screen |
 | Window | Minimize, Zoom, Bring All to Front |
@@ -109,6 +109,7 @@ From left to right:
 | **Theme** picker | See 1.5 |
 | **Add** | Opens the native folder dialog, adds the chosen folder to the scan directories, then runs a full scan. Disabled while a scan is running |
 | **Dirs** | Shows or hides the Scan directories panel (2.2) |
+| **📊 Metrics** | Popover table for every project in the current list (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. **↻** pulls fresh numbers. Its open state is remembered per view |
 | **Scan** / **Scanning...** | Rescans every scan directory. Disabled while scanning or when there are no scan directories. Tooltip: "A '.git' must be present in order for the project to appear." (see 5) |
 
 ### 2.2 Scan directories panel (toggled by Dirs)
@@ -143,6 +144,8 @@ Eight clickable counters. Clicking a tile applies its filter, and clicking it ag
 | Hidden | status hidden or path in the hidden list | sets the status filter to Hidden, which shows the hidden projects |
 
 The selected tile is highlighted. Changing a filter by hand in the toolbar deselects the tile.
+
+**Active** is selected when the Dashboard opens, and again each time you come back from a board, since the view remounts.
 
 ### 2.5 Toolbar (search, filter, sort)
 
@@ -180,7 +183,7 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
     - ★ stars and ⑂ forks
     - "pushed <date>"
   - GitHub errors say what to do: private repo with no token, token rejected, rate limited, other HTTP failure.
-  - **Offline**: every local feature keeps working. Manual GitHub actions say "GitHub is unreachable…"; background pulls on board open (issues, PR states) stay silent and retry on the next board open.
+  - **Offline**: every local feature keeps working. An "Offline Mode" badge shows in the header bar while the network is down. Manual GitHub actions say "Offline Mode"; background pulls on board open (issues, PR states) stay silent and retry on the next board open.
 - Clicking anywhere else on the card expands or collapses it. Escape collapses it.
 
 #### Expanded card, Details tab
@@ -196,6 +199,12 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
 - Reads the first `README*` file in the project folder, ignoring case. It's loaded once and kept for the session.
 - States: "Loading README...", an error message, "No README found.", or the rendered file with its filename above it.
 - A small built-in renderer handles headings (#, ## and ###), bullet lists, fenced code blocks, inline code, bold, italics and http(s) links. Output is sanitized with DOMPurify.
+
+#### Expanded card, Metrics tab
+
+- `src/components/CardMetrics.vue`, loaded each time the card expands.
+- Bar charts for **Tickets closed** and **PRs merged** per time window (plain CSS bars). Without a closing lane it says "No lane counts as closed — set one in lane settings"; without a repo or on a failed fetch it says why.
+- Tiles for **PRs open** and **Agents running** ("—" when processes can't be listed), and an "Updated <time>" line.
 
 #### Empty state
 
@@ -235,12 +244,14 @@ From left to right:
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
 | **⚙ Display** | Opens the Display settings modal (3.5) |
+| **📊 Metrics** | The same popover as the Dashboard's (2.1), for this project only |
 
 ### 3.2 Notices and errors
 
 See 1.7. Board notices include:
 
-- "Imported N issues (M already on the board)."
+- "Imported N issues into X (M already on the board)." Pull results and pull errors ("X: <message>") name the project, so a pull that finishes after you switch boards isn't mistaken for the open board's.
+- "Imported N issues into X, moved N to <lane>, removed N closed, kept N closed with local work." (only non-zero parts); a sync with no imports reads "X: Moved N to <lane>, …"
 - "Auto Run opened N tabs in X."
 - "Agent running on #N…" and "Agent finished #N."
 - "Running the agent command in X."
@@ -250,6 +261,8 @@ See 1.7. Board notices include:
 From left to right:
 
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
+  - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
+  - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
 - **All swim lanes** select: limits the board to a single column.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
@@ -268,6 +281,7 @@ From left to right:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
+- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while the lane filter shows a single column.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
 
@@ -281,12 +295,15 @@ From left to right:
   - **Labels** as chips
   - **☑ done/total** checklist progress
   - **⑂ branch**
+  - **⌂ worktree** folder name (full path on hover)
   - **v1.4.0** semantic version
+  - **PR #N ↗** link, with a dot for the PR's state (open, draft, merged, closed). Clicking it opens the PR without opening the ticket
+- **Agent run badge**: running, ✓ succeeded, failed, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
 
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
-- **Columns**: checkboxes to show or hide No status and GitHub Issues.
+- **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
@@ -332,6 +349,11 @@ In graph view this opens as a side panel instead of a centered modal.
 | Version | Semantic version, `MAJOR.MINOR.PATCH` with optional `-prerelease` / `+build`. A leading `v` is dropped. Anything else shows "Use MAJOR.MINOR.PATCH, like 1.4.0" and isn't saved. Cleared when left empty |
 | GitHub PR | URL input. An **Open pull request ↗** link appears only for absolute http(s) URLs |
 
+**Merge Request**
+
+- A state pill (open, draft, merged, closed, or none), "Merged <date time>" for merged PRs, a link to the PR, and a **Refresh from GitHub** button.
+- State comes from GitHub: a PR with `merged_at` is merged, otherwise closed or open, and draft only while open. Opening a board refreshes tickets that have a branch or PR URL and whose PR isn't settled yet.
+
 **External Links**
 
 - Any number of extra links per ticket (design docs, Figma, Slack threads, related issues). Stored as `external_links_json` on the ticket row.
@@ -349,7 +371,7 @@ In graph view this opens as a side panel instead of a centered modal.
 **Agent completion**
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
-- **Model** input (placeholder "CLI default"), shown only for agents that take a model (Claude Code `--model`, Codex and opencode `-m`; not Hermes). Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
+- **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
 - **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it.
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
@@ -362,6 +384,10 @@ In graph view this opens as a side panel instead of a centered modal.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
   - It keeps showing as running if you leave the board and come back.
+  - Each run starts a fresh Claude Code session under an id the app picks, saved on the ticket before the agent starts.
+  - A network drop, timeout, overload, rate limit or 5xx retries up to 2× (after 30 s, then 2 min), resuming the same session. A notice says "retrying in…". A missing CLI or the 30-minute timeout never retries.
+- **⏯ Resume** (next to ▶ Run, Claude Code only): shown when the last run in this lane was interrupted or failed. Opens a terminal tab in the directory the session started in, running `claude --resume <id>` with a "you were interrupted, check git status and continue" prompt. ▶ Run still starts over clean.
+- **Interrupted** badge (amber ⏸) on the card: a run still marked running whose app process died (headless, after an app restart) or whose terminal tab is gone (checked at launch and every 60 s; Terminal, iTerm2 and Ghostty by tab title, Warp by age only, after 45 min). Auto Run and full-auto tabs are tracked the same way. An interrupted full-auto ticket doesn't hand off; a notice says "Full auto paused on #N: agent interrupted".
 - **⌁ Run in <Open In app>**:
   - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
   - Editors open the folder and put the command on the clipboard.
@@ -391,9 +417,15 @@ In graph view this opens as a side panel instead of a centered modal.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
+- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
+  - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
+  - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
+  - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
+  - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
-  - **Agent** select, plus **Model** for agents that take one. Full auto handoffs into the lane use both.
-  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model**: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
+  - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
+  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
 - **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
@@ -404,23 +436,33 @@ In graph view this opens as a side panel instead of a centered modal.
 
 ### 3.10 GitHub issue import (⇣ Pull issues)
 
+- Opening a board with a GitHub repo pulls automatically, once per project per app launch (`autoPulledProjects` in `projects.ts`). The button runs the same pull on demand.
 - Fetches open issues, up to 5 pages of 100. Pull requests are skipped.
 - The first import creates a **GitHub Issues** lane at the far left.
 - Each issue becomes a ticket:
   - title from the issue title, description from the issue body
   - `externalId` set to `github:<n>`, and a link back to the issue
 - Running it again is safe: issues already on the board are skipped, and edits to imported tickets are never overwritten.
+- Each pull (manual or the auto pull on board open) also syncs imported tickets with GitHub's closed state:
+  - closed as completed → moved to the rightmost lane that closes tickets; stays put if no lane does or it's already there
+  - closed for any other reason (not planned, duplicate, none) → removed from the board, unless the ticket has a worktree or PR, then kept and reported
+  - still open, reopened, or missing from GitHub → untouched
+  - closed issues are fetched with `since` = the oldest imported ticket's creation time; no imported tickets → no closed fetch
+- Nothing added, moved or removed → no DB write; the auto pull stays silent.
 
 ### 3.11 Auto Run (▶ on a lane)
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
 - Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
+- Tab titles are `#N <title>` (`ticketTabTitle`), the same for ⌁ Run in. The orchestrator tab matches tickets by that `#N ` prefix.
+- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name 'Ticket #N'` (`ticketSessionName`).
 - How each terminal does it:
   - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and, when 2+ tickets run, the orchestrator agent and model.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
+- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
@@ -458,6 +500,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - SQLite through the built-in `node:sqlite`, at `~/Library/Application Support/Project Tracker/project-tracker.sqlite`.
 - WAL mode with a 5-second busy timeout, so other processes can read and write while the app is open.
+- Snapshots in `snapshots/` next to the DB, via `VACUUM INTO`: one on launch when the newest is over 24h old (before migrations), plus File → Back Up Database Now. Newest 7 kept. A failed snapshot logs a warning and startup continues. Restore steps in `README.md`.
 - Tables: `users`, `projects`, `project_members`, `swim_lanes`, `tickets`, `project_paths`, `user_paths`, `user_settings`, `schema_meta`.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
@@ -511,6 +554,21 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
+- `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+
+### 4.7 Lane prompt evals — `evals/`
+
+- Static tier, part of `bun run test`:
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
+- Behavioral tier, `bun run eval`:
+  - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
+  - The prompt gets the temp DB path through `TicketPromptContext.databasePath` plus an appended system prompt, so the agent never writes to the real DB.
+  - Graded on outcome (end lane, move count from a SQLite trigger, required fields, stub calls), then by an LLM judge (`evals/judge.ts`) on the case's rubric using the agent's tool-call trajectory.
+  - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
+  - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
+  - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
+  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
 
 ---
 

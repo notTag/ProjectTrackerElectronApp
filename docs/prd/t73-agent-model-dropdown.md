@@ -37,6 +37,7 @@ The agent-id expression each field passes to `agentTakesModel` is exactly the on
 - D3. Native `<input list>` + `<datalist>`, not `<select>`. The browser shows a dropdown of suggestions and free text still works (new models, custom agents, opencode `provider/model`). No new dependency
 - D4. One `<datalist id="agent-models-<agentId>">` per agent in `availableAgents` that has `models`, rendered once in the template. Each model input gets `:list="agentModelListId(agentId)"`, which returns the id or `undefined` when the agent has no models. Five `:list` bindings, one helper, no new component
 - D5. Empty value = CLI default (unchanged). Orchestrator without its own agent keeps the "Same as ticket model" placeholder
+- D6. Supersedes D3/D4 (PR #91). Chromium filters a datalist by the text already in the field, so a saved model hid every other option. `src/components/ModelField.vue` is a `<select>`: CLI default, the agent's `models`, a saved unlisted id, then `Custom…` for free text. It takes the effective `agent` and is always shown; an agent without `modelArgs` (Hermes) gets a disabled "No models configured"
 
 ## Requirements
 - R1. `projectTypes.ts`: add `models?: string[]` to `Agent` + update the doc comment; add `models` to `DEFAULT_AGENT`, `CODEX_AGENT`, `OPENCODE_AGENT`

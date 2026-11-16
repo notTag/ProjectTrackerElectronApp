@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 
 import type {
+  AgentRetryEvent,
   AutoRunTicketLaunch,
-  GithubIssue,
+  GithubIssueLists,
   LaneWritePatch,
   ProjectGithubData,
   ProjectMetrics,
@@ -12,6 +13,7 @@ import type {
   PullRequestStatus,
   ScanResult,
   SwimLane,
+  TabLiveness,
   TerminalTab,
   Ticket,
   TicketWritePatch
@@ -59,7 +61,16 @@ interface ProjectTrackerElectronApi {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ): Promise<{ worktreePaths: string[] }>
-  runTicketAgent(path: string, agentId: string, prompt: string, model?: string): Promise<{ succeeded: boolean; output: string }>
+  runTicketAgent(
+    path: string,
+    agentId: string,
+    prompt: string,
+    model?: string,
+    sessionId?: string
+  ): Promise<{ succeeded: boolean; output: string; attempts?: number }>
+  onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void
+  appStartedAt(): Promise<string>
+  terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   saveLaneAgentMarkdown(
     projectPath: string,
@@ -68,7 +79,7 @@ interface ProjectTrackerElectronApi {
     content: string
   ): Promise<{ filePath: string; appended: boolean }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
-  fetchProjectGithubIssues(githubUrl: string): Promise<GithubIssue[]>
+  fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>
   fetchTicketPullRequest(githubUrl: string, branchName: string, pullRequestUrl?: string): Promise<PullRequestStatus | null>
   setNativeTheme(type: 'light' | 'dark'): Promise<void>

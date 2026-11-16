@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createSeedState,
@@ -12,7 +12,14 @@ import {
   type ProjectTrackerState
 } from '../../src/shared/projectTypes.js'
 import { SCHEMA_SQL } from './schema.js'
-import { DATABASE_FILE_NAME, LEGACY_BACKUP_FILE_NAME, StateRepository } from './stateRepository.js'
+import {
+  DATABASE_FILE_NAME,
+  LEGACY_BACKUP_FILE_NAME,
+  isSnapshotFileName,
+  SNAPSHOT_RETENTION_COUNT,
+  SNAPSHOTS_DIRECTORY_NAME,
+  StateRepository
+} from './stateRepository.js'
 
 const createdUserDataPaths: string[] = []
 
@@ -40,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini' }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -128,6 +135,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].fullAuto).toBe(false)
     expect(board?.lanes[1].agentSetsVersion).toBe(true)
     expect(board?.lanes[0].agentSetsVersion).toBe(false)
+    expect(board?.lanes[1]).toMatchObject({ orchestratorPollMinutes: 5, orchestratorPollActive: false })
+    expect(board?.lanes[0]).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
     expect(board?.tickets[0].version).toBe('1.4.0-rc.1')
     expect(board?.tickets[1].version).toBeUndefined()
     expect(board?.tickets[0].fullAuto).toBe(true)
@@ -209,6 +218,19 @@ describe('StateRepository', () => {
     const reopened = reopenedBoard(userDataPath, projectPath)
     expect(reopened.tickets[0].version).toBe('2.0.0')
     expect(reopened.lanes[1].agentSetsVersion).toBe(true)
+  })
+
+  it('gives lanes the default orchestrator poll in a database created before it existed', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_minutes')
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN orchestrator_poll_active')
+    olderDatabase.close()
+
+    const lanes = new StateRepository(userDataPath).getState().boards![projectPath].lanes
+    for (const lane of lanes) {
+      expect(lane).toMatchObject({ orchestratorPollMinutes: 2, orchestratorPollActive: true })
+    }
   })
 
   it('adds the next lane column to a database created before it existed, then round-trips it', () => {
@@ -1025,5 +1047,139 @@ describe('closed_at triggers (#27)', () => {
     cli.exec(`UPDATE projects SET archived = 1`)
     expect(repository.closedTicketMetrics([projectPath], windows)).toEqual([])
     cli.close()
+  })
+})
+
+describe('snapshots', () => {
+  const snapshotsIn = (userDataPath: string) => path.join(userDataPath, SNAPSHOTS_DIRECTORY_NAME)
+  const snapshotNames = (userDataPath: string) => {
+    const fileNames = readdirSync(snapshotsIn(userDataPath))
+    return fileNames.filter(isSnapshotFileName).sort()
+  }
+  const integrityOf = (snapshotPath: string) => {
+    const snapshot = new DatabaseSync(snapshotPath)
+    const result = snapshot.prepare('PRAGMA integrity_check').get()?.integrity_check
+    snapshot.close()
+    return result
+  }
+  const backdate = (filePath: string, hours: number) => {
+    const past = new Date(Date.now() - hours * 60 * 60 * 1000)
+    utimesSync(filePath, past, past)
+  }
+
+  it('skips a brand-new database and snapshots an existing one on launch', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    expect(existsSync(snapshotsIn(userDataPath))).toBe(false)
+
+    new StateRepository(userDataPath)
+    const names = snapshotNames(userDataPath)
+    expect(names).toHaveLength(1)
+    expect(integrityOf(path.join(snapshotsIn(userDataPath), names[0]))).toBe('ok')
+  })
+
+  it('takes at most one launch snapshot per 24 hours', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    new StateRepository(userDataPath)
+    const [firstName] = snapshotNames(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(1)
+
+    backdate(path.join(snapshotsIn(userDataPath), firstName), 25)
+    new StateRepository(userDataPath)
+    expect(snapshotNames(userDataPath)).toHaveLength(2)
+  })
+
+  it(`keeps only the newest ${SNAPSHOT_RETENTION_COUNT} snapshots and leaves other files alone`, () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    mkdirSync(snapshotsIn(userDataPath), { recursive: true })
+    const oldNames = [1, 2, 3, 4, 5, 6, 7, 8].map((day) => `project-tracker-2000-01-0${day}T00-00-00-000Z.sqlite`)
+    for (const name of oldNames) writeFileSync(path.join(snapshotsIn(userDataPath), name), '')
+    writeFileSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'), '')
+
+    const newPath = repository.backUpNow()
+
+    const remaining = snapshotNames(userDataPath)
+    expect(remaining).toHaveLength(SNAPSHOT_RETENTION_COUNT)
+    expect(remaining).toContain(path.basename(newPath))
+    expect(remaining).not.toContain(oldNames[0])
+    expect(remaining).not.toContain(oldNames[1])
+    expect(existsSync(path.join(snapshotsIn(userDataPath), 'keep-me.sqlite'))).toBe(true)
+  })
+
+  it('includes WAL-only commits and excludes other connections uncommitted rows', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const otherWriter = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    otherWriter.exec('PRAGMA wal_autocheckpoint = 0')
+    otherWriter.exec("CREATE TABLE probe (value TEXT); INSERT INTO probe VALUES ('committed')")
+    otherWriter.exec("BEGIN IMMEDIATE; INSERT INTO probe VALUES ('uncommitted')")
+
+    try {
+      const snapshotPath = repository.backUpNow()
+      const snapshot = new DatabaseSync(snapshotPath)
+      const values = snapshot.prepare('SELECT value FROM probe').all().map((row) => row.value)
+      snapshot.close()
+      expect(values).toEqual(['committed'])
+      expect(integrityOf(snapshotPath)).toBe('ok')
+    } finally {
+      otherWriter.exec('ROLLBACK')
+      otherWriter.close()
+    }
+  })
+
+  it('never blocks startup when the snapshot fails', () => {
+    const userDataPath = freshUserDataPath()
+    new StateRepository(userDataPath)
+    // A file where the directory should be fails for root too, unlike chmod.
+    writeFileSync(snapshotsIn(userDataPath), '')
+
+    const repository = new StateRepository(userDataPath)
+    expect(repository.getState()).toBeDefined()
+    expect(statSync(snapshotsIn(userDataPath)).isFile()).toBe(true)
+  })
+
+  it('does not delete an existing snapshot when the new one collides with its name', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
+    try {
+      const existingPath = repository.backUpNow()
+      expect(() => repository.backUpNow()).toThrow(/already exists/)
+      expect(integrityOf(existingPath)).toBe('ok')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('StateRepository on a bad database file', () => {
+  it('a corrupt file throws on open and is left byte-identical', () => {
+    const userDataPath = freshUserDataPath()
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    const garbage = Buffer.from('this is not a sqlite database, just some bytes '.repeat(200))
+    writeFileSync(databasePath, garbage)
+
+    expect(() => new StateRepository(userDataPath)).toThrow(/not a database/)
+    expect(readFileSync(databasePath).equals(garbage)).toBe(true)
+    expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(false)
+  })
+
+  // root opens files whatever their mode, so the open would succeed.
+  it.skipIf(process.getuid?.() === 0)('an unreadable file throws on open instead of being replaced', () => {
+    const userDataPath = freshUserDataPath()
+    const seeded = new StateRepository(userDataPath)
+    seeded.saveState(stateWithBoard())
+    const databasePath = path.join(userDataPath, DATABASE_FILE_NAME)
+    chmodSync(databasePath, 0o000)
+    try {
+      expect(() => new StateRepository(userDataPath)).toThrow()
+    } finally {
+      chmodSync(databasePath, 0o644)
+    }
+    expect(new StateRepository(userDataPath).getState().scanDirectories).toEqual(['/Users/example/Projects'])
   })
 })

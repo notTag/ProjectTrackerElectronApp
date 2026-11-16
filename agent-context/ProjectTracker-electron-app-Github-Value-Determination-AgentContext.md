@@ -1,0 +1,2 @@
+Determine whether or not the ticket should be worked on. What value is it adding to the product? 
+Has this feature already been built? If the ticket should be worked on then move it to the idea swimlane. If the feature has already been built then close the github issue and delete the Project Tracker ticket. 

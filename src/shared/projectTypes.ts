@@ -248,6 +248,10 @@ export interface SwimLane {
   // This lane's agent is told it may set the ticket's semantic version, and how.
   // When to set it is the agent's call, not a rule here. Absent means off.
   agentSetsVersion?: boolean
+  // How often this lane's Auto Run orchestrator polls, in whole minutes. Absent means 2.
+  orchestratorPollMinutes?: number
+  // Off means this lane's Auto Run opens no orchestrator tab. Absent means on.
+  orchestratorPollActive?: boolean
   // Where this lane's tickets go on completion when they set no Next Lane of
   // their own. Absent means None.
   nextLaneId?: string
@@ -258,8 +262,12 @@ export interface ChecklistItem {
   done: boolean
 }
 
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'interrupted'
+
 // Captures what a swim lane's agent produced for a ticket. Only the most recent
 // run is kept: the board is a working surface, not an audit log.
+// Written once BEFORE the agent starts (status 'running') so a run that dies
+// mid-way still leaves its session id behind to resume from.
 export interface TicketAgentRun {
   at: string
   laneId: string
@@ -270,23 +278,43 @@ export interface TicketAgentRun {
   // When someone opened the ticket after this run finished. Absent = unseen, so
   // runs saved before it existed still surface their result once.
   seenAt?: string
+  // Authoritative when present; runs saved before it existed fall back to `succeeded`.
+  status?: AgentRunStatus
+  startedAt?: string
+  mode?: 'headless' | 'terminal'
+  // The agent CLI's own session id, picked by the app so Resume works even when
+  // the run died before printing anything.
+  sessionId?: string
+  // Claude looks sessions up per working directory, so Resume runs from here.
+  cwd?: string
+  attempts?: number
+  agentId?: string
+  // The terminal a tab run opened in, so its tab can be looked for later.
+  terminalId?: string
+  // The title that tab opened with, looked for as-is even if the ticket is renamed.
+  tabTitle?: string
 }
 
-export type AgentRunBadge = 'running' | 'succeeded' | 'failed'
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
-// lane says nothing about the work in this one.
+// lane says nothing about the work in this one. A running record shows even
+// once seen: opening the ticket mid-run doesn't make the run any less live.
 export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge | null => {
   if (running) return 'running'
   const lastRun = ticket.agentRun
-  if (!lastRun || lastRun.succeeded === undefined) return null
-  const alreadySeen = lastRun.seenAt !== undefined
-  const fromOtherLane = lastRun.laneId !== ticket.laneId
-  if (alreadySeen || fromOtherLane) return null
+  if (!lastRun || lastRun.laneId !== ticket.laneId) return null
+  if (lastRun.status === 'running') return 'running'
+  if (lastRun.seenAt !== undefined) return null
+  if (lastRun.status === 'interrupted') return 'interrupted'
+  if (lastRun.succeeded === undefined) return null
   return lastRun.succeeded ? 'succeeded' : 'failed'
 }
 
-export const hasUnseenAgentResult = (ticket: Ticket): boolean => agentRunBadge(ticket, false) !== null
+export const hasUnseenAgentResult = (ticket: Ticket): boolean => {
+  const badge = agentRunBadge(ticket, false)
+  return badge !== null && badge !== 'running'
+}
 
 export interface Ticket {
   id: string
@@ -401,6 +429,8 @@ export const ticketSearchText = (ticket: Ticket) => {
 // can't be picked here and the model field stays hidden. `models` are suggested
 // ids for that field's dropdown — free text still works, so a model shipped
 // after this list (or a custom agent's own ids) needs no code change.
+// `sessionNameArgs` are the flag words before a terminal session's display name;
+// an agent without them gets no name, since not every CLI can set one at launch.
 export interface Agent {
   id: string
   name: string
@@ -409,7 +439,15 @@ export interface Agent {
   promptArgs?: string[]
   modelArgs?: string[]
   models?: string[]
+  sessionNameArgs?: string[]
+  // `{sessionId}` is replaced with the run's session id. sessionArgs start a
+  // session under that id, resumeArgs pick it back up. No resumeArgs means the
+  // CLI can't resume: no session id is passed and Resume stays hidden.
+  sessionArgs?: string[]
+  resumeArgs?: string[]
 }
+
+const SESSION_ID_TOKEN = '{sessionId}'
 
 // acceptEdits lets a background run write its output files without a human to
 // approve them, while shell commands stay denied — the run can draft, not execute.
@@ -428,7 +466,10 @@ export const DEFAULT_AGENT: Agent = {
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5'
-  ]
+  ],
+  sessionNameArgs: ['--name'],
+  sessionArgs: ['--session-id', SESSION_ID_TOKEN],
+  resumeArgs: ['--resume', SESSION_ID_TOKEN]
 }
 
 // Codex's workspace-write sandbox is the closest match to acceptEdits: files in
@@ -501,6 +542,8 @@ export interface TicketPromptContext {
   assigneeName?: string
   // The board's project path, which the version instruction's SQL filters on.
   projectPath?: string
+  // The DB the version instruction points at. Evals swap in a throwaway one.
+  databasePath?: string
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
@@ -561,14 +604,16 @@ export const normalizeSemanticVersion = (input: string): string | undefined | nu
   return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
 }
 
-const versionInstruction = (ticket: Ticket, projectPath?: string): string => {
+const versionInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
   const sentence =
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
-  if (!projectPath) return sentence
+  if (!context.projectPath) return sentence
+  // The default keeps double quotes so $HOME expands; an injected path is literal.
+  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
   const updateSql =
     "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
-    `WHERE project_path = ${sqlStringLiteral(projectPath)} AND number = ${ticket.number};`
-  const command = `sqlite3 "${TRACKER_DATABASE_PATH}" ${shellQuote(updateSql)}`
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
+  const command = `sqlite3 ${quotedDatabasePath} ${shellQuote(updateSql)}`
   return [`${sentence} To set or change it:`, command].join('\n')
 }
 
@@ -583,7 +628,7 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
   const output = outputTarget ? outputInstruction(outputTarget) : ''
-  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context.projectPath) : ''
+  const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
   const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
   const prompt = sections.filter(Boolean).join('\n\n')
@@ -620,11 +665,15 @@ export const ticketShellCommand = (
   lane: SwimLane,
   agent: Agent = DEFAULT_AGENT,
   context: TicketPromptContext = {},
-  model?: string
+  model?: string,
+  sessionId?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, model)
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket), sessionId })
 }
+
+// Number only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
 
 // A model starting with "-" would read as another flag, so it counts as empty.
 // `quote` lets the terminal path shell-quote the model; argv needs no quoting.
@@ -635,12 +684,118 @@ export const agentModelWords = (agent: Agent, model?: string, quote = (word: str
   return [...agent.modelArgs, quote(trimmedModel)]
 }
 
-// The model goes before promptArgs so a prompt flag is never split from its value.
-export const agentShellCommand = (agent: Agent, prompt: string, model?: string): string => {
+// Strict v4: the id reaches argv and shell strings, so nothing else gets through.
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_V4_PATTERN.test(value)
+
+export const agentSupportsResume = (agent: Agent): boolean =>
+  Boolean(agent.sessionArgs?.length && agent.resumeArgs?.length)
+
+// Session ids only exist for agents that can resume them: one that can't would
+// get a flag it may not know, for nothing.
+export const newAgentSessionId = (agent: Agent): string | undefined =>
+  agentSupportsResume(agent) ? crypto.randomUUID() : undefined
+
+const withSessionId = (args: string[], sessionId: string): string[] =>
+  args.map((arg) => arg.split(SESSION_ID_TOKEN).join(sessionId))
+
+export const agentSessionWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.sessionArgs ?? [], sessionId)
+}
+
+export const agentResumeWords = (agent: Agent, sessionId?: string): string[] => {
+  if (!isUuid(sessionId) || !agentSupportsResume(agent)) return []
+  return withSessionId(agent.resumeArgs ?? [], sessionId)
+}
+
+const sessionNameWords = (agent: Agent, sessionName?: string): string[] => {
+  const sessionNameArgs = agent.sessionNameArgs ?? []
+  if (!sessionName || sessionNameArgs.length === 0) return []
+  return [...sessionNameArgs, shellQuote(sessionName)]
+}
+
+// Model, name and session go before promptArgs so a prompt flag is never split from its value.
+interface AgentLaunchOptions {
+  model?: string
+  sessionName?: string
+  sessionId?: string
+}
+
+export const agentShellCommand = (agent: Agent, prompt: string, { model, sessionName, sessionId }: AgentLaunchOptions = {}): string => {
   const modelWords = agentModelWords(agent, model, shellQuote)
-  const commandWords = [agent.command, ...modelWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const nameWords = sessionNameWords(agent, sessionName)
+  const sessionWords = agentSessionWords(agent, sessionId)
+  const commandWords = [
+    agent.command,
+    ...modelWords,
+    ...nameWords,
+    ...sessionWords,
+    ...(agent.promptArgs ?? []),
+    shellQuote(prompt)
+  ]
   return commandWords.join(' ')
 }
+
+export const RESUME_PROMPT =
+  'You were interrupted mid-task. Check `git status` and the ticket, then continue where you left off.'
+
+// Throws rather than building a half-command: callers gate on canResume first.
+export const agentResumeCommand = (agent: Agent, run: Pick<TicketAgentRun, 'sessionId' | 'cwd'>, prompt: string): string => {
+  if (!agentSupportsResume(agent)) throw new Error(`${agent.name} cannot resume a session.`)
+  if (!isUuid(run.sessionId)) throw new Error('This run has no session to resume.')
+  const resumeWords = agentResumeWords(agent, run.sessionId)
+  const agentWords = [agent.command, ...resumeWords, ...(agent.promptArgs ?? []), shellQuote(prompt)]
+  const agentCommand = agentWords.join(' ')
+  return run.cwd ? `cd ${shellQuote(run.cwd)} && ${agentCommand}` : agentCommand
+}
+
+export const canResume = (ticket: Ticket, agent: Agent): boolean => {
+  const run = ticket.agentRun
+  if (!run || run.laneId !== ticket.laneId) return false
+  const endedUnfinished = run.status === 'interrupted' || run.status === 'failed'
+  return endedUnfinished && isUuid(run.sessionId) && agentSupportsResume(agent)
+}
+
+// Long enough for a real terminal run to be well under way; past it, a tab
+// nobody can see is presumed gone.
+export const STALE_RUN_MS = 45 * 60 * 1000
+
+export type TabLiveness = 'alive' | 'gone' | 'unknown'
+
+// Sent by main when a headless run hit a transient failure and is about to retry.
+export interface AgentRetryEvent {
+  sessionId?: string
+  attempt: number
+  of: number
+  delayMs: number
+}
+
+export const runningAgentRuns = (tickets: Ticket[]): Ticket[] =>
+  tickets.filter((ticket) => ticket.agentRun?.status === 'running' && ticket.agentRun.laneId === ticket.laneId)
+
+// A headless run lives in the main process, so one started before this app
+// launch died with the old process. A tab outlives the app, so only its
+// absence (or age, when it can't be looked for) says the run is over.
+// A tab that died this session is left to the stale threshold: it may still
+// be opening.
+export const runsToInterrupt = (
+  tickets: Ticket[],
+  livenessByTicketId: Record<string, TabLiveness>,
+  now: number,
+  appStartedAt: number
+): Ticket[] =>
+  runningAgentRuns(tickets).filter((ticket) => {
+    const run = ticket.agentRun as TicketAgentRun
+    const startedAt = Date.parse(run.startedAt ?? run.at)
+    const startedBeforeApp = startedAt < appStartedAt
+    const isStale = now - startedAt > STALE_RUN_MS
+    if (run.mode !== 'terminal') return startedBeforeApp
+    const liveness = livenessByTicketId[ticket.id] ?? 'unknown'
+    if (liveness === 'alive') return false
+    if (liveness === 'gone') return startedBeforeApp || isStale
+    return isStale
+  })
 
 // Enough of the title to recognise the ticket; the number already identifies it.
 const BRANCH_SLUG_WORD_COUNT = 3
@@ -689,6 +844,8 @@ export interface AutoRunTicketLaunch {
 export interface AutoRunLaunchEntry {
   ticket: Ticket
   launch: AutoRunTicketLaunch
+  agentId?: string
+  sessionId?: string
 }
 
 // With worktrees on, the branch goes into the ticket before its prompt is
@@ -705,14 +862,29 @@ export const buildAutoRunLaunch = (
 ): AutoRunLaunchEntry => {
   const branchName = ticketBranchName(ticket)
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model)
-  return { ticket, launch: { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) } }
+  // Fresh per launch: the CLI refuses a session id that is already in use.
+  const sessionId = newAgentSessionId(agent)
+  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
+  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) }
+  return { ticket, launch, agentId: agent.id, sessionId }
 }
 
 // A ticket that already has a worktree keeps working in it even when the next
 // lane has worktrees off, so a handoff never loses the previous lane's work.
 export const autoRunUsesWorktrees = (lane: SwimLane, ticket?: Ticket): boolean =>
   lane.autoRunWorktrees !== false || Boolean(ticket?.worktreePath)
+
+export const DEFAULT_ORCHESTRATOR_POLL_MINUTES = 2
+
+// Agents write the DB with sqlite3, so a stored 0, fraction or text must not
+// reach the prompt as `sleep 0` / `sleep NaN`.
+export const orchestratorPollMinutes = (lane: SwimLane): number => {
+  const storedMinutes = lane.orchestratorPollMinutes ?? 0
+  const isWholeMinutes = Number.isInteger(storedMinutes) && storedMinutes >= 1
+  return isWholeMinutes ? storedMinutes : DEFAULT_ORCHESTRATOR_POLL_MINUTES
+}
+
+export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
@@ -798,10 +970,10 @@ const tabSection = (context: OrchestratorPromptContext): string => {
   ].join('\n')
 }
 
-// User text may tune the Loop (poll interval, which tabs to close) but the
+// User text may tune the Loop (which tabs to close) but the
 // report-only rule guards a DB shared with the app, so it always wins.
 const LANE_INSTRUCTIONS_PRECEDENCE =
-  'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.'
+  'These override the Loop above (e.g. closing tabs), but never the report-only rule.'
 
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
@@ -833,6 +1005,8 @@ const renderOrchestratorPrompt = (
     'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
+  const pollMinutes = orchestratorPollMinutes(lane)
+  const pollSeconds = pollMinutes * 60
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
@@ -850,7 +1024,7 @@ const renderOrchestratorPrompt = (
     parts.terminal,
     [
       'Loop:',
-      '1. On start, then every 60 seconds (sleep 60), gather the state above.',
+      `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
       '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
       '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
       '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
@@ -915,7 +1089,7 @@ export const orchestratorPrompt = (
   return fillOrchestratorTokens(override, parts)
 }
 
-// One ticket needs no watcher: its own tab already says everything.
+
 export const buildOrchestratorLaunch = (
   lane: SwimLane,
   entries: AutoRunLaunchEntry[],
@@ -923,9 +1097,10 @@ export const buildOrchestratorLaunch = (
   context: OrchestratorPromptContext,
   model?: string
 ): TerminalTab | undefined => {
-  if (entries.length < 2) return undefined
+  if (!orchestratorPollActive(lane)) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
-  return { command: agentShellCommand(agent, prompt, model), title: orchestratorTabTitle(lane) }
+  const title = orchestratorTabTitle(lane)
+  return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
 }
 
 export interface AgentChoice {
@@ -1042,6 +1217,16 @@ export interface GithubIssue {
   htmlUrl: string
 }
 
+// GitHub's state_reason: 'completed', 'not_planned', 'duplicate', or null.
+export interface GithubClosedIssue extends GithubIssue {
+  stateReason: string | null
+}
+
+export interface GithubIssueLists {
+  open: GithubIssue[]
+  closed: GithubClosedIssue[]
+}
+
 export interface ProjectBoard {
   lanes: SwimLane[]
   tickets: Ticket[]
@@ -1080,6 +1265,10 @@ export const createUnassignedLane = (): SwimLane => ({
 
 export const getUnassignedLane = (board: ProjectBoard): SwimLane =>
   board.unassignedLane ?? createUnassignedLane()
+
+// Every column the board renders, in render order: No status is stored apart
+// from `lanes` but always shows first.
+export const boardLaneColumns = (board: ProjectBoard): SwimLane[] => [getUnassignedLane(board), ...board.lanes]
 
 // Routes a lane edit to wherever that lane lives: the unassigned column is
 // stored on its own field, every other lane in `lanes`.
@@ -1209,23 +1398,66 @@ export const githubIssueExternalId = (issue: GithubIssue) => `github:${issue.num
 export const GITHUB_IMPORT_LANE_ID = 'github-issues'
 export const GITHUB_IMPORT_LANE_NAME = 'GitHub Issues'
 
+// Where tickets closed as completed on GitHub go: the rightmost lane that closes tickets.
+export const productionLane = (board: ProjectBoard): SwimLane | undefined =>
+  [...board.lanes].reverse().find((lane) => lane.closesTicket)
+
+const hasLocalWork = (ticket: Ticket) => Boolean(ticket.worktreePath || ticket.pullRequestUrl)
+
+export interface GithubSyncResult {
+  board: ProjectBoard
+  added: number
+  moved: number
+  removed: number
+  keptWithWork: number
+}
+
+// Kept-with-work tickets don't count: nothing on the board changed for them.
+export const githubSyncChangeCount = (result: GithubSyncResult) => result.added + result.moved + result.removed
+
 // A GitHub issue carries no swim-lane status, so imports land in a dedicated
-// lane at the far left instead of guessing. Issues already imported are skipped,
-// so pulling repeatedly is safe and never clobbers edits to an imported ticket.
-export const addGithubIssuesToBoard = (
-  board: ProjectBoard,
-  issues: GithubIssue[]
-): { board: ProjectBoard; added: number } => {
-  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
-  const lanes = importLaneExists
-    ? board.lanes
-    : [
-        { id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' },
-        ...board.lanes
-      ]
+// lane at the far left instead of guessing. Already-imported tickets keep every
+// local edit; only GitHub's closed state reaches them: completed → production
+// lane, closed for any other reason → removed unless the ticket has local work.
+// Open or unlisted issues leave their ticket untouched.
+export const syncGithubIssuesToBoard = (board: ProjectBoard, issues: GithubIssueLists): GithubSyncResult => {
+  const closedById = new Map(issues.closed.map((issue) => [githubIssueExternalId(issue), issue]))
+  const targetLane = productionLane(board)
+  const movedAt = new Date().toISOString()
+  let moved = 0
+  let removed = 0
+  let keptWithWork = 0
+
+  const syncedTickets: Ticket[] = []
+  for (const ticket of board.tickets) {
+    const closedIssue = ticket.externalId ? closedById.get(ticket.externalId) : undefined
+    if (!closedIssue) {
+      syncedTickets.push(ticket)
+      continue
+    }
+    const isCompleted = closedIssue.stateReason === 'completed'
+    if (isCompleted) {
+      const shouldMove = targetLane !== undefined && ticket.laneId !== targetLane.id
+      if (shouldMove) moved += 1
+      syncedTickets.push(shouldMove ? { ...ticket, laneId: targetLane.id, updatedAt: movedAt } : ticket)
+      continue
+    }
+    if (hasLocalWork(ticket)) {
+      keptWithWork += 1
+      syncedTickets.push(ticket)
+      continue
+    }
+    removed += 1
+  }
 
   const importedIds = new Set(board.tickets.map((ticket) => ticket.externalId).filter(Boolean))
-  const newIssues = issues.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  const newIssues = issues.open.filter((issue) => !importedIds.has(githubIssueExternalId(issue)))
+  // ponytail: no new issues → no import lane, so a sync-only pull doesn't add an empty lane.
+  const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
+  const needsImportLane = newIssues.length > 0 && !importLaneExists
+  const lanes = needsImportLane
+    ? [{ id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' }, ...board.lanes]
+    : board.lanes
 
   const createdAt = new Date().toISOString()
   const firstNumber = nextTicketNumber(board)
@@ -1241,9 +1473,47 @@ export const addGithubIssuesToBoard = (
   }))
 
   return {
-    board: { ...board, lanes, tickets: [...board.tickets, ...newTickets] },
-    added: newTickets.length
+    board: { ...board, lanes, tickets: [...syncedTickets, ...newTickets] },
+    added: newTickets.length,
+    moved,
+    removed,
+    keptWithWork
   }
+}
+
+// Closed issues older than every imported ticket can't match one, so the closed
+// fetch starts there. Undefined means nothing is imported and the fetch is skipped.
+export const oldestImportedCreatedAt = (board: ProjectBoard): string | undefined => {
+  const importedCreatedAts = board.tickets
+    .filter((ticket) => ticket.externalId?.startsWith('github:'))
+    .map((ticket) => ticket.createdAt)
+  // ISO-8601 UTC strings sort chronologically.
+  return importedCreatedAts.sort()[0]
+}
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+
+interface GithubSyncNoticeContext {
+  openCount: number
+  productionLaneName: string
+  projectName: string
+}
+
+// Names the project, since the banner can show while another board is open.
+export const githubSyncNotice = (result: GithubSyncResult, context: GithubSyncNoticeContext): string => {
+  const skipped = context.openCount - result.added
+  const skippedNote = skipped > 0 ? ` (${skipped} already on the board)` : ''
+  const nothingChanged = githubSyncChangeCount(result) === 0
+  const showsImport = result.added > 0 || nothingChanged
+  const parts = [
+    showsImport ? `Imported ${plural(result.added, 'issue')} into ${context.projectName}${skippedNote}` : '',
+    result.moved > 0 ? `moved ${result.moved} to ${context.productionLaneName}` : '',
+    result.removed > 0 ? `removed ${result.removed} closed` : '',
+    result.keptWithWork > 0 ? `kept ${result.keptWithWork} closed with local work` : ''
+  ].filter(Boolean)
+  const sentence = parts.join(', ')
+  const capitalized = `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`
+  return showsImport ? capitalized : `${context.projectName}: ${capitalized}`
 }
 
 // What a ticket card can show on the board. Ids are persisted, so renaming one
@@ -1333,12 +1603,19 @@ export const pullRequestStatusLabel = (state: PullRequestState | undefined) =>
 // from the same branch.
 export const isPullRequestSettled = (state: PullRequestState | undefined) => state === 'merged'
 
-export const GITHUB_UNREACHABLE_MESSAGE = 'GitHub is unreachable. You look offline; local boards and tickets still work.'
+export const GITHUB_UNREACHABLE_MESSAGE = 'Offline Mode'
 
 // Matched by substring because IPC rewraps main-process errors as
 // "Error invoking remote method '…': Error: <message>".
 export const isGithubUnreachableError = (error: unknown) =>
   error instanceof Error && error.message.includes(GITHUB_UNREACHABLE_MESSAGE)
+
+// What a GitHub failure shows the user: offline collapses to the bare label,
+// without the IPC wrapper text around it.
+export const githubErrorMessage = (error: unknown) => {
+  if (isGithubUnreachableError(error)) return GITHUB_UNREACHABLE_MESSAGE
+  return error instanceof Error ? error.message : String(error)
+}
 
 export const DEFAULT_LANE_WIDTH = 260
 export const MIN_LANE_WIDTH = 200

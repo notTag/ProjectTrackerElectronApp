@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
+  githubErrorMessage,
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
@@ -25,7 +26,10 @@ import {
   fullAutoHandoffs,
   isFullAuto,
   autoRunUsesWorktrees,
-  addGithubIssuesToBoard,
+  syncGithubIssuesToBoard,
+  githubSyncNotice,
+  oldestImportedCreatedAt,
+  type GithubClosedIssue,
   agentMarkdownFileName,
   addScanDirectory,
   addTicketToBoard,
@@ -38,6 +42,7 @@ import {
   moveLaneInBoard,
   removeLaneFromBoard,
   getUnassignedLane,
+  boardLaneColumns,
   normalizeBoard,
   nextTicketNumber,
   updateLaneInBoard,
@@ -173,14 +178,14 @@ describe('getBoard', () => {
 })
 
 
-describe('addGithubIssuesToBoard', () => {
+describe("syncGithubIssuesToBoard", () => {
   const issues: GithubIssue[] = [
     { number: 1, title: 'Fix login', body: 'Steps to reproduce', htmlUrl: 'https://github.com/o/r/issues/1' },
     { number: 2, title: 'Add export', body: '', htmlUrl: 'https://github.com/o/r/issues/2' }
   ]
 
   it('creates the import lane at the far left and files every issue in it', () => {
-    const { board, added } = addGithubIssuesToBoard(boardWithTickets(), issues)
+    const { board, added } = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
     expect(added).toBe(2)
     expect(board.lanes[0].id).toBe(GITHUB_IMPORT_LANE_ID)
     const imported = board.tickets.filter((ticket) => ticket.externalId)
@@ -189,11 +194,110 @@ describe('addGithubIssuesToBoard', () => {
   })
 
   it('reuses the existing import lane on later pulls', () => {
-    const first = addGithubIssuesToBoard(boardWithTickets(), issues)
-    const second = addGithubIssuesToBoard(first.board, issues)
+    const first = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
+    const second = syncGithubIssuesToBoard(first.board, { open: issues, closed: [] })
     expect(second.added).toBe(0)
     expect(second.board.lanes.filter((lane) => lane.id === GITHUB_IMPORT_LANE_ID)).toHaveLength(1)
     expect(second.board.tickets).toHaveLength(first.board.tickets.length)
+  })
+})
+
+
+describe('syncing imported tickets with closed GitHub issues', () => {
+  const lanes = [
+    { id: 'github-issues', name: 'GitHub Issues', agentPrompt: '', agentFilePath: '' },
+    { id: 'in-dev', name: 'In Dev', agentPrompt: '', agentFilePath: '', closesTicket: true },
+    { id: 'in-production', name: 'In Prod Env', agentPrompt: '', agentFilePath: '', closesTicket: true }
+  ]
+  const importedTicket = (issueNumber: number, extra: Partial<Ticket> = {}): Ticket => ({
+    id: `t${issueNumber}`,
+    number: issueNumber,
+    laneId: 'github-issues',
+    title: `Issue ${issueNumber}`,
+    description: '',
+    createdAt: '2026-02-01T00:00:00.000Z',
+    externalId: `github:${issueNumber}`,
+    ...extra
+  })
+  const closed = (issueNumber: number, stateReason: string | null): GithubClosedIssue => ({
+    number: issueNumber,
+    title: 'From GitHub',
+    body: '',
+    htmlUrl: `https://github.com/o/r/issues/${issueNumber}`,
+    stateReason
+  })
+  const boardOf = (...tickets: Ticket[]): ProjectBoard => ({ lanes, tickets })
+
+  it('moves a completed issue to the rightmost closing lane', () => {
+    const result = syncGithubIssuesToBoard(boardOf(importedTicket(1)), { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(1)
+    expect(result.board.tickets[0].laneId).toBe('in-production')
+    expect(result.board.tickets[0].updatedAt).toBeDefined()
+  })
+
+  it('removes tickets closed as not planned, duplicate, or with no reason', () => {
+    const board = boardOf(importedTicket(1), importedTicket(2), importedTicket(3))
+    const closedIssues = [closed(1, 'not_planned'), closed(2, 'duplicate'), closed(3, null)]
+    const result = syncGithubIssuesToBoard(board, { open: [], closed: closedIssues })
+    expect(result.removed).toBe(3)
+    expect(result.board.tickets).toEqual([])
+  })
+
+  it('keeps a not-planned ticket that has local work and counts it', () => {
+    const withWork = importedTicket(1, { worktreePath: '/wt/t1' })
+    const withPullRequest = importedTicket(2, { pullRequestUrl: 'https://github.com/o/r/pull/9' })
+    const closedIssues = [closed(1, 'not_planned'), closed(2, 'not_planned')]
+    const result = syncGithubIssuesToBoard(boardOf(withWork, withPullRequest), { open: [], closed: closedIssues })
+    expect(result.keptWithWork).toBe(2)
+    expect(result.removed).toBe(0)
+    expect(result.board.tickets).toHaveLength(2)
+  })
+
+  it('does not re-move a ticket already in production', () => {
+    const ticket = importedTicket(1, { laneId: 'in-production' })
+    const result = syncGithubIssuesToBoard(boardOf(ticket), { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(0)
+    expect(result.board.tickets[0]).toBe(ticket)
+  })
+
+  it('leaves a completed ticket in place when no lane closes tickets', () => {
+    const board: ProjectBoard = { lanes: [lanes[0]], tickets: [importedTicket(1)] }
+    const result = syncGithubIssuesToBoard(board, { open: [], closed: [closed(1, 'completed')] })
+    expect(result.moved).toBe(0)
+    expect(result.board.tickets[0].laneId).toBe('github-issues')
+  })
+
+  it('never clobbers local edits to a still-open issue', () => {
+    const edited = importedTicket(1, { title: 'Renamed locally', laneId: 'in-dev' })
+    const openIssue = { number: 1, title: 'GitHub title', body: 'GitHub body', htmlUrl: 'https://github.com/o/r/issues/1' }
+    const result = syncGithubIssuesToBoard(boardOf(edited), { open: [openIssue], closed: [] })
+    expect(result.board.tickets).toEqual([edited])
+    expect(result.added + result.moved + result.removed).toBe(0)
+  })
+
+  it('leaves a reopened issue in production untouched', () => {
+    const shipped = importedTicket(1, { laneId: 'in-production' })
+    const openIssue = { number: 1, title: 'Reopened', body: '', htmlUrl: 'https://github.com/o/r/issues/1' }
+    const result = syncGithubIssuesToBoard(boardOf(shipped), { open: [openIssue], closed: [] })
+    expect(result.board.tickets).toEqual([shipped])
+  })
+
+  it('starts the closed fetch at the oldest imported ticket, or skips it', () => {
+    const older = importedTicket(1, { createdAt: '2026-01-05T00:00:00.000Z' })
+    expect(oldestImportedCreatedAt(boardOf(importedTicket(2), older))).toBe('2026-01-05T00:00:00.000Z')
+    expect(oldestImportedCreatedAt(boardWithTickets())).toBeUndefined()
+  })
+
+  it('reports every non-zero count in the notice', () => {
+    const context = (openCount: number) => ({ openCount, productionLaneName: 'In Prod Env', projectName: 'app' })
+    const result = { board: boardOf(), added: 2, moved: 1, removed: 1, keptWithWork: 1 }
+    expect(githubSyncNotice(result, context(2))).toBe(
+      'Imported 2 issues into app, moved 1 to In Prod Env, removed 1 closed, kept 1 closed with local work.'
+    )
+    const unchanged = { board: boardOf(), added: 0, moved: 0, removed: 0, keptWithWork: 0 }
+    expect(githubSyncNotice(unchanged, context(3))).toBe('Imported 0 issues into app (3 already on the board).')
+    const syncOnly = { board: boardOf(), added: 0, moved: 1, removed: 0, keptWithWork: 0 }
+    expect(githubSyncNotice(syncOnly, context(0))).toBe('app: Moved 1 to In Prod Env.')
   })
 })
 
@@ -236,7 +340,7 @@ describe('pulling issues onto a board with every lane deleted', () => {
     const issues: GithubIssue[] = [
       { number: 7, title: 'Fix login', body: '', htmlUrl: 'https://github.com/o/r/issues/7' }
     ]
-    const { board, added } = addGithubIssuesToBoard(emptied, issues)
+    const { board, added } = syncGithubIssuesToBoard(emptied, { open: issues, closed: [] })
     expect(added).toBe(1)
     expect(board.lanes.map((lane) => lane.id)).toEqual([GITHUB_IMPORT_LANE_ID])
     expect(board.tickets.at(-1)?.laneId).toBe(GITHUB_IMPORT_LANE_ID)
@@ -262,7 +366,7 @@ describe('ticket numbering', () => {
       { number: 90, title: 'One', body: '', htmlUrl: 'https://github.com/o/r/issues/90' },
       { number: 91, title: 'Two', body: '', htmlUrl: 'https://github.com/o/r/issues/91' }
     ]
-    const { board } = addGithubIssuesToBoard(boardWithTickets(), issues)
+    const { board } = syncGithubIssuesToBoard(boardWithTickets(), { open: issues, closed: [] })
     expect(board.tickets.map((ticket) => ticket.number)).toEqual([1, 2, 3, 4])
   })
 
@@ -339,6 +443,28 @@ describe('ticketSearchText', () => {
   })
 })
 
+
+describe('boardLaneColumns', () => {
+  const columnIds = (board: ProjectBoard) => boardLaneColumns(board).map((lane) => lane.id)
+
+  it('lists No status first, then every lane in board order', () => {
+    const board = boardWithTickets()
+    const laneIds = board.lanes.map((lane) => lane.id)
+    expect(columnIds(board)).toEqual([UNASSIGNED_LANE_ID, ...laneIds])
+  })
+
+  it('includes a lane added to the board, last', () => {
+    const board = boardWithTickets()
+    const addedLane = { ...board.lanes[0], id: 'added', name: 'Added' }
+    const grown = { ...board, lanes: [...board.lanes, addedLane] }
+    expect(columnIds(grown).at(-1)).toBe('added')
+  })
+
+  it('still starts with No status when the board never stored one', () => {
+    const board = { ...boardWithTickets(), unassignedLane: undefined }
+    expect(columnIds(board)[0]).toBe(UNASSIGNED_LANE_ID)
+  })
+})
 
 describe('updateLaneInBoard', () => {
   it('stores the unassigned column\'s prompt without adding it to lanes', () => {
@@ -438,7 +564,7 @@ describe('ticketShellCommand', () => {
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
     expect(command).toBe(
-      "claude 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+      "claude --name 'Ticket #7' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
     )
   })
 
@@ -454,9 +580,21 @@ describe('ticketShellCommand', () => {
     expect(command).toBe("opencode --prompt 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
+  it('leaves agents with no session-name flag unnamed', () => {
+    const codex = availableAgents({}).find((agent) => agent.id === 'codex')
+    const command = ticketShellCommand(ticket({ description: '' }), lane(), codex)
+    expect(command).toBe("codex 'Ticket #7: Add the thing\nStatus: In Development'")
+  })
+
+  it('shell-quotes a session name the same way as the prompt', () => {
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { sessionName: "Bob's run" })).toBe("claude --name 'Bob'\\''s run' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go', { model: 'opus', sessionName: 'Ticket #7' })).toBe("claude --model 'opus' --name 'Ticket #7' 'go'")
+    expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
   it('never starts the prompt with "-", which a CLI would parse as an option', () => {
@@ -553,7 +691,7 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
   it("uses a ticket's own branch, else a short one from its number and first title words", () => {
     expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
@@ -1214,7 +1352,7 @@ describe('Auto Run orchestrator', () => {
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
       const expectedSection = [
         'Lane instructions',
-        'These override the Loop above (e.g. poll interval, closing tabs), but never the report-only rule.',
+        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
         'Poll every 2 minutes.'
       ].join('\n')
       expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
@@ -1233,18 +1371,41 @@ describe('Auto Run orchestrator', () => {
       expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
       expect(agentPrompt).not.toContain('Poll every 2 minutes.')
     })
+
+    it("polls at the lane's rate, every 2 minutes by default", () => {
+      expect(prompt).toContain('every 2 minutes (sleep 120)')
+      expect(prompt).not.toContain('sleep 60)')
+      const slower = orchestratorPrompt({ ...inDev, orchestratorPollMinutes: 5 }, entries, context('ghostty', 'Ghostty'))
+      expect(slower).toContain('every 5 minutes (sleep 300)')
+    })
+
+    it('falls back to the default for a stored poll that is not whole minutes', () => {
+      for (const badMinutes of [0, -3, 1.5, Number.NaN]) {
+        const corrupted = { ...inDev, orchestratorPollMinutes: badMinutes }
+        expect(orchestratorPrompt(corrupted, entries, context('ghostty', 'Ghostty'))).toContain('every 2 minutes (sleep 120)')
+      }
+    })
   })
 
   describe('buildOrchestratorLaunch', () => {
-    it('sends no orchestrator for a one-ticket run', () => {
-      expect(buildOrchestratorLaunch(inDev, entries.slice(0, 1), DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    it('sends an orchestrator for a one-ticket run', () => {
+      const oneTicket = entries.slice(0, 1)
+      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))!
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command).toContain('#12 First thing')
+      expect(launch.command).not.toContain('#13 Second thing')
+    })
+
+    it('sends no orchestrator when the lane turned its orchestrator off', () => {
+      const inactive = { ...inDev, orchestratorPollActive: false }
+      expect(buildOrchestratorLaunch(inactive, entries, DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
-      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
-      expect(launch?.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
-      expect(launch?.command.startsWith(`${DEFAULT_AGENT.command} '`)).toBe(true)
-      expect(launch?.command).toContain("it'\\''s-mine")
+      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))!
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
+      expect(launch.command).toContain("it'\\''s-mine")
     })
   })
 })
@@ -1294,6 +1455,14 @@ describe('semantic version', () => {
     expect(prompt).toContain("project_path = '\\''/code/o'\\'''\\''brien'\\'' AND number = 7;")
   })
 
+  it('points the version command at a supplied database path', () => {
+    // Single-quoted so a $ or quote in the path can't expand or break the command.
+    const context = { projectPath: '/code/app', databasePath: '/tmp/$user "x"/project-tracker.sqlite' }
+    const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }), context)
+    expect(prompt).toContain(`sqlite3 '/tmp/$user "x"/project-tracker.sqlite' 'UPDATE tickets SET version = `)
+    expect(prompt).not.toContain(TRACKER_DATABASE_PATH)
+  })
+
   it('keeps the version sentence but drops the command without a project path', () => {
     const prompt = ticketAgentPrompt(ticket(), lane({ agentSetsVersion: true }))
     expect(prompt).toContain("Leave it unset if it doesn't apply yet.")
@@ -1329,21 +1498,21 @@ describe('agent model', () => {
   })
 
   it('puts each built-in model flag before the prompt flags, model quoted', () => {
-    expect(agentShellCommand(byId('claude-code'), 'p', 'opus')).toBe("claude --model 'opus' 'p'")
-    expect(agentShellCommand(byId('codex'), 'p', 'gpt-5')).toBe("codex -m 'gpt-5' 'p'")
-    expect(agentShellCommand(byId('opencode'), 'p', 'anthropic/claude')).toBe(
+    expect(agentShellCommand(byId('claude-code'), 'p', { model: 'opus' })).toBe("claude --model 'opus' 'p'")
+    expect(agentShellCommand(byId('codex'), 'p', { model: 'gpt-5' })).toBe("codex -m 'gpt-5' 'p'")
+    expect(agentShellCommand(byId('opencode'), 'p', { model: 'anthropic/claude' })).toBe(
       "opencode -m 'anthropic/claude' --prompt 'p'"
     )
   })
 
   it('adds no flag for an empty, blank or "-"-prefixed model', () => {
     for (const model of [undefined, '', '   ', '--dangerously-skip-permissions']) {
-      expect(agentShellCommand(DEFAULT_AGENT, 'p', model)).toBe("claude 'p'")
+      expect(agentShellCommand(DEFAULT_AGENT, 'p', { model })).toBe("claude 'p'")
     }
   })
 
   it('adds no flag for an agent that cannot take a model', () => {
-    expect(agentShellCommand(byId('hermes'), 'p', 'some-model')).toBe("hermes chat -q 'p'")
+    expect(agentShellCommand(byId('hermes'), 'p', { model: 'some-model' })).toBe("hermes chat -q 'p'")
   })
 
   it('carries the model into an Auto Run launch', () => {
@@ -1366,8 +1535,8 @@ describe('agent model', () => {
     expect(choice).toEqual({ agent: byId('codex'), model: undefined })
     const entries = [1, 2].map((number) => buildAutoRunLaunch(modelTicket(number), modelLane, DEFAULT_AGENT, {}, false))
     const context = { projectPath: '/p', lanes: [modelLane], terminalId: 'iterm2', terminalLabel: 'iTerm2' }
-    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')
-    expect(tab?.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
+    const tab = buildOrchestratorLaunch(modelLane, entries, choice.agent, context, 'gpt-5-mini')!
+    expect(tab.command.startsWith("codex -m 'gpt-5-mini' ")).toBe(true)
   })
 })
 
@@ -1449,5 +1618,19 @@ describe('laneTransitions', () => {
     const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
     const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
     expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
+  })
+})
+
+describe('githubErrorMessage', () => {
+  it('shows only the offline label for a wrapped unreachable error', () => {
+    const wrapped = new Error(
+      `Error invoking remote method 'ticket:fetch-pull-request': Error: ${GITHUB_UNREACHABLE_MESSAGE}`
+    )
+    expect(githubErrorMessage(wrapped)).toBe('Offline Mode')
+  })
+
+  it('passes other errors through', () => {
+    expect(githubErrorMessage(new Error('Repository not found on GitHub.'))).toBe('Repository not found on GitHub.')
+    expect(githubErrorMessage('boom')).toBe('boom')
   })
 })

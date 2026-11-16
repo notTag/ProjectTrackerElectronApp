@@ -90,6 +90,19 @@ body {
   padding: 0 12px;
 }
 
+.offline-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-danger);
+  border-radius: 6px;
+  color: var(--color-danger);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Match the picker triggers: Add/Dirs get the same 1px border so the whole
    action cluster reads as one bordered control group. */
 .titlebar-actions button.secondary {
@@ -984,6 +997,21 @@ code {
   flex: 0 1 320px;
 }
 
+/* Mask = shape only; colour comes from the theme so the ✕ follows every theme. */
+.filter-query::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-left: 6px;
+  cursor: pointer;
+  background: var(--color-text-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 2l8 8M10 2l-8 8' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.filter-query::-webkit-search-cancel-button:hover {
+  background: var(--color-text);
+}
+
 .filter-count {
   color: var(--color-text-muted);
   font-size: 0.8rem;
@@ -1190,6 +1218,7 @@ code {
 .agent-status {
   --agent-status-green: #22c55e;
   --agent-status-red: #ef4444;
+  --agent-status-amber: #f59e0b;
   display: inline-block;
   margin-right: 6px;
 }
@@ -1214,6 +1243,12 @@ code {
   color: var(--agent-status-red);
   font-weight: 700;
   text-shadow: 0 0 6px var(--agent-status-red);
+}
+
+.agent-status-interrupted {
+  color: var(--agent-status-amber);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--agent-status-amber);
 }
 
 .lane-unseen-count {
@@ -1313,7 +1348,8 @@ code {
 }
 
 .ticket-modal label,
-.lane-modal label {
+.lane-modal label,
+.auto-run-orchestrator label {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1644,8 +1680,18 @@ code {
   line-height: 2;
 }
 
-.auto-run-question select {
+.auto-run-question select,
+.auto-run-question input {
   margin: 0 0.25rem;
+}
+
+.auto-run-orchestrator {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
 }
 
 /* The fast-forward glyph is drawn larger than the ⚙ text glyph, so it drops
@@ -1809,4 +1855,10 @@ code {
 .metric-tile span {
   font-size: 0.75rem;
   color: var(--color-text-muted);
+}
+
+.orchestrator-poll-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
 }
