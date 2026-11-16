@@ -26,7 +26,7 @@ import {
   githubSyncNotice,
   oldestImportedCreatedAt,
   type GithubClosedIssue,
-  agentMarkdownFileName,
+  laneFolderName,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -1123,26 +1123,27 @@ describe('full auto', () => {
   })
 })
 
-describe('agentMarkdownFileName', () => {
+describe('laneFolderName', () => {
   it('turns spaces and path separators into hyphens', () => {
-    expect(agentMarkdownFileName('My Project', 'In Review')).toBe('My-Project-In-Review-AgentContext.md')
-    expect(agentMarkdownFileName('ProjectTracker/electron-app', 'PRD')).toBe('ProjectTracker-electron-app-PRD-AgentContext.md')
+    expect(laneFolderName('In Review')).toBe('In-Review')
+    expect(laneFolderName('QA/Release\\Prep')).toBe('QA-Release-Prep')
   })
 
   it('strips characters filesystems reject', () => {
-    expect(agentMarkdownFileName('a:b*c?d"e<f>g|h', 'lane')).toBe('abcdefgh-lane-AgentContext.md')
+    expect(laneFolderName('a:b*c?d"e<f>g|h')).toBe('abcdefgh')
   })
 
   it('never yields a path separator or a leading dot from a traversal name', () => {
-    const fileName = agentMarkdownFileName('app', '../../etc/passwd')
-    expect(fileName).not.toMatch(/[/\\]/)
-    expect(fileName.startsWith('.')).toBe(false)
-    expect(agentMarkdownFileName('..', '.hidden')).toBe('project-hidden-AgentContext.md')
+    const folderName = laneFolderName('../../etc/passwd')
+    expect(folderName).not.toMatch(/[/\\]/)
+    expect(folderName.startsWith('.')).toBe(false)
+    expect(laneFolderName('.hidden')).toBe('hidden')
   })
 
-  it('falls back when a part sanitizes to nothing', () => {
-    expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
-    expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
+  it('falls back when the name sanitizes to nothing', () => {
+    expect(laneFolderName('  ')).toBe('lane')
+    expect(laneFolderName('- -')).toBe('lane')
+    expect(laneFolderName('..')).toBe('lane')
   })
 })
 

@@ -36,6 +36,7 @@
 - D2 No auto-migration of existing `agent-context/` files or DB paths; explicit paths win. Moving this repo's 7 files = separate chore
 - D3 Lane rename → next save uses the new folder; old folder left alone
 - D4 Orchestrator file referenced, not inlined — same as agent file in `ticketAgentPrompt`
+- D5 (2026-11-16, agreed with the #82 agent) Orchestrator half moves to #82: `orchestratorFilePath` field + column, IPC `kind`, button/field, `orchestratorPrompt` file reference. #81 ships the folder layout + shared helpers (`SWIMLANE_PROMPT_DIRECTORY`, `AGENT_PROMPT_FILE_NAME`, `ORCHESTRATOR_PROMPT_FILE_NAME`, `laneFolderName`, `resolveAgentMarkdownPath({ filePath, fileName })`) that #82 plugs into
 
 ## Out of scope
 - Migrating/moving existing `agent-context/` files

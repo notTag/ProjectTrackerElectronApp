@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { describe, expect, it } from 'vitest'
 
-import { agentMarkdownFileName } from '../../src/shared/projectTypes.js'
+import { AGENT_PROMPT_FILE_NAME, SWIMLANE_PROMPT_DIRECTORY, laneFolderName } from '../../src/shared/projectTypes.js'
 import { REPO_ROOT } from '../fixtures.js'
 import { REAL_DATABASE_PATH } from '../harness.js'
 
@@ -26,16 +26,16 @@ const mainCheckoutPath = () => {
 const liveLanes = () => {
   const database = new DatabaseSync(REAL_DATABASE_PATH, { readOnly: true })
   const projectPath = mainCheckoutPath()
-  const project = database.prepare('SELECT name FROM projects WHERE path = ?').get(projectPath) as { name: string } | undefined
   const lanes = database
     .prepare("SELECT id, name, agent_prompt, agent_file_path FROM swim_lanes WHERE project_path = ? AND trim(agent_prompt) != ''")
     .all(projectPath) as { id: string; name: string; agent_prompt: string; agent_file_path: string | null }[]
   database.close()
   return lanes.map((lane) => {
-    const fileName = lane.agent_file_path
-      ? path.basename(lane.agent_file_path)
-      : agentMarkdownFileName(project?.name ?? '', lane.name)
-    return { ...lane, committedFile: path.join(REPO_ROOT, 'agent-context', fileName) }
+    // Lanes saved before #81 point at agent-context/; unsaved ones get the per-lane default.
+    const committedFile = lane.agent_file_path
+      ? path.join(REPO_ROOT, 'agent-context', path.basename(lane.agent_file_path))
+      : path.join(REPO_ROOT, SWIMLANE_PROMPT_DIRECTORY, laneFolderName(lane.name), AGENT_PROMPT_FILE_NAME)
+    return { ...lane, committedFile }
   })
 }
 

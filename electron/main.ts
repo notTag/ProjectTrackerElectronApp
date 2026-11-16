@@ -30,6 +30,7 @@ import {
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
+  AGENT_PROMPT_FILE_NAME,
   availableAgents,
   isUuid,
   isWebUrl,
@@ -838,15 +839,14 @@ const registerIpc = () => {
     if (!fieldsAreStrings) throw new Error('Invalid save request.')
 
     const normalized = assertScannedProjectPath(projectPath as string)
-    // The name comes from our own state, not the renderer, since it becomes part of a path.
     const project = stateRepository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
     if (!project) throw new Error('Unknown project.')
 
     const target = {
       projectPath: normalized,
-      projectName: project.name,
       laneName: laneName as string,
-      agentFilePath: agentFilePath as string
+      filePath: agentFilePath as string,
+      fileName: AGENT_PROMPT_FILE_NAME
     }
     // Same boundary as every other path IPC: keeps a typed path from reaching
     // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.

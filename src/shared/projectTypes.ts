@@ -632,21 +632,25 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   return guardAgainstOptionParsing(prompt)
 }
 
-export const AGENT_CONTEXT_DIRECTORY = 'agent-context'
+// Each lane's prompt files live together in <project>/SwimlaneAgentPrompt/<lane>/.
+export const SWIMLANE_PROMPT_DIRECTORY = 'SwimlaneAgentPrompt'
+export const AGENT_PROMPT_FILE_NAME = 'AgentPrompt.md'
+export const ORCHESTRATOR_PROMPT_FILE_NAME = 'AgentOrchestratorPrompt.md'
 
-// Path separators become word breaks ("ProjectTracker/electron-app" reads as
-// "ProjectTracker-electron-app"); the other characters filesystems reject are
-// dropped. Leading dots go so a name can't produce a hidden file or "..".
+// Path separators become word breaks ("In Review/QA" reads as "In-Review-QA");
+// the other characters filesystems reject are dropped. Leading dots go so a
+// name can't produce a hidden folder or "..".
 const fileNamePart = (value: string, fallback: string): string => {
   const hyphenated = value.trim().replace(/[\s/\\]+/g, '-')
   const withoutForbidden = hyphenated.replace(/[:*?"<>|]/g, '')
-  const withoutLeadingDots = withoutForbidden.replace(/^\.+/, '')
-  const collapsed = withoutLeadingDots.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
-  return collapsed || fallback
+  const collapsed = withoutForbidden.replace(/-{2,}/g, '-')
+  // Dots and hyphens are stripped together: "../../etc" hyphenates to
+  // "..-..-etc", and stripping one kind first would expose the other.
+  const trimmed = collapsed.replace(/^[.-]+/, '').replace(/-+$/, '')
+  return trimmed || fallback
 }
 
-export const agentMarkdownFileName = (projectName: string, laneName: string): string =>
-  `${fileNamePart(projectName, 'project')}-${fileNamePart(laneName, 'lane')}-AgentContext.md`
+export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
