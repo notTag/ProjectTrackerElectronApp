@@ -39,6 +39,7 @@ import {
 } from './ticketImages.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
+  AGENT_PROMPT_FILE_NAME,
   availableAgents,
   isUuid,
   isWebUrl,
@@ -55,7 +56,8 @@ import {
   type Ticket,
   type TicketWritePatch,
   type LaneWritePatch,
-  type ProjectWritePatch
+  type ProjectWritePatch,
+  type ScanProgress
 } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -275,6 +277,7 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
+  orchestratorPromptOverride: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
   nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true
@@ -595,7 +598,10 @@ const registerIpc = () => {
     return toPlainJson(stateRepository.updateProject(normalizePath(projectPath), patch))
   })
 
-  ipcMain.handle('projects:scan', (event, payload: unknown) => {
+  // ponytail: one scan app-wide, per-window controllers if multi-window scanning ever matters
+  let activeScan: AbortController | null = null
+
+  ipcMain.handle('projects:scan', async (event, payload: unknown) => {
     assertTrustedSender(event)
     const candidate = payload as {
       scanDirectories?: unknown
@@ -610,11 +616,40 @@ const registerIpc = () => {
       throw new Error('Invalid scan payload.')
     }
 
-    return toPlainJson(scanProjectDirectories(
-      candidate.scanDirectories.map(normalizePath),
-      candidate.hiddenPaths.map(normalizePath),
-      candidate.thirdPartyPaths.map(normalizePath)
-    ))
+    if (activeScan) throw new Error('A scan is already running.')
+
+    const scan = new AbortController()
+    activeScan = scan
+    // A cancelled walk can still be finishing an fs call after a newer scan starts;
+    // its progress must not show up in the newer scan.
+    const sendProgress = (progress: ScanProgress) => {
+      const isCurrentScan = activeScan === scan
+      if (isCurrentScan && !event.sender.isDestroyed()) event.sender.send('projects:scan-progress', progress)
+    }
+    // A reload drops the renderer's scanning state and its Cancel button, so a hung
+    // scan would otherwise block every later scan until restart.
+    const abortOnReload = (navigation: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+      const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
+      if (isPageLoad) scan.abort()
+    }
+    event.sender.on('did-start-navigation', abortOnReload)
+    try {
+      const result = await scanProjectDirectories(
+        candidate.scanDirectories.map(normalizePath),
+        candidate.hiddenPaths.map(normalizePath),
+        candidate.thirdPartyPaths.map(normalizePath),
+        { signal: scan.signal, onProgress: sendProgress }
+      )
+      return toPlainJson(result)
+    } finally {
+      activeScan = null
+      if (!event.sender.isDestroyed()) event.sender.off('did-start-navigation', abortOnReload)
+    }
+  })
+
+  ipcMain.handle('projects:scan-cancel', (event) => {
+    assertTrustedSender(event)
+    activeScan?.abort()
   })
 
   ipcMain.handle('dialog:pick-scan-directory', async (event) => {
@@ -901,15 +936,14 @@ const registerIpc = () => {
     if (!fieldsAreStrings) throw new Error('Invalid save request.')
 
     const normalized = assertScannedProjectPath(projectPath as string)
-    // The name comes from our own state, not the renderer, since it becomes part of a path.
     const project = stateRepository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
     if (!project) throw new Error('Unknown project.')
 
     const target = {
       projectPath: normalized,
-      projectName: project.name,
       laneName: laneName as string,
-      agentFilePath: agentFilePath as string
+      filePath: agentFilePath as string,
+      fileName: AGENT_PROMPT_FILE_NAME
     }
     // Same boundary as every other path IPC: keeps a typed path from reaching
     // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.

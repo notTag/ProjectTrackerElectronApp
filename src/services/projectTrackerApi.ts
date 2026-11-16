@@ -10,6 +10,7 @@ import {
   type ProjectRecord,
   type ProjectTrackerState,
   type ProjectWritePatch,
+  type ScanProgress,
   type ScanResult,
   type SwimLane,
   type TerminalTab,
@@ -181,6 +182,16 @@ export const projectTrackerApi = {
     })
     if (!response.ok) throw new Error(await response.text())
     return response.json() as Promise<ScanResult>
+  },
+
+  // The browser fallback scan is one HTTP round trip: no progress, nothing to cancel.
+  onScanProgress(callback: (progress: ScanProgress) => void): () => void {
+    if (window.projectTracker) return window.projectTracker.onScanProgress(callback)
+    return () => undefined
+  },
+
+  async cancelScan(): Promise<void> {
+    if (window.projectTracker) await window.projectTracker.cancelScan()
   },
 
   pickScanDirectory() {

@@ -6,6 +6,7 @@ import type {
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
+  ScanProgress,
   SwimLane,
   TerminalTab,
   Ticket,
@@ -62,6 +63,12 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
+  onScanProgress: (callback: (progress: ScanProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => callback(progress)
+    ipcRenderer.on('projects:scan-progress', listener)
+    return () => ipcRenderer.removeListener('projects:scan-progress', listener)
+  },
+  cancelScan: () => ipcRenderer.invoke('projects:scan-cancel'),
   pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),

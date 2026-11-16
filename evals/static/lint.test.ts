@@ -1,13 +1,23 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { ticketAgentPrompt } from '../../src/shared/projectTypes.js'
+import { SWIMLANE_PROMPT_DIRECTORY, ticketAgentPrompt } from '../../src/shared/projectTypes.js'
 import { REPO_ROOT, fixtureLanes, promptedLanes } from '../fixtures.js'
 
-const AGENT_CONTEXT_DIRECTORY = path.join(REPO_ROOT, 'agent-context')
-const agentContextFiles = readdirSync(AGENT_CONTEXT_DIRECTORY).filter((fileName) => fileName.endsWith('.md'))
+// agent-context/ holds files saved before #81; newer saves go to SwimlaneAgentPrompt/<lane>/.
+const PROMPT_DIRECTORIES = ['agent-context', SWIMLANE_PROMPT_DIRECTORY]
+
+const markdownFilesIn = (directoryName: string): string[] => {
+  const directory = path.join(REPO_ROOT, directoryName)
+  if (!existsSync(directory)) return []
+  const relativeNames = readdirSync(directory, { recursive: true, encoding: 'utf8' })
+  const markdownNames = relativeNames.filter((name) => name.endsWith('.md'))
+  return markdownNames.map((name) => path.join(directoryName, name))
+}
+
+const promptFiles = PROMPT_DIRECTORIES.flatMap(markdownFilesIn)
 const fixtureLaneIds = new Set(fixtureLanes.map((lane) => lane.id))
 
 // Prompts must defer to CLAUDE.md or the injected path. A hard-coded path
@@ -34,8 +44,8 @@ describe('agent prompt lint', () => {
     ])
   })
 
-  describe.each(agentContextFiles)('%s', (fileName) => {
-    const content = readFileSync(path.join(AGENT_CONTEXT_DIRECTORY, fileName), 'utf8')
+  describe.each(promptFiles)('%s', (relativePath) => {
+    const content = readFileSync(path.join(REPO_ROOT, relativePath), 'utf8')
 
     it('is not empty', () => {
       expect(content.trim()).not.toBe('')

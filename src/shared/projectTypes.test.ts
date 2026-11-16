@@ -14,6 +14,9 @@ import {
   orchestratorAgentChoice,
   agentShellCommand,
   orchestratorPrompt,
+  orchestratorPromptMissingTokens,
+  orchestratorPromptTemplate,
+  ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
@@ -27,7 +30,7 @@ import {
   githubSyncNotice,
   oldestImportedCreatedAt,
   type GithubClosedIssue,
-  agentMarkdownFileName,
+  laneFolderName,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -45,6 +48,7 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketIdsToMove,
   ticketsToRun,
   agentForTicket,
   availableAgents,
@@ -875,6 +879,37 @@ describe('ticketsToRun', () => {
   })
 })
 
+describe('ticketIdsToMove', () => {
+  const tickets = [
+    { id: 'a', laneId: 'idea' },
+    { id: 'b', laneId: 'prd' },
+    { id: 'c', laneId: 'idea' },
+    { id: 'd', laneId: 'dev' }
+  ] as Ticket[]
+
+  it('moves only the dragged card when it is unchecked', () => {
+    expect(ticketIdsToMove('a', new Set(['b', 'c']), tickets, 'dev')).toEqual(['a'])
+  })
+
+  it('moves every checked visible ticket when the dragged card is checked', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'c']), tickets, 'dev')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('skips a checked ticket that is not visible', () => {
+    const visibleTickets = tickets.filter((ticket) => ticket.id !== 'b')
+    expect(ticketIdsToMove('a', new Set(['a', 'b']), visibleTickets, 'dev')).toEqual(['a'])
+  })
+
+  it('skips checked tickets already in the target lane', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'd']), tickets, 'dev')).toEqual(['a', 'b'])
+  })
+
+  it('moves nothing when every carried ticket is already there', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'c']), tickets, 'idea')).toEqual([])
+    expect(ticketIdsToMove('d', new Set(), tickets, 'dev')).toEqual([])
+  })
+})
+
 describe('ticketTabTitle', () => {
   it('leads with the ticket number', () => {
     expect(ticketTabTitle({ number: 33, title: 'Short title' })).toBe('#33 Short title')
@@ -1133,26 +1168,27 @@ describe('full auto', () => {
   })
 })
 
-describe('agentMarkdownFileName', () => {
+describe('laneFolderName', () => {
   it('turns spaces and path separators into hyphens', () => {
-    expect(agentMarkdownFileName('My Project', 'In Review')).toBe('My-Project-In-Review-AgentContext.md')
-    expect(agentMarkdownFileName('ProjectTracker/electron-app', 'PRD')).toBe('ProjectTracker-electron-app-PRD-AgentContext.md')
+    expect(laneFolderName('In Review')).toBe('In-Review')
+    expect(laneFolderName('QA/Release\\Prep')).toBe('QA-Release-Prep')
   })
 
   it('strips characters filesystems reject', () => {
-    expect(agentMarkdownFileName('a:b*c?d"e<f>g|h', 'lane')).toBe('abcdefgh-lane-AgentContext.md')
+    expect(laneFolderName('a:b*c?d"e<f>g|h')).toBe('abcdefgh')
   })
 
   it('never yields a path separator or a leading dot from a traversal name', () => {
-    const fileName = agentMarkdownFileName('app', '../../etc/passwd')
-    expect(fileName).not.toMatch(/[/\\]/)
-    expect(fileName.startsWith('.')).toBe(false)
-    expect(agentMarkdownFileName('..', '.hidden')).toBe('project-hidden-AgentContext.md')
+    const folderName = laneFolderName('../../etc/passwd')
+    expect(folderName).not.toMatch(/[/\\]/)
+    expect(folderName.startsWith('.')).toBe(false)
+    expect(laneFolderName('.hidden')).toBe('hidden')
   })
 
-  it('falls back when a part sanitizes to nothing', () => {
-    expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
-    expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
+  it('falls back when the name sanitizes to nothing', () => {
+    expect(laneFolderName('  ')).toBe('lane')
+    expect(laneFolderName('- -')).toBe('lane')
+    expect(laneFolderName('..')).toBe('lane')
   })
 })
 
@@ -1240,6 +1276,74 @@ describe('Auto Run orchestrator', () => {
 
     it('never ends on a bare prefix', () => {
       expect(orchestratorTabTitle({ name: '   ' })).toBe('AUTORUN-ORCHESTRATOR-LANE')
+    })
+  })
+
+  describe('orchestratorPromptTemplate', () => {
+    const allTokens = Object.values(ORCHESTRATOR_PROMPT_TOKENS)
+
+    it('names the lane and holds every launch-time token', () => {
+      const template = orchestratorPromptTemplate(inDev, context('ghostty', 'Ghostty'))
+      expect(template).toContain('"In Development" lane')
+      expect(template).toContain('still in the in-dev lane')
+      for (const token of allTokens) expect(template).toContain(token)
+      expect(template).not.toContain('osascript')
+    })
+
+    it('includes existing lane instructions', () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
+      const template = orchestratorPromptTemplate(steered, context('ghostty', 'Ghostty'))
+      expect(template).toContain('Lane instructions')
+      expect(template).toContain('Poll every 2 minutes.')
+    })
+
+    it('reports only the missing ticket tokens', () => {
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{ticket_numbers}}')).toEqual([])
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{lanes}}')).toEqual(['{{ticket_numbers}}'])
+      expect(orchestratorPromptMissingTokens('nothing')).toEqual(['{{tickets}}', '{{ticket_numbers}}'])
+    })
+  })
+
+  describe('orchestratorPrompt with an override', () => {
+    const ghostty = context('ghostty', 'Ghostty')
+    const generated = orchestratorPrompt(inDev, entries, ghostty)
+
+    it('filling the unedited template gives the generated prompt', () => {
+      for (const terminalContext of [ghostty, context('warp', 'Warp')]) {
+        const template = orchestratorPromptTemplate(inDev, terminalContext)
+        const overridden = { ...inDev, orchestratorPromptOverride: template }
+        expect(orchestratorPrompt(overridden, entries, terminalContext)).toBe(orchestratorPrompt(inDev, entries, terminalContext))
+      }
+    })
+
+    it('fills known tokens with launch data and leaves unknown ones', () => {
+      const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
+      const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
+      expect(filled).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
+      expect(filled).toContain('IN (12, 13)')
+      expect(filled).toContain('- done — Done — agent work: no')
+      expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
+      expect(filled).toContain('{{foo}}')
+      for (const token of Object.values(ORCHESTRATOR_PROMPT_TOKENS)) expect(filled).not.toContain(token)
+      expect(filled).not.toContain('You report only')
+    })
+
+    it('follows the launch terminal in an edited prompt', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+    })
+
+    it('does not expand a token that appears inside a ticket title', () => {
+      const tricky = [ticket(14, 'About {{lanes}}'), ticket(15, 'Other')].map((entry) =>
+        buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
+      )
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}}' }
+      expect(orchestratorPrompt(lane, tricky, ghostty)).toContain('#14 About {{lanes}}')
+    })
+
+    it('uses the generated prompt for a whitespace-only override', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '  \n\t ' }
+      expect(orchestratorPrompt(lane, entries, ghostty)).toBe(generated)
     })
   })
 

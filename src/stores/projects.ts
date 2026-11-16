@@ -53,6 +53,7 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type ProjectTrackerState,
+  type ScanProgress,
   type SwimLane,
   type Ticket,
   UNASSIGNED_LANE_ID
@@ -62,6 +63,9 @@ interface ProjectsStoreState {
   state: ProjectTrackerState
   loading: boolean
   scanning: boolean
+  // Null until the first progress event of a scan arrives.
+  scanProgress: ScanProgress | null
+  scanCancelRequested: boolean
   saving: boolean
   error: string | null
   notice: string | null
@@ -255,6 +259,8 @@ export const useProjectsStore = defineStore('projects', {
     state: createSeedState(),
     loading: false,
     scanning: false,
+    scanProgress: null,
+    scanCancelRequested: false,
     saving: false,
     error: null,
     notice: null,
@@ -361,9 +367,9 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
-    // Every ticket edit funnels through here — modal fields, checklist toggles,
-    // and drag-and-drop between lanes alike — so this is the only place that has
-    // to stamp updatedAt for all of them.
+    // Every single-ticket edit funnels through here — modal fields and checklist
+    // toggles alike — so this is the only place that has to stamp updatedAt for
+    // them. Lane drags go through moveTickets.
     async updateTicket(
       projectPath: string,
       ticketId: string,
@@ -382,6 +388,21 @@ export const useProjectsStore = defineStore('projects', {
         }),
         alsoCompletedIds
       )
+    },
+
+    // Drag-and-drop between lanes, for one card or every checked one: a single
+    // board edit, so all moved tickets share one updatedAt. The lane check runs
+    // on the board the save queue hands over, not the one the view saw, so a
+    // ticket that got to the lane in the meantime keeps its updatedAt.
+    async moveTickets(projectPath: string, ticketIds: string[], laneId: string) {
+      if (ticketIds.length === 0) return
+      const movingIds = new Set(ticketIds)
+      const updatedAt = new Date().toISOString()
+      const needsMove = (ticket: Ticket) => movingIds.has(ticket.id) && ticket.laneId !== laneId
+      await this.updateBoard(projectPath, (board) => ({
+        ...board,
+        tickets: board.tickets.map((ticket) => (needsMove(ticket) ? { ...ticket, laneId, updatedAt } : ticket))
+      }))
     },
 
     // Matched against the run saved at write time, not the one the caller saw:
@@ -776,9 +797,19 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
+      if (this.scanning) return false
       this.scanning = true
+      this.scanCancelRequested = false
       this.error = null
       this.notice = null
+      const unsubscribeProgress = projectTrackerApi.onScanProgress((progress) => {
+        this.scanProgress = progress
+      })
+      const markScanCancelled = () => {
+        this.error = null
+        this.notice = 'Scan cancelled.'
+        return false
+      }
       const scanDirectories = unique(extraDirectory ? [...this.state.scanDirectories, extraDirectory] : this.state.scanDirectories)
 
       try {
@@ -787,6 +818,7 @@ export const useProjectsStore = defineStore('projects', {
           this.state.hiddenPaths,
           this.state.thirdPartyPaths
         )
+        if (this.scanCancelRequested) return markScanCancelled()
         if (options?.requireProjects && result.snapshot.projects.length === 0 && result.failures.length > 0) {
           this.error = `Scan failed for ${result.failures[0].path}: ${result.failures[0].message}`
           return false
@@ -802,11 +834,22 @@ export const useProjectsStore = defineStore('projects', {
             : `Scan found ${result.snapshot.projects.length} project${result.snapshot.projects.length === 1 ? '' : 's'}.`
         return true
       } catch (error) {
+        if (this.scanCancelRequested) return markScanCancelled()
         this.error = error instanceof Error ? error.message : String(error)
         return false
       } finally {
+        unsubscribeProgress()
         this.scanning = false
+        this.scanProgress = null
+        this.scanCancelRequested = false
       }
+    },
+
+    // Cancel keeps nothing: scan() skips its save, so stored state is untouched.
+    async cancelScan() {
+      if (!this.scanning) return
+      this.scanCancelRequested = true
+      await projectTrackerApi.cancelScan()
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {

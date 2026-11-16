@@ -1,23 +1,25 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { AGENT_CONTEXT_DIRECTORY, agentMarkdownFileName } from '../src/shared/projectTypes.js'
+import { SWIMLANE_PROMPT_DIRECTORY, laneFolderName } from '../src/shared/projectTypes.js'
 
 export interface AgentMarkdownTarget {
   projectPath: string
-  projectName: string
   laneName: string
-  agentFilePath: string
+  // What the user typed in the lane's file field; empty means "use the default".
+  filePath: string
+  // Default file inside the lane folder, e.g. AGENT_PROMPT_FILE_NAME.
+  fileName: string
 }
 
-// An empty field gets the generated name under <project>/agent-context/; the
-// sanitized name has no separators or leading dots, so it can't climb out.
-// A path the user typed is honoured, but only as a .md file, so a stray paste
-// can't overwrite something like ~/.zshrc. Main further confines it to the
-// scan directories.
+// An empty field gets <project>/SwimlaneAgentPrompt/<lane>/<fileName>; the
+// sanitized folder name has no separators or leading dots, so it can't climb
+// out. A path the user typed is honoured, but only as a .md file, so a stray
+// paste can't overwrite something like ~/.zshrc. Main further confines it to
+// the scan directories.
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
-  const explicitPath = target.agentFilePath.trim()
+  const explicitPath = target.filePath.trim()
 
   if (explicitPath) {
     const resolved = path.resolve(projectPath, explicitPath)
@@ -27,8 +29,8 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
     return resolved
   }
 
-  const fileName = agentMarkdownFileName(target.projectName, target.laneName)
-  return path.join(projectPath, AGENT_CONTEXT_DIRECTORY, fileName)
+  const laneFolder = laneFolderName(target.laneName)
+  return path.join(projectPath, SWIMLANE_PROMPT_DIRECTORY, laneFolder, target.fileName)
 }
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')

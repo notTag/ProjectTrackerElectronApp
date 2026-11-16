@@ -13,6 +13,8 @@ import ThemePicker from '@/components/ThemePicker.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
+import * as projectFilters from '@/shared/projectFilters'
+import type { ProjectFilters } from '@/shared/projectFilters'
 import type { ProjectMetrics, ProjectPriority, ProjectRecord, ProjectStatus } from '@/shared/projectTypes'
 
 type MetricFilter = 'total' | 'visible' | 'active' | 'ongoing' | 'completed' | 'high' | 'thirdparty' | 'hidden' | null
@@ -72,10 +74,10 @@ const priorityRank: Record<ProjectPriority, number> = {
 }
 
 const isProjectHidden = (project: ProjectRecord) =>
-  project.status === 'hidden' || store.state.hiddenPaths.includes(project.path)
+  projectFilters.isProjectHidden(project, store.state.hiddenPaths)
 
 const isProjectThirdParty = (project: ProjectRecord) =>
-  store.state.thirdPartyPaths.includes(project.path)
+  projectFilters.isProjectThirdParty(project, store.state.thirdPartyPaths)
 
 const getProjectDisplayName = (project: ProjectRecord) => {
   const scanDirectory = [...store.state.scanDirectories]
@@ -87,23 +89,30 @@ const getProjectDisplayName = (project: ProjectRecord) => {
   return relativePath.includes('/') ? relativePath : project.name
 }
 
-const metricsProjectPaths = computed(() => store.projects.map((project) => project.path))
+const scanProgressLabel = computed(() => {
+  const progress = store.scanProgress
+  if (!progress) return 'Scanning...'
+  const folderWord = progress.directoriesSeen === 1 ? 'folder' : 'folders'
+  return `Scanned ${progress.directoriesSeen} ${folderWord}`
+})
 
-const filteredProjects = computed(() =>
-  store.projects.filter((project) => {
-    const text = `${getProjectDisplayName(project)} ${project.name} ${project.path} ${project.notes}`.toLowerCase()
-    const matchesQuery = text.includes(query.value.toLowerCase())
-    const matchesStatus =
-      selectedStatuses.value.length === 0 || selectedStatuses.value.includes(project.status)
-    const matchesPriority =
-      selectedPriorities.value.length === 0 || selectedPriorities.value.includes(project.priority)
-    const matchesMetric = activeMetric.value !== 'thirdparty' || isProjectThirdParty(project)
-    const shouldShowHidden = selectedStatuses.value.includes('hidden')
-    return (
-      matchesQuery && matchesStatus && matchesPriority && matchesMetric && (shouldShowHidden || !isProjectHidden(project))
-    )
-  })
-)
+const filteredProjects = computed(() => {
+  const filters: ProjectFilters = {
+    query: query.value,
+    statuses: selectedStatuses.value,
+    priorities: selectedPriorities.value,
+    thirdPartyOnly: activeMetric.value === 'thirdparty',
+    hiddenPaths: store.state.hiddenPaths,
+    thirdPartyPaths: store.state.thirdPartyPaths
+  }
+  const matchesCurrentFilters = (project: ProjectRecord) => {
+    const displayName = getProjectDisplayName(project)
+    return projectFilters.projectMatchesFilters(project, displayName, filters)
+  }
+  return store.projects.filter(matchesCurrentFilters)
+})
+
+const metricsProjectPaths = computed(() => filteredProjects.value.map((project) => project.path))
 
 const sortedProjects = computed(() => {
   const direction = sortDirection.value === 'asc' ? 1 : -1
@@ -395,6 +404,11 @@ const renderMarkdown = (markdown: string | null) => {
       <ThemePicker />
       <button class="secondary" :disabled="store.scanning" @click="addScanDirectory">Add</button>
       <button class="secondary" @click="showDirs = !showDirs">Dirs</button>
+      <span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
+        <span>{{ scanProgressLabel }}</span>
+        <span v-if="store.scanProgress" class="scan-progress-path">{{ store.scanProgress.currentPath }}</span>
+      </span>
+      <button v-if="store.scanning" class="secondary" @click="store.cancelScan()">Cancel</button>
       <button
         :disabled="store.scanning || store.state.scanDirectories.length === 0"
         title="A '.git' must be present in order for the project to appear."
@@ -666,7 +680,12 @@ const renderMarkdown = (markdown: string | null) => {
           <button class="secondary" @click="pickOnboardingPath">Browse</button>
         </div>
         <div class="modal-actions">
-          <button class="secondary" @click="onboardingSkipped = true">Skip</button>
+          <span v-if="store.scanning" class="scan-progress" :title="store.scanProgress?.currentPath">
+            <span>{{ scanProgressLabel }}</span>
+            <span v-if="store.scanProgress" class="scan-progress-path">{{ store.scanProgress.currentPath }}</span>
+          </span>
+          <button v-if="store.scanning" class="secondary" @click="store.cancelScan()">Cancel</button>
+          <button v-else class="secondary" @click="onboardingSkipped = true">Skip</button>
           <button :disabled="!onboardingPath || store.scanning" @click="startFirstScan">
             {{ store.scanning ? 'Scanning...' : 'Scan Folder' }}
           </button>

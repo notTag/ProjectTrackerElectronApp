@@ -109,8 +109,9 @@ From left to right:
 | **Theme** picker | See 1.5 |
 | **Add** | Opens the native folder dialog, adds the chosen folder to the scan directories, then runs a full scan. Disabled while a scan is running |
 | **Dirs** | Shows or hides the Scan directories panel (2.2) |
-| **📊 Metrics** | Popover table for every project in the current list (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. **↻** pulls fresh numbers. Its open state is remembered per view |
+| **📊 Metrics** | Popover table for exactly the projects the filtered list shows (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. Follows every list filter (metric tiles, status, priority, search, hidden) through the shared `projectMatchesFilters` (`src/shared/projectFilters.ts`); reloads 300 ms after filters settle; a 0-match filter shows "No projects match the current filters." **↻** pulls fresh numbers. Its open state is remembered per view |
 | **Scan** / **Scanning...** | Rescans every scan directory. Disabled while scanning or when there are no scan directories. Tooltip: "A '.git' must be present in order for the project to appear." (see 5) |
+| Scan progress + **Cancel** | While a scan runs, shows "Scanned N folders" and the folder being read (ellipsized, full path on hover; "Scanning..." until the first update). **Cancel** stops the scan, keeps nothing and shows "Scan cancelled." |
 
 ### 2.2 Scan directories panel (toggled by Dirs)
 
@@ -126,7 +127,7 @@ From left to right:
 
 ### 2.3 Notices and errors
 
-See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues." and "Updated GitHub data for X."
+See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues.", "Scan cancelled." and "Updated GitHub data for X."
 
 ### 2.4 Metric tiles
 
@@ -221,6 +222,7 @@ When nothing matches: "No projects match the current view. Adjust filters or add
 - **Path input** (placeholder `/Users/you/Code`) and a **Browse** button that opens the native folder dialog.
 - **Skip** closes the modal for the session, and the seed project `sample-app` stays visible.
 - **Scan Folder** / **Scanning...** scans the chosen path.
+  - While it runs, the same progress line and **Cancel** button as the header replace **Skip**.
   - The modal closes on success.
   - If the scan finds no projects and has failures, an error banner shows the first failure and the modal stays open so you can try again.
 
@@ -288,6 +290,11 @@ From left to right:
 #### Ticket card
 
 - Draggable between lanes. Clicking a card opens the Ticket modal (3.8).
+- **Select checkbox** (title "Select (run / move)"): checked cards feed Auto Run's ticket set and bulk drag. Selection is in memory only and clears when you switch project.
+- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`ticketIdsToMove` in `projectTypes.ts`, `moveTickets` in `stores/projects.ts`).
+  - Dragging an unchecked card moves only that card.
+  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
+  - Moved tickets stay checked.
 - The title always shows. These fields show only when switched on in Display:
   - **#number**
   - **Description** preview
@@ -418,13 +425,19 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Save to Agent Markdown** button, under the prompt. Disabled while the prompt is empty or a save is running. It writes the prompt to a markdown file and links that file to the lane:
-  - File field empty: creates `<project>/agent-context/<PROJECT>-<LANE>-AgentContext.md`, making the folder if it's missing. Names are sanitized: spaces and `/ \` become `-`, and `: * ? " < > |` are dropped.
+  - File field empty: creates `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. Paths saved before #81 (`agent-context/...`) keep working as explicit paths.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project.
-  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too, so saving twice adds the prompt twice.
+  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too. Saving the same prompt again is a no-op, so repeated clicks don't stack copies.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
-- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable.
+  - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
+  - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
+  - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
+  - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone.
+  - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
+  - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
 - **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
@@ -501,6 +514,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`
@@ -562,11 +576,12 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+- CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`
 
 - Static tier, part of `bun run test`:
-  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
   - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
 - Behavioral tier, `bun run eval`:
   - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
@@ -575,7 +590,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
   - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
   - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
   - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
-  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
+  - `evals/behavioral/sync.eval.test.ts` checks each lane's committed prompt file (saved path, else `SwimlaneAgentPrompt/<lane>/AgentPrompt.md`) against its lane's prompt in the live DB.
 
 ---
 
