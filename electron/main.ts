@@ -511,7 +511,12 @@ const registerIpc = () => {
     const { id } = (payload ?? {}) as { id?: unknown }
     if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
     stateRepository.deleteTicket(id)
-    removeTicketImages(attachmentsRoot, id)
+    // The row is already gone, so a cleanup failure must not report a failed delete.
+    try {
+      removeTicketImages(attachmentsRoot, id)
+    } catch (error) {
+      console.warn(`Could not remove attachments for ticket ${id}:`, error)
+    }
   })
 
   ipcMain.handle('ticket-images:pick', async (event, payload: unknown) => {
@@ -938,7 +943,9 @@ app.whenReady().then(async () => {
   }
   registerIpc()
   protocol.handle(TICKET_IMAGE_SCHEME, (request) => {
-    const requestedPath = decodeURIComponent(new URL(request.url).pathname.slice(1))
+    const requestUrl = new URL(request.url)
+    const encodedPath = requestUrl.pathname.slice(1)
+    const requestedPath = decodeURIComponent(encodedPath)
     const imagePath = resolveAttachmentPath(attachmentsRoot, requestedPath)
     if (!imagePath) return new Response(null, { status: 404 })
     return net.fetch(pathToFileURL(imagePath).toString())

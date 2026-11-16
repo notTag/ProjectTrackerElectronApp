@@ -519,6 +519,7 @@ const closeModals = () => {
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
+  imageError.value = null
 }
 
 const focusTicketFilter = () => {
@@ -699,38 +700,55 @@ const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]
 
 const ticketImageUrl = (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`
 
-const errorMessageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
+const ipcErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
 
 // Files are written before the ticket lists them, so a failed save leaves at
-// worst an orphan file, never a listed path that doesn't exist.
-const attachImages = async (ticket: Ticket, saveImages: () => Promise<string[]>) => {
+// worst an orphan file, never a listed path that doesn't exist. Settled one by
+// one: a bad file in a drop must not keep the good ones off the ticket.
+const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) => {
   imageError.value = null
+  const results = await Promise.allSettled(pendingSaves)
+  const addedPaths = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure) imageError.value = ipcErrorMessage(failure.reason)
+  if (!addedPaths.length) return
   try {
-    const addedPaths = await saveImages()
-    if (addedPaths.length) await editTicketImages(ticket, (images) => [...images, ...addedPaths])
+    await editTicketImages(ticket, (images) => [...images, ...addedPaths])
   } catch (error) {
-    imageError.value = errorMessageOf(error)
+    imageError.value = ipcErrorMessage(error)
   }
 }
 
-const pickTicketImages = (ticket: Ticket) => attachImages(ticket, () => projectTrackerApi.pickTicketImages(ticket.id))
+const pickTicketImages = (ticket: Ticket) => attachImages(ticket, [projectTrackerApi.pickTicketImages(ticket.id)])
 
 const imageFilesOf = (transfer: DataTransfer | null) =>
   [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
 
+const saveImageFile = async (ticket: Ticket, file: File) => {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const imagePath = await projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
+  return [imagePath]
+}
+
 // Paste and drop both send bytes: clipboard images have no file path at all.
 const saveImageFiles = (ticket: Ticket, files: File[]) =>
-  attachImages(ticket, () =>
-    Promise.all(
-      files.map(async (file) => {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        return projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
-      })
-    )
-  )
+  attachImages(ticket, files.map((file) => saveImageFile(ticket, file)))
 
-// Text pastes fall through untouched, so Cmd+V in the description still works.
+// Rich text copied from Notes/Word/Sheets carries a PNG rendering alongside the
+// text, so a paste into a text field with text on the clipboard stays a text paste.
+const isTextFieldPaste = (event: ClipboardEvent) => {
+  const target = event.target
+  const isIntoTextField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+  const hasText = event.clipboardData?.types.includes('text/plain') ?? false
+  return isIntoTextField && hasText
+}
+
 const pasteTicketImages = (ticket: Ticket, event: ClipboardEvent) => {
+  if (isTextFieldPaste(event)) return
   const files = imageFilesOf(event.clipboardData)
   if (!files.length) return
   event.preventDefault()
@@ -749,13 +767,13 @@ const removeTicketImage = async (ticket: Ticket, imagePath: string) => {
     await editTicketImages(ticket, (images) => images.filter((existingPath) => existingPath !== imagePath))
     await projectTrackerApi.removeTicketImage(ticket.id, imagePath)
   } catch (error) {
-    imageError.value = errorMessageOf(error)
+    imageError.value = ipcErrorMessage(error)
   }
 }
 
 const openTicketImage = (imagePath: string) =>
   projectTrackerApi.openTicketImage(imagePath).catch((error) => {
-    imageError.value = errorMessageOf(error)
+    imageError.value = ipcErrorMessage(error)
   })
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
@@ -799,11 +817,6 @@ const canSaveLaneMarkdown = computed(
   () => laneMarkdownDraft.value.agentPrompt.trim() !== '' && !laneMarkdownStatus.value.saving
 )
 
-// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
-const ipcErrorMessage = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-}
 
 const saveLaneMarkdown = async (lane: SwimLane) => {
   const { agentPrompt, agentFilePath } = laneMarkdownDraft.value
@@ -1548,7 +1561,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <ul v-if="openTicket.images?.length">
           <li v-for="imagePath in openTicket.images" :key="imagePath">
             <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
-              <img :src="ticketImageUrl(imagePath)" alt="Attached image" />
+              <img :src="ticketImageUrl(imagePath)" alt="Attached image" loading="lazy" decoding="async" />
             </button>
             <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
           </li>
