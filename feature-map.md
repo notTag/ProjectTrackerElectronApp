@@ -111,6 +111,7 @@ From left to right:
 | **Dirs** | Shows or hides the Scan directories panel (2.2) |
 | **📊 Metrics** | Popover table for exactly the projects the filtered list shows (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. Follows every list filter (metric tiles, status, priority, search, hidden) through the shared `projectMatchesFilters` (`src/shared/projectFilters.ts`); reloads 300 ms after filters settle; a 0-match filter shows "No projects match the current filters." **↻** pulls fresh numbers. Its open state is remembered per view |
 | **Scan** / **Scanning...** | Rescans every scan directory. Disabled while scanning or when there are no scan directories. Tooltip: "A '.git' must be present in order for the project to appear." (see 5) |
+| Scan progress + **Cancel** | While a scan runs, shows "Scanned N folders" and the folder being read (ellipsized, full path on hover; "Scanning..." until the first update). **Cancel** stops the scan, keeps nothing and shows "Scan cancelled." |
 
 ### 2.2 Scan directories panel (toggled by Dirs)
 
@@ -126,7 +127,7 @@ From left to right:
 
 ### 2.3 Notices and errors
 
-See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues." and "Updated GitHub data for X."
+See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues.", "Scan cancelled." and "Updated GitHub data for X."
 
 ### 2.4 Metric tiles
 
@@ -221,6 +222,7 @@ When nothing matches: "No projects match the current view. Adjust filters or add
 - **Path input** (placeholder `/Users/you/Code`) and a **Browse** button that opens the native folder dialog.
 - **Skip** closes the modal for the session, and the seed project `sample-app` stays visible.
 - **Scan Folder** / **Scanning...** scans the chosen path.
+  - While it runs, the same progress line and **Cancel** button as the header replace **Skip**.
   - The modal closes on success.
   - If the scan finds no projects and has failures, an error banner shows the first failure and the modal stays open so you can try again.
 
@@ -506,6 +508,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`
