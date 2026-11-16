@@ -1422,6 +1422,16 @@ describe('Auto Run orchestrator', () => {
       }
     })
 
+    // The file holds a copy of this prompt; if the prompt named the file, every
+    // save would differ from the last and append another copy.
+    it('leaves the orchestrator and ticket prompts unchanged by an orchestrator markdown file', () => {
+      const linked = { ...inDev, orchestratorFilePath: 'SwimlaneAgentPrompt/In-Dev/AgentOrchestratorPrompt.md' }
+      const launchContext = context('ghostty', 'Ghostty')
+      expect(orchestratorPrompt(linked, entries, launchContext)).toBe(prompt)
+      expect(orchestratorPromptTemplate(linked, launchContext)).toBe(orchestratorPromptTemplate(inDev, launchContext))
+      expect(ticketAgentPrompt(ticket(12, 'First thing'), linked)).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
+    })
+
     it("never puts the orchestrator prompt in a ticket agent's prompt", () => {
       const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
       const agentPrompt = ticketAgentPrompt(ticket(12, 'First thing'), steered)

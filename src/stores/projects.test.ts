@@ -32,7 +32,8 @@ const api = vi.hoisted(() => ({
   fetchProjectGithubIssues: vi.fn(),
   fetchTicketPullRequest: vi.fn(),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
-  terminalTabsAlive: vi.fn()
+  terminalTabsAlive: vi.fn(),
+  saveLaneMarkdown: vi.fn()
 }))
 
 const offlineError = new Error(
@@ -747,6 +748,34 @@ describe('per-entity writes', () => {
     expect(api.deleteLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd')
     expect(api.updateProject).toHaveBeenCalledWith(PROJECT_PATH, { notes: 'hello' })
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
+  })
+
+  it('saves the orchestrator markdown, then stores the prompt patch and the written path', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
+    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath, appended: false })
+    const prd = store.board(PROJECT_PATH).lanes[1]
+
+    const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
+    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', promptPatch)
+
+    expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.')
+    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', {
+      ...promptPatch,
+      orchestratorFilePath: savedPath
+    })
+  })
+
+  it('leaves the lane untouched when the markdown write fails', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
+    const prd = store.board(PROJECT_PATH).lanes[1]
+
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'x.txt', {})).rejects.toThrow()
+
+    expect(api.updateLane).not.toHaveBeenCalled()
   })
 
   it('a created ticket takes the number the repository returns', async () => {

@@ -47,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -125,6 +125,8 @@ describe('StateRepository', () => {
     expect(board?.lanes[1].outputTarget).toBe('docs/prd/')
     expect(board?.lanes[1].orchestratorPrompt).toBe('Poll every 2 minutes.')
     expect(board?.lanes[0].orchestratorPrompt).toBe('')
+    expect(board?.lanes[1].orchestratorFilePath).toBe('docs/orch.md')
+    expect(board?.lanes[0].orchestratorFilePath).toBe('')
     expect(board?.lanes[1].orchestratorPromptOverride).toBe('Watch {{tickets}}')
     expect(board?.lanes[0].orchestratorPromptOverride).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
@@ -384,6 +386,16 @@ describe('row-level writes', () => {
     repository.updateSwimLane(projectPath, UNASSIGNED_LANE_ID, { agentPrompt: 'Sort it.' })
 
     expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.agentPrompt).toBe('Sort it.')
+  })
+
+  it('persists the orchestrator markdown file on the unassigned column', () => {
+    const userDataPath = freshUserDataPath()
+    const repository = new StateRepository(userDataPath)
+    const projectPath = repository.getState().snapshot.projects[0].path
+
+    repository.updateSwimLane(projectPath, UNASSIGNED_LANE_ID, { orchestratorFilePath: 'docs/triage.md' })
+
+    expect(reopenedBoard(userDataPath, projectPath).unassignedLane?.orchestratorFilePath).toBe('docs/triage.md')
   })
 
   it('stamps updatedAt only when the patch does not carry it', () => {
@@ -783,6 +795,7 @@ describe('legacy databases', () => {
     expect(state.boards!['/legacy'].tickets.map((ticket) => ticket.title)).toEqual(['From sql.js', 'Kept'])
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].orchestratorFilePath).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPromptOverride).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
