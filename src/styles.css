@@ -1856,3 +1856,9 @@ code {
   align-items: flex-end;
   gap: 16px;
 }
+
+/* Matches the 40px input min-height (input:not([type="checkbox"])) so the
+   label's align-items: center lands the checkbox on the input's middle. */
+.orchestrator-poll-row .checkbox-label {
+  min-height: 40px;
+}
