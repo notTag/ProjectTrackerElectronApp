@@ -1,13 +1,7 @@
-<script lang="ts">
-// `ref` comes from the <script setup> import below; both blocks compile into one module.
-// Module scope, not setup: App.vue remounts BoardView on Board <-> Dashboard switches,
-// and the width choice should survive that. ponytail: app-session only; move to settings if it must survive restart.
-const ticketModalExpanded = ref(false)
-</script>
-
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ticketModalExpanded } from '@/ticketModalWidth'
 
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
