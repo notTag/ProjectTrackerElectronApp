@@ -17,7 +17,8 @@ import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
-import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
+import { projectTrackerApi } from '@/services/projectTrackerApi'
+import { TERMINAL_TARGETS, resolveAutoRunTerminal, type OpenInTarget } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
@@ -35,6 +36,9 @@ import {
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
   orchestratorAgentChoice,
+  orchestratorPromptMissingTokens,
+  orchestratorPromptTemplate,
+  type OrchestratorPromptContext,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -61,11 +65,13 @@ import {
   ticketSearchText,
   ticketShellCommand,
   ticketTabTitle,
+  ticketIdsToMove,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
   worktreeFolderName,
   type Agent,
+  type LaneMarkdownKind,
   type TicketCardField,
   type User,
   UNASSIGNED_LANE_ID,
@@ -114,6 +120,7 @@ const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
+const imageError = ref<string | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -524,6 +531,7 @@ const closeModals = () => {
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
+  imageError.value = null
 }
 
 const focusTicketFilter = () => {
@@ -576,8 +584,30 @@ onMounted(() => {
   window.addEventListener('keydown', handleBoardKeydown)
 })
 
+// Trailing "+" zone: shown on hover, lingers after the pointer leaves so it
+// doesn't vanish mid-reach. Re-entering just cancels the pending hide.
+const ADD_ZONE_HIDE_DELAY_MS = 3000
+const addZoneShown = ref(false)
+let addZoneHideTimer: ReturnType<typeof setTimeout> | undefined
+
+const showAddZone = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = true
+}
+
+const hideAddZoneNow = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = false
+}
+
+const hideAddZoneLater = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneHideTimer = setTimeout(hideAddZoneNow, ADD_ZONE_HIDE_DELAY_MS)
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
+  clearTimeout(addZoneHideTimer)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -689,6 +719,97 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
   }))
 }
 
+// Same queued-mutate reasoning as editTicketLinks.
+const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  return store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const images = change(current.images ?? [])
+      return { ...current, images: images.length ? images : undefined, updatedAt }
+    })
+  }))
+}
+
+const ticketImageUrl = (imagePath: string) => projectTrackerApi.ticketImageUrl(imagePath)
+
+// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
+const ipcErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
+
+// Files are written before the ticket lists them, so a failed save leaves at
+// worst an orphan file, never a listed path that doesn't exist. Settled one by
+// one: a bad file in a drop must not keep the good ones off the ticket.
+const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) => {
+  imageError.value = null
+  const results = await Promise.allSettled(pendingSaves)
+  const addedPaths = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure) imageError.value = ipcErrorMessage(failure.reason)
+  if (!addedPaths.length) return
+  try {
+    await editTicketImages(ticket, (images) => [...images, ...addedPaths])
+  } catch (error) {
+    imageError.value = ipcErrorMessage(error)
+  }
+}
+
+const pickTicketImages = (ticket: Ticket) => attachImages(ticket, [projectTrackerApi.pickTicketImages(ticket.id)])
+
+const imageFilesOf = (transfer: DataTransfer | null) =>
+  [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+
+const saveImageFile = async (ticket: Ticket, file: File) => {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const imagePath = await projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
+  return [imagePath]
+}
+
+// Paste and drop both send bytes: clipboard images have no file path at all.
+const saveImageFiles = (ticket: Ticket, files: File[]) =>
+  attachImages(ticket, files.map((file) => saveImageFile(ticket, file)))
+
+// Rich text copied from Notes/Word/Sheets carries a PNG rendering alongside the
+// text, so a paste into a text field with text on the clipboard stays a text paste.
+const isTextFieldPaste = (event: ClipboardEvent) => {
+  const target = event.target
+  const isIntoTextField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+  const hasText = event.clipboardData?.types.includes('text/plain') ?? false
+  return isIntoTextField && hasText
+}
+
+const pasteTicketImages = (ticket: Ticket, event: ClipboardEvent) => {
+  if (isTextFieldPaste(event)) return
+  const files = imageFilesOf(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  void saveImageFiles(ticket, files)
+}
+
+const dropTicketImages = (ticket: Ticket, event: DragEvent) => {
+  const files = imageFilesOf(event.dataTransfer)
+  if (files.length) void saveImageFiles(ticket, files)
+}
+
+// The ticket stops listing the image before its file goes.
+const removeTicketImage = async (ticket: Ticket, imagePath: string) => {
+  imageError.value = null
+  try {
+    await editTicketImages(ticket, (images) => images.filter((existingPath) => existingPath !== imagePath))
+    await projectTrackerApi.removeTicketImage(ticket.id, imagePath)
+  } catch (error) {
+    imageError.value = ipcErrorMessage(error)
+  }
+}
+
+const openTicketImage = (imagePath: string) =>
+  projectTrackerApi.openTicketImage(imagePath).catch((error) => {
+    imageError.value = ipcErrorMessage(error)
+  })
+
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
 }
@@ -703,58 +824,13 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
   editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
-// Live copies of the two lane fields, because both inputs only commit on blur:
-// the button has to enable as soon as a prompt is typed, and has to send what
-// is on screen rather than whatever state held before the blur landed.
-const laneMarkdownDraft = ref({ agentPrompt: '', agentFilePath: '' })
-const laneMarkdownStatus = ref<{ saving: boolean; savedMessage: string; error: string }>({
-  saving: false,
-  savedMessage: '',
-  error: ''
-})
-
-watch(
-  // Separate getters, not one getter returning an array: a fresh array on every
-  // board refresh would reset the draft mid-typing.
-  [() => openLane.value?.agentPrompt, () => openLane.value?.agentFilePath],
-  ([agentPrompt, agentFilePath]) => {
-    laneMarkdownDraft.value = { agentPrompt: agentPrompt ?? '', agentFilePath: agentFilePath ?? '' }
-  },
-  { immediate: true }
-)
-watch(openLaneId, () => {
-  laneMarkdownStatus.value = { saving: false, savedMessage: '', error: '' }
-})
-
-const canSaveLaneMarkdown = computed(
-  () => laneMarkdownDraft.value.agentPrompt.trim() !== '' && !laneMarkdownStatus.value.saving
-)
-
-// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
-const ipcErrorMessage = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-}
-
-const saveLaneMarkdown = async (lane: SwimLane) => {
-  const { agentPrompt, agentFilePath } = laneMarkdownDraft.value
-  laneMarkdownStatus.value = { saving: true, savedMessage: '', error: '' }
-  try {
-    const saved = await store.saveLaneAgentMarkdown(projectPath.value, lane, agentPrompt, agentFilePath)
-    const verb = saved.appended ? 'Appended to' : 'Saved to'
-    laneMarkdownStatus.value = { saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' }
-  } catch (error) {
-    laneMarkdownStatus.value = { saving: false, savedMessage: '', error: ipcErrorMessage(error) }
-  }
-}
-
 const dropOnLane = async (laneId: string) => {
   const ticketId = draggedTicketId.value
   draggedTicketId.value = null
   if (!ticketId) return
-  const ticket = board.value.tickets.find((entry) => entry.id === ticketId)
-  if (!ticket || ticket.laneId === laneId) return
-  await store.updateTicket(projectPath.value, ticketId, { laneId })
+  const visibleTickets = visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id))
+  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets, laneId)
+  await store.moveTickets(projectPath.value, ticketIds, laneId)
 }
 
 const formatDate = (value: string) => {
@@ -838,7 +914,8 @@ const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
 }
 
 const changeAutoRunConfirmAgent = () => {
-  autoRunConfirmModel.value = ''
+  const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  autoRunConfirmModel.value = agent.defaultModel ?? ''
   if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
 }
 
@@ -847,6 +924,110 @@ const changeAutoRunConfirmAgent = () => {
 // An unconfigured lane follows the Open In picker when that is a terminal, so
 // the first click uses a terminal the user is known to have.
 const autoRunTerminal = (lane: SwimLane) => resolveAutoRunTerminal(lane.autoRunTerminalId, openInStore.selectedId)
+
+const orchestratorContextFor = (terminal: OpenInTarget): OrchestratorPromptContext => ({
+  projectPath: projectPath.value,
+  lanes: [...board.value.lanes, getUnassignedLane(board.value)],
+  terminalId: terminal.id,
+  terminalLabel: terminal.label
+})
+
+const openLaneOrchestratorTemplate = computed(() => {
+  const lane = openLane.value
+  if (!lane) return ''
+  const context = orchestratorContextFor(autoRunTerminal(lane))
+  return orchestratorPromptTemplate(lane, context)
+})
+
+// Blank counts as no override, the same as at launch.
+const openLaneOrchestratorOverride = computed(() => {
+  const override = openLane.value?.orchestratorPromptOverride ?? ''
+  return override.trim() ? override : ''
+})
+
+const openLaneMissingOrchestratorTokens = computed(() => {
+  const override = openLaneOrchestratorOverride.value
+  return override ? orchestratorPromptMissingTokens(override) : []
+})
+
+// Saving the untouched template, or clearing the box, keeps the lane on the
+// generated prompt, so app updates to it still arrive and the old extras stay.
+// An edit folds the extras into the override, since they are already part of
+// the text the user just saved.
+const orchestratorPromptPatch = (text: string): Partial<Omit<SwimLane, 'id'>> => {
+  const trimmedText = text.trim()
+  const isUnchangedTemplate = trimmedText === openLaneOrchestratorTemplate.value.trim()
+  if (!trimmedText || isUnchangedTemplate) return { orchestratorPromptOverride: '' }
+  return { orchestratorPromptOverride: text, orchestratorPrompt: '' }
+}
+
+const saveOrchestratorPrompt = (lane: SwimLane, text: string) => editLane(lane, orchestratorPromptPatch(text))
+
+// Live copies of each prompt + markdown file pair, because the inputs only
+// commit on blur: a Save button has to enable as soon as a prompt is typed, and
+// has to send what is on screen rather than whatever state held before the blur.
+type LaneMarkdownStatus = { saving: boolean; savedMessage: string; error: string }
+const idleMarkdownStatus = (): LaneMarkdownStatus => ({ saving: false, savedMessage: '', error: '' })
+const laneMarkdownDraft = ref<Record<LaneMarkdownKind, { prompt: string; filePath: string }>>({
+  agent: { prompt: '', filePath: '' },
+  orchestrator: { prompt: '', filePath: '' }
+})
+const laneMarkdownStatus = ref<Record<LaneMarkdownKind, LaneMarkdownStatus>>({
+  agent: idleMarkdownStatus(),
+  orchestrator: idleMarkdownStatus()
+})
+
+// The orchestrator box shows the full prompt (override or generated), so that
+// is what its file gets.
+const laneMarkdownSources: Record<LaneMarkdownKind, { prompt: () => string; filePath: () => string }> = {
+  agent: {
+    prompt: () => openLane.value?.agentPrompt ?? '',
+    filePath: () => openLane.value?.agentFilePath ?? ''
+  },
+  orchestrator: {
+    prompt: () => openLaneOrchestratorOverride.value || openLaneOrchestratorTemplate.value,
+    filePath: () => openLane.value?.orchestratorFilePath ?? ''
+  }
+}
+
+for (const kind of ['agent', 'orchestrator'] as const) {
+  const source = laneMarkdownSources[kind]
+  watch(
+    // Separate getters, not one getter returning an array: a fresh array on every
+    // board refresh would reset the draft mid-typing.
+    [source.prompt, source.filePath],
+    ([prompt, filePath]) => {
+      laneMarkdownDraft.value[kind] = { prompt, filePath }
+    },
+    { immediate: true }
+  )
+}
+watch(openLaneId, () => {
+  laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
+})
+
+const canSaveLaneMarkdown = (kind: LaneMarkdownKind) =>
+  laneMarkdownDraft.value[kind].prompt.trim() !== '' && !laneMarkdownStatus.value[kind].saving
+
+const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind) => {
+  const { prompt, filePath } = laneMarkdownDraft.value[kind]
+  const savingLaneId = openLaneId.value
+  const setStatus = (status: LaneMarkdownStatus) => {
+    // The modal may have switched lanes mid-save; don't show this lane's result on another.
+    if (openLaneId.value === savingLaneId) laneMarkdownStatus.value[kind] = status
+  }
+  setStatus({ saving: true, savedMessage: '', error: '' })
+  try {
+    // Agent text is stored as typed; orchestrator text goes through the same
+    // override rules as a blur, so saving the untouched template doesn't freeze it.
+    const promptPatch = kind === 'agent' ? { agentPrompt: prompt } : orchestratorPromptPatch(prompt)
+    const saved = await store.saveLaneMarkdown(projectPath.value, lane, kind, prompt, filePath, promptPatch)
+    const verb = saved.appended ? 'Appended to' : 'Saved to'
+    setStatus({ saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' })
+  } catch (error) {
+    setStatus({ saving: false, savedMessage: '', error: ipcErrorMessage(error) })
+  }
+}
 
 const autoRunTickets = (lane: SwimLane) => {
   const visibleLaneTickets = ticketsInLane(lane.id)
@@ -872,8 +1053,9 @@ const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
 const askToAutoRunLane = (lane: SwimLane) => {
-  autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
-  autoRunConfirmModel.value = lane.autoRunModel ?? ''
+  const agent = findAgent(agents.value, lane.autoRunAgentId)
+  autoRunConfirmAgentId.value = agent.id
+  autoRunConfirmModel.value = lane.autoRunModel || agent.defaultModel || ''
   autoRunConfirmOrchestratorAgentId.value = lane.orchestratorAgentId ?? ''
   autoRunConfirmOrchestratorModel.value = lane.orchestratorModel ?? ''
   autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
@@ -895,12 +1077,7 @@ const confirmAutoRunLane = () => {
   if (launches.length === 0) return
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  const orchestratorContext = {
-    projectPath: projectPath.value,
-    lanes: [...board.value.lanes, getUnassignedLane(board.value)],
-    terminalId: terminal.id,
-    terminalLabel: terminal.label
-  }
+  const orchestratorContext = orchestratorContextFor(terminal)
   const orchestratorSettings = {
     orchestratorAgentId: autoRunConfirmOrchestratorAgentId.value || undefined,
     orchestratorModel: autoRunConfirmOrchestratorModel.value
@@ -1059,7 +1236,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" @edit-lane="editLane" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1149,8 +1326,8 @@ const runTicketAgent = (ticket: Ticket) => {
               type="checkbox"
               class="ticket-select"
               :checked="selectedTicketIds.has(ticket.id)"
-              :aria-label="`Select #${ticket.number} to run`"
-              title="Select to run"
+              :aria-label="`Select #${ticket.number} (run / move)`"
+              title="Select (run / move)"
               @click.stop
               @change="toggleTicketSelected(ticket.id)"
             />
@@ -1234,6 +1411,22 @@ const runTicketAgent = (ticket: Ticket) => {
           @pointercancel="endLaneResize"
         />
       </section>
+
+      <!-- Kept (inert) during a lane drag: removing its box would re-center
+           every lane under "safe center" the moment the drag starts.
+           Unmounting under the pointer fires no mouseleave → reset on unmount. -->
+      <div
+        v-if="!filterLaneId"
+        class="lane-add-zone"
+        :class="{ shown: addZoneShown }"
+        :inert="laneDrag?.active"
+        :style="{ width: `${DEFAULT_LANE_WIDTH}px` }"
+        @mouseenter="showAddZone"
+        @mouseleave="hideAddZoneLater"
+        @vue:before-unmount="hideAddZoneNow"
+      >
+        <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">+</button>
+      </div>
     </section>
   </main>
 
@@ -1345,6 +1538,7 @@ const runTicketAgent = (ticket: Ticket) => {
       class="modal ticket-modal"
       :class="{ expanded: ticketModalExpanded && boardView !== 'graph' }"
       @focusin="store.refresh()"
+      @paste="pasteTicketImages(openTicket, $event)"
     >
       <div class="ticket-modal-header">
         <p class="eyebrow">
@@ -1507,6 +1701,27 @@ const runTicketAgent = (ticket: Ticket) => {
           <button type="button" @click="addLinkDraft(openTicket)">Add</button>
         </div>
         <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
+
+      <section
+        class="ticket-images"
+        @dragover.prevent
+        @drop.prevent="dropTicketImages(openTicket, $event)"
+      >
+        <p class="eyebrow">Images</p>
+        <ul v-if="openTicket.images?.length">
+          <li v-for="imagePath in openTicket.images" :key="imagePath">
+            <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
+              <img :src="ticketImageUrl(imagePath)" alt="Attached image" loading="lazy" decoding="async" />
+            </button>
+            <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-images-add">
+          <button type="button" @click="pickTicketImages(openTicket)">Add image</button>
+          <span class="field-hint">or paste / drop an image here</span>
+        </div>
+        <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 
       <section class="ticket-checklist">
@@ -1680,21 +1895,23 @@ const runTicketAgent = (ticket: Ticket) => {
       </p>
       <section v-if="orchestratorPollActive(autoRunConfirmLane)" class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
-        <label>
-          Agent
-          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-            <option value="">Same as ticket agent</option>
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label>
-          Model
-          <ModelField
-            v-model="autoRunConfirmOrchestratorModel"
-            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-          />
-        </label>
+        <div class="auto-run-orchestrator-fields">
+          <label>
+            Agent
+            <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+              <option value="">Same as ticket agent</option>
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Model
+            <ModelField
+              v-model="autoRunConfirmOrchestratorModel"
+              :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+              :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+            />
+          </label>
+        </div>
       </section>
       <p class="auto-run-question">
         Each opens in its own
@@ -1734,16 +1951,16 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-prompt"
           :value="openLane.agentPrompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
-          @input="laneMarkdownDraft.agentPrompt = ($event.target as HTMLTextAreaElement).value"
+          @input="laneMarkdownDraft.agent.prompt = ($event.target as HTMLTextAreaElement).value"
           @change="editLane(openLane, { agentPrompt: ($event.target as HTMLTextAreaElement).value })"
         />
       </label>
       <button
         class="secondary save-agent-markdown"
-        :disabled="!canSaveLaneMarkdown"
-        @click="saveLaneMarkdown(openLane)"
+        :disabled="!canSaveLaneMarkdown('agent')"
+        @click="saveLaneMarkdown(openLane, 'agent')"
       >
-        {{ laneMarkdownStatus.saving ? 'Saving…' : 'Save to Agent Markdown' }}
+        {{ laneMarkdownStatus.agent.saving ? 'Saving…' : 'Save to Agent Markdown' }}
       </button>
 
       <label>
@@ -1752,14 +1969,14 @@ const runTicketAgent = (ticket: Ticket) => {
           class="agent-file-path"
           :value="openLane.agentFilePath"
           placeholder="/Users/you/Projects/thing/docs/prd-template.md"
-          @input="laneMarkdownDraft.agentFilePath = ($event.target as HTMLInputElement).value"
+          @input="laneMarkdownDraft.agent.filePath = ($event.target as HTMLInputElement).value"
           @change="editLane(openLane, { agentFilePath: ($event.target as HTMLInputElement).value })"
         />
-        <span v-if="laneMarkdownStatus.error" class="field-hint field-error">{{ laneMarkdownStatus.error }}</span>
-        <span v-else-if="laneMarkdownStatus.savedMessage" class="field-hint">{{ laneMarkdownStatus.savedMessage }}</span>
+        <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
+        <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
         <span v-else class="field-hint">
           Used alongside the prompt above — both are sent when both are filled in. Left empty, Save to Agent Markdown
-          creates one in the project's agent-context/ folder.
+          creates SwimlaneAgentPrompt/&lt;lane&gt;/AgentPrompt.md in the project.
         </span>
       </label>
 
@@ -1777,12 +1994,55 @@ const runTicketAgent = (ticket: Ticket) => {
       <label>
         Orchestrator prompt
         <textarea
-          class="agent-prompt"
-          :value="openLane.orchestratorPrompt ?? ''"
-          placeholder="e.g. Flag PRs with failing checks."
-          @change="editLane(openLane, { orchestratorPrompt: ($event.target as HTMLTextAreaElement).value })"
+          class="agent-prompt orchestrator-prompt"
+          :value="openLaneOrchestratorOverride || openLaneOrchestratorTemplate"
+          spellcheck="false"
+          @input="laneMarkdownDraft.orchestrator.prompt = ($event.target as HTMLTextAreaElement).value"
+          @change="saveOrchestratorPrompt(openLane, ($event.target as HTMLTextAreaElement).value)"
         />
-        <span class="field-hint">Extra instructions for the Auto Run orchestrator (runs on every Auto Run while Active)</span>
+        <span v-pre class="field-hint">
+          Sent to the Auto Run orchestrator (runs on every Auto Run while Active). {{tickets}}, {{ticket_numbers}},
+          {{lanes}}, {{terminal}} are filled in at launch.
+        </span>
+        <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
+          Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
+        </span>
+      </label>
+      <button
+        v-if="openLaneOrchestratorOverride"
+        class="secondary save-agent-markdown"
+        type="button"
+        @click="editLane(openLane, { orchestratorPromptOverride: '' })"
+      >
+        Reset to default
+      </button>
+      <button
+        class="secondary save-agent-markdown"
+        :disabled="!canSaveLaneMarkdown('orchestrator')"
+        @click="saveLaneMarkdown(openLane, 'orchestrator')"
+      >
+        {{ laneMarkdownStatus.orchestrator.saving ? 'Saving…' : 'Save to Agent Orchestrator Markdown' }}
+      </button>
+
+      <label>
+        Agent Orchestrator markdown file
+        <input
+          class="agent-file-path"
+          :value="openLane.orchestratorFilePath ?? ''"
+          placeholder="/Users/you/Projects/thing/docs/orchestrator.md"
+          @input="laneMarkdownDraft.orchestrator.filePath = ($event.target as HTMLInputElement).value"
+          @change="editLane(openLane, { orchestratorFilePath: ($event.target as HTMLInputElement).value })"
+        />
+        <span v-if="laneMarkdownStatus.orchestrator.error" class="field-hint field-error">
+          {{ laneMarkdownStatus.orchestrator.error }}
+        </span>
+        <span v-else-if="laneMarkdownStatus.orchestrator.savedMessage" class="field-hint">
+          {{ laneMarkdownStatus.orchestrator.savedMessage }}
+        </span>
+        <span v-else class="field-hint">
+          Where Save to Agent Orchestrator Markdown writes the prompt above, for versioning or review. Left empty it
+          creates SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
+        </span>
       </label>
 
       <div class="orchestrator-poll-row">

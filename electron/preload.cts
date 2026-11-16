@@ -3,14 +3,17 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
+  LaneMarkdownKind,
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
+  ScanProgress,
   SwimLane,
   TerminalTab,
   Ticket,
   TicketWritePatch
 } from '../src/shared/projectTypes.js'
+import type { IpcChannel, PageFindResult, ProjectTrackerBridge } from '../src/shared/bridgeApi.js'
 
 // Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
 const toPlainJson = <T,>(value: T): T => {
@@ -18,7 +21,7 @@ const toPlainJson = <T,>(value: T): T => {
   return serialized === undefined ? (undefined as T) : (JSON.parse(serialized) as T)
 }
 
-const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
+const invokePlain = async <T,>(channel: IpcChannel, payload?: unknown): Promise<T> => {
   const result =
     payload === undefined
       ? await ipcRenderer.invoke(channel)
@@ -29,8 +32,8 @@ const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> =
 contextBridge.exposeInMainWorld('projectTracker', {
   findInPage: (text: string, forward = true, next = false) => ipcRenderer.invoke('page-find:search', text, forward, next),
   stopFindInPage: () => ipcRenderer.invoke('page-find:stop'),
-  onFindResult: (callback: (result: { activeMatchOrdinal: number; matches: number }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, result: { activeMatchOrdinal: number; matches: number }) => callback(result)
+  onFindResult: (callback: (result: PageFindResult) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, result: PageFindResult) => callback(result)
     ipcRenderer.on('page-find:result', listener)
     return () => ipcRenderer.removeListener('page-find:result', listener)
   },
@@ -40,6 +43,14 @@ contextBridge.exposeInMainWorld('projectTracker', {
   createTicket: (projectPath: string, ticket: Omit<Ticket, 'number'>) => invokePlain('ticket:create', { projectPath, ticket }),
   updateTicket: (id: string, patch: TicketWritePatch) => invokePlain('ticket:update', { id, patch }),
   deleteTicket: (id: string) => invokePlain('ticket:delete', { id }),
+  // Electron-only channel: the web bridge picks files in the browser and sends their bytes.
+  pickTicketImages: (ticketId: string) => ipcRenderer.invoke('ticket-images:pick', { ticketId }),
+  saveTicketImageBytes: (ticketId: string, bytes: Uint8Array, mimeType: string) =>
+    ipcRenderer.invoke('ticket-images:save-bytes', { ticketId, bytes, mimeType }),
+  removeTicketImage: (ticketId: string, imagePath: string) =>
+    invokePlain('ticket-images:remove', { ticketId, imagePath }),
+  openTicketImage: (imagePath: string) => invokePlain('ticket-images:open', imagePath),
+  ticketImageUrl: (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
   updateLane: (projectPath: string, laneId: string, patch: LaneWritePatch) =>
     invokePlain('lane:update', { projectPath, laneId, patch }),
@@ -56,7 +67,13 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
-  pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
+  onScanProgress: (callback: (progress: ScanProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => callback(progress)
+    ipcRenderer.on('projects:scan-progress', listener)
+    return () => ipcRenderer.removeListener('projects:scan-progress', listener)
+  },
+  cancelScan: () => invokePlain('projects:scan-cancel'),
+  pickScanDirectory: () => invokePlain('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),
   autoRunLane: (
@@ -75,14 +92,14 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
-  readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
-  saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
-    invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
+  readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
+  saveLaneMarkdown: (kind: LaneMarkdownKind, projectPath: string, laneName: string, filePath: string, content: string) =>
+    invokePlain('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string, since?: string) =>
     invokePlain('project:fetch-github-issues', { githubUrl, since }),
   fetchTicketPullRequest: (githubUrl: string, branchName: string, pullRequestUrl?: string) =>
     invokePlain('ticket:fetch-pull-request', { githubUrl, branchName, pullRequestUrl }),
-  setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
-})
+  setNativeTheme: (type: 'light' | 'dark') => ipcRenderer.invoke('theme:set-native', type)
+} satisfies ProjectTrackerBridge)

@@ -109,8 +109,9 @@ From left to right:
 | **Theme** picker | See 1.5 |
 | **Add** | Opens the native folder dialog, adds the chosen folder to the scan directories, then runs a full scan. Disabled while a scan is running |
 | **Dirs** | Shows or hides the Scan directories panel (2.2) |
-| **📊 Metrics** | Popover table for every project in the current list (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. **↻** pulls fresh numbers. Its open state is remembered per view |
+| **📊 Metrics** | Popover table for exactly the projects the filtered list shows (`src/components/MetricsPanel.vue`): tickets closed and PRs merged per time window, PRs open, agents running, plus a totals row. Follows every list filter (metric tiles, status, priority, search, hidden) through the shared `projectMatchesFilters` (`src/shared/projectFilters.ts`); reloads 300 ms after filters settle; a 0-match filter shows "No projects match the current filters." **↻** pulls fresh numbers. Its open state is remembered per view |
 | **Scan** / **Scanning...** | Rescans every scan directory. Disabled while scanning or when there are no scan directories. Tooltip: "A '.git' must be present in order for the project to appear." (see 5) |
+| Scan progress + **Cancel** | While a scan runs, shows "Scanned N folders" and the folder being read (ellipsized, full path on hover; "Scanning..." until the first update). **Cancel** stops the scan, keeps nothing and shows "Scan cancelled." |
 
 ### 2.2 Scan directories panel (toggled by Dirs)
 
@@ -126,7 +127,7 @@ From left to right:
 
 ### 2.3 Notices and errors
 
-See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues." and "Updated GitHub data for X."
+See 1.7. Dashboard notices include "Scan found N projects.", "Scan finished with N issues.", "Scan cancelled." and "Updated GitHub data for X."
 
 ### 2.4 Metric tiles
 
@@ -221,6 +222,7 @@ When nothing matches: "No projects match the current view. Adjust filters or add
 - **Path input** (placeholder `/Users/you/Code`) and a **Browse** button that opens the native folder dialog.
 - **Skip** closes the modal for the session, and the seed project `sample-app` stays visible.
 - **Scan Folder** / **Scanning...** scans the chosen path.
+  - While it runs, the same progress line and **Cancel** button as the header replace **Skip**.
   - The modal closes on success.
   - If the scan finds no projects and has failures, an error banner shows the first failure and the modal stays open so you can try again.
 
@@ -274,6 +276,7 @@ From left to right:
 
 - When the board has no lanes: "No swim lanes yet." with a **Create swim lane** button.
 - Otherwise the columns are No status followed by the board's lanes in order. Hidden columns and the lane filter apply.
+- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while the lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
 
 #### Lane column
 
@@ -288,6 +291,11 @@ From left to right:
 #### Ticket card
 
 - Draggable between lanes. Clicking a card opens the Ticket modal (3.8).
+- **Select checkbox** (title "Select (run / move)"): checked cards feed Auto Run's ticket set and bulk drag. Selection is in memory only and clears when you switch project.
+- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`ticketIdsToMove` in `projectTypes.ts`, `moveTickets` in `stores/projects.ts`).
+  - Dragging an unchecked card moves only that card.
+  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
+  - Moved tickets stay checked.
 - The title always shows. These fields show only when switched on in Display:
   - **#number**
   - **Description** preview
@@ -364,6 +372,13 @@ In graph view this opens as a side panel instead of a centered modal.
 - Each link opens in the default browser. **×** removes it. No titles, editing in place, or reordering.
 - Passed to agents as a `Links:` block in the ticket prompt, only when the ticket has links. Not shown on board cards.
 
+**Images**
+
+- Attach png/jpg/jpeg/gif/webp images: **Add image** (native picker, multi-select), Cmd+V anywhere in the ticket panel (text pastes still go to the field), or drop files onto the section. 20 MB cap per image.
+- Each image is copied to `<userData>/attachments/<ticketId>/<uuid>.<ext>`, so moving or deleting the original doesn't break the ticket. Paths are stored as `images_json` on the ticket row.
+- Thumbnails load through the `ticket-image:` scheme, which only serves files inside the attachments folder. Clicking one opens it in the OS viewer; **×** removes it and deletes the copy.
+- Passed to agents as an `Images (open each path to view it):` block of absolute paths, only when the ticket has images. Deleting the ticket deletes its attachments folder.
+
 **Checklist**
 
 - The heading shows done/total.
@@ -413,13 +428,21 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Save to Agent Markdown** button, under the prompt. Disabled while the prompt is empty or a save is running. It writes the prompt to a markdown file and links that file to the lane:
-  - File field empty: creates `<project>/agent-context/<PROJECT>-<LANE>-AgentContext.md`, making the folder if it's missing. Names are sanitized: spaces and `/ \` become `-`, and `: * ? " < > |` are dropped.
+  - File field empty: creates `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. Paths saved before #81 (`agent-context/...`) keep working as explicit paths.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project.
-  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too, so saving twice adds the prompt twice.
+  - A file that's missing or blank gets the prompt as its contents. A file that already has content is never replaced: the prompt is appended to the bottom after a blank line. This applies to the generated file too. Saving the same prompt again is a no-op, so repeated clicks don't stack copies.
   - On success the field hint reads "Saved to <path>", or "Appended to <path>". On failure it shows the error and the lane is left unchanged. Works on **No status** too.
 - **Agent markdown file**: a path to a markdown guide. The prompt tells the agent to "Follow the guidance in <path>."
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
-- **Orchestrator prompt** textarea: extra instructions appended to this lane's Auto Run orchestrator prompt.
+- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable.
+  - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
+  - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
+  - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
+  - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone.
+  - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
+  - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
+- **Save to Agent Orchestrator Markdown** button, under the Orchestrator prompt. Writes the text in the box (override or generated) with the same file rules as Save to Agent Markdown; default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, and the path lands in **Agent Orchestrator markdown file**. The text is stored with the same override rules as leaving the box, so saving the untouched default doesn't create an override.
+- **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): where that save writes. The file is a copy for versioning and review; the launch prompt never reads or names it, so re-saving unchanged text stays a no-op. Ticket agents never see it.
 - **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
@@ -463,7 +486,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
+- With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
@@ -477,7 +501,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - It uses the same visible lanes and filtered tickets as the swimlane view. Arrows into hidden, filtered-out or deleted lanes are not drawn.
 - **Details sidebar**:
   - Nothing selected: the number of swim lanes, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
-  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), and a list of tickets you can click to open, or "No tickets match the current filters."
+  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), then **Agent prompt** and **Orchestrator prompt** sections.
+  - Each prompt section lists the lane's prompt as editable rules (`promptRules` in `projectTypes.ts`): an unindented `- `/`* ` bullet or numbered line (`1.`) starts a rule; other lines, indented sub-bullets included, continue it. Leaving a rule (blur or Enter; Shift+Enter adds a line break) saves the prompt through `store.updateLane`, rewritten as `- rule` lines with numbered rules kept as-is (`rulesToPrompt`). **+ Add rule** and **×** add and delete rules; a rule cleared to empty is deleted. An empty prompt shows "No rules yet". When the lane has an agent markdown file the Agent section shows "Also follows: <file name>". The markdown file itself is not written; that stays on the Swimlane settings button.
 - Clicking a ticket node or a list entry opens the Ticket modal as a side panel, and the sidebar makes room for it.
 
 ---
@@ -496,6 +521,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`
@@ -507,7 +533,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
 - When a board is read, any ticket whose lane no longer exists moves to No status, and tickets without a number get one.
-- In a plain browser, without Electron, state falls back to `localStorage`. Scanning then uses `/api/project-scan`, and the desktop-only actions report "desktop APIs are unavailable".
+- The web build (4.8) reaches the same file through the local web server, one repository connection per browser tab.
 
 ### 4.3 Agents — `src/shared/projectTypes.ts`, `electron/agentRun.ts`
 
@@ -539,10 +565,10 @@ The parts below are joined in this order, and empty parts are left out:
 
 If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doesn't read it as an option. For the terminal command, the prompt is wrapped in single quotes, so text from GitHub issues is passed as one literal argument and never runs as code.
 
-### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`
+### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`, `electron/ipcHandlers.ts`
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
-- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development.
+- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development. The web server's equivalent is its request guard (4.8).
 - Payloads are type-checked, and paths are normalized to POSIX absolute paths.
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
@@ -557,11 +583,12 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+- CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`
 
 - Static tier, part of `bun run test`:
-  - `evals/static/lint.test.ts` checks every `agent-context/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/lint.test.ts` checks every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
   - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
 - Behavioral tier, `bun run eval`:
   - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.
@@ -570,9 +597,22 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
   - A case passes at ≥ ⌈2N/3⌉ of `EVAL_RUNS` (default 3). Knobs: `EVAL_LANE`, `EVAL_RUNS`, `EVAL_AGENT`, `EVAL_EXTRA_ARGS`, `EVAL_KEEP`, `EVAL_JUDGE`, `EVAL_JUDGE_MODEL`.
   - Results: a lane × case table on stdout and `evals/results/<timestamp>.json` (gitignored).
   - The real DB is guarded: any row with the eval ticket number or a sandbox project path fails the case.
-  - `evals/behavioral/sync.eval.test.ts` checks each committed `agent-context/*.md` against its lane's prompt in the live DB.
+  - `evals/behavioral/sync.eval.test.ts` checks each lane's committed prompt file (saved path, else `SwimlaneAgentPrompt/<lane>/AgentPrompt.md`) against its lane's prompt in the live DB.
 
 ---
+
+### 4.8 Web app — `electron/web/server.ts`, `src/services/webBridge.ts`
+
+- `bun run web` builds `src/` with `vite build --mode web` into `out/web/` and starts a Node server on `http://127.0.0.1:5174` (`PROJECT_TRACKER_WEB_PORT` to change it).
+- `src/main.ts` installs `webBridge` as `window.projectTracker` before mount. Each method posts the preload's payload to `POST /api/invoke/<channel>`. Both the preload and the web bridge `satisfies ProjectTrackerBridge` (`src/shared/bridgeApi.ts`), so neither can drift from the interface.
+- The server runs the same `createIpcHandlers` as `electron/main.ts`. The channel list is `IPC_CHANNELS` in `src/shared/bridgeApi.ts`.
+- One `StateRepository` per browser tab, keyed by a random client id, so each tab has its own diff baseline and sees other tabs' writes as outside changes. Closed 30 s after the tab's event stream drops.
+- Outside changes, agent retries and scan progress arrive over Server-Sent Events, `GET /api/events?client=<id>`. Outside changes come from the same 10 s `data_version` poll. A scan running when the tab's last event stream drops is aborted, like a reload in Electron.
+- Ticket images: Add image opens the browser's file picker and uploads the bytes (base64) through `ticket-images:save-bytes`, the same path paste and drop use. Thumbnails load from `GET /api/ticket-image/<path>`, confined to `<userData>/attachments` by `resolveAttachmentPath`, the web twin of the `ticket-image://` scheme. Every response has `Cross-Origin-Resource-Policy: same-origin`, so other sites can't embed them.
+- Request guard: listens on `127.0.0.1` only. `Host` must be `127.0.0.1:<port>` or `localhost:<port>` (blocks DNS rebinding). Any `Origin` must be the server's own; a `POST` needs that `Origin` and `Content-Type: application/json`. Everything else gets 403, and no CORS headers are ever sent. Responses carry `X-Frame-Options: DENY` and `frame-ancestors 'none'`.
+- Add folder runs `osascript choose folder` on the server. The Dirs panel also shows an absolute-path text box in the web build.
+- Connection cap: plain HTTP/1.1, so the browser allows 6 open connections to the server across all tabs. Each tab holds one for its event stream and each ▶ Run holds one until the agent finishes. Past 6, new requests wait silently. Fix when it bites: one SharedWorker owning the event stream, or HTTP/2 (needs TLS).
+- Missing compared with the desktop app: PageFind (the browser's ⌘F works instead), `theme:set-native`, application menu, auto-update, native window chrome.
 
 ## 5. Known quirks
 

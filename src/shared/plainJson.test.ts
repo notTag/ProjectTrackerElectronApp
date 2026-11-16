@@ -19,6 +19,7 @@ describe('toPlainJson', () => {
     const bodyOf = (file: string) => {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8')
       const start = source.indexOf('const serialized')
+      expect(start, `no toPlainJson body in ${file}`).toBeGreaterThan(-1)
       return source.slice(start, source.indexOf('\n}', start))
     }
     expect(bodyOf('../../electron/preload.cts')).toBe(bodyOf('./plainJson.ts'))

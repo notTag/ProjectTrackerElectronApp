@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
@@ -14,6 +14,9 @@ import {
   orchestratorAgentChoice,
   agentShellCommand,
   orchestratorPrompt,
+  orchestratorPromptMissingTokens,
+  orchestratorPromptTemplate,
+  ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
@@ -27,7 +30,9 @@ import {
   githubSyncNotice,
   oldestImportedCreatedAt,
   type GithubClosedIssue,
-  agentMarkdownFileName,
+  laneFolderName,
+  promptRules,
+  rulesToPrompt,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -45,6 +50,7 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
+  ticketIdsToMove,
   ticketsToRun,
   agentForTicket,
   availableAgents,
@@ -226,10 +232,18 @@ describe('syncing imported tickets with closed GitHub issues', () => {
   const boardOf = (...tickets: Ticket[]): ProjectBoard => ({ lanes, tickets })
 
   it('moves a completed issue to the rightmost closing lane', () => {
-    const result = syncGithubIssuesToBoard(boardOf(importedTicket(1)), { open: [], closed: [closed(1, 'completed')] })
+    const board = boardOf(importedTicket(1))
+    const issues = { open: [], closed: [closed(1, 'completed')] }
+    vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
+    let result
+    try {
+      result = syncGithubIssuesToBoard(board, issues)
+    } finally {
+      vi.useRealTimers()
+    }
     expect(result.moved).toBe(1)
     expect(result.board.tickets[0].laneId).toBe('in-production')
-    expect(result.board.tickets[0].updatedAt).toBeDefined()
+    expect(result.board.tickets[0].updatedAt).toBe('2030-01-01T00:00:00.000Z')
   })
 
   it('removes tickets closed as not planned, duplicate, or with no reason', () => {
@@ -434,9 +448,7 @@ describe('ticketSearchText', () => {
       branchName: 'fix/drag-drop'
     }
     const searchText = ticketSearchText(ticket)
-    expect(searchText).toContain('#1')
-    expect(searchText).toContain('ui')
-    expect(searchText).toContain('fix/drag-drop')
+    for (const term of ['#1', 'fix drag', 'ui', 'fix/drag-drop']) expect(searchText).toContain(term)
   })
 })
 
@@ -589,6 +601,13 @@ describe('ticketShellCommand', () => {
     expect(agentShellCommand(DEFAULT_AGENT, 'go')).toBe("claude 'go'")
   })
 
+  it('defaults Claude Code to Opus 5.5, one of its listed models', () => {
+    expect(DEFAULT_AGENT.defaultModel).toBe('claude-opus-5-5')
+    expect(DEFAULT_AGENT.models).toContain('claude-opus-5-5')
+    const defaultModelCommand = agentShellCommand(DEFAULT_AGENT, 'go', { model: DEFAULT_AGENT.defaultModel })
+    expect(defaultModelCommand).toBe("claude --model 'claude-opus-5-5' 'go'")
+  })
+
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
     expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
@@ -636,6 +655,15 @@ describe('ticketShellCommand', () => {
     expect(ticketAgentPrompt(linkedTicket, lane())).toContain('Links:\n- https://figma.com/f\n- https://slack.com/t')
     expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Links:')
     expect(ticketAgentPrompt(ticket({ externalLinks: [] }), lane())).not.toContain('Links:')
+  })
+
+  it('lists attached image paths only when the ticket has some', () => {
+    const imageTicket = ticket({ images: ['/data/attachments/t1/a.png', '/data/attachments/t1/b.jpg'] })
+    expect(ticketAgentPrompt(imageTicket, lane())).toContain(
+      'Images (open each path to view it):\n- /data/attachments/t1/a.png\n- /data/attachments/t1/b.jpg'
+    )
+    expect(ticketAgentPrompt(ticket(), lane())).not.toContain('Images')
+    expect(ticketAgentPrompt(ticket({ images: [] }), lane())).not.toContain('Images')
   })
 
   it('ends with the lane output target and permission to reuse an existing location', () => {
@@ -863,6 +891,37 @@ describe('ticketsToRun', () => {
 
   it('runs every ticket when the only checks are in another lane', () => {
     expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
+  })
+})
+
+describe('ticketIdsToMove', () => {
+  const tickets = [
+    { id: 'a', laneId: 'idea' },
+    { id: 'b', laneId: 'prd' },
+    { id: 'c', laneId: 'idea' },
+    { id: 'd', laneId: 'dev' }
+  ] as Ticket[]
+
+  it('moves only the dragged card when it is unchecked', () => {
+    expect(ticketIdsToMove('a', new Set(['b', 'c']), tickets, 'dev')).toEqual(['a'])
+  })
+
+  it('moves every checked visible ticket when the dragged card is checked', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'c']), tickets, 'dev')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('skips a checked ticket that is not visible', () => {
+    const visibleTickets = tickets.filter((ticket) => ticket.id !== 'b')
+    expect(ticketIdsToMove('a', new Set(['a', 'b']), visibleTickets, 'dev')).toEqual(['a'])
+  })
+
+  it('skips checked tickets already in the target lane', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'b', 'd']), tickets, 'dev')).toEqual(['a', 'b'])
+  })
+
+  it('moves nothing when every carried ticket is already there', () => {
+    expect(ticketIdsToMove('a', new Set(['a', 'c']), tickets, 'idea')).toEqual([])
+    expect(ticketIdsToMove('d', new Set(), tickets, 'dev')).toEqual([])
   })
 })
 
@@ -1124,26 +1183,27 @@ describe('full auto', () => {
   })
 })
 
-describe('agentMarkdownFileName', () => {
+describe('laneFolderName', () => {
   it('turns spaces and path separators into hyphens', () => {
-    expect(agentMarkdownFileName('My Project', 'In Review')).toBe('My-Project-In-Review-AgentContext.md')
-    expect(agentMarkdownFileName('ProjectTracker/electron-app', 'PRD')).toBe('ProjectTracker-electron-app-PRD-AgentContext.md')
+    expect(laneFolderName('In Review')).toBe('In-Review')
+    expect(laneFolderName('QA/Release\\Prep')).toBe('QA-Release-Prep')
   })
 
   it('strips characters filesystems reject', () => {
-    expect(agentMarkdownFileName('a:b*c?d"e<f>g|h', 'lane')).toBe('abcdefgh-lane-AgentContext.md')
+    expect(laneFolderName('a:b*c?d"e<f>g|h')).toBe('abcdefgh')
   })
 
   it('never yields a path separator or a leading dot from a traversal name', () => {
-    const fileName = agentMarkdownFileName('app', '../../etc/passwd')
-    expect(fileName).not.toMatch(/[/\\]/)
-    expect(fileName.startsWith('.')).toBe(false)
-    expect(agentMarkdownFileName('..', '.hidden')).toBe('project-hidden-AgentContext.md')
+    const folderName = laneFolderName('../../etc/passwd')
+    expect(folderName).not.toMatch(/[/\\]/)
+    expect(folderName.startsWith('.')).toBe(false)
+    expect(laneFolderName('.hidden')).toBe('hidden')
   })
 
-  it('falls back when a part sanitizes to nothing', () => {
-    expect(agentMarkdownFileName('', '  ')).toBe('project-lane-AgentContext.md')
-    expect(agentMarkdownFileName('***', '- -')).toBe('project-lane-AgentContext.md')
+  it('falls back when the name sanitizes to nothing', () => {
+    expect(laneFolderName('  ')).toBe('lane')
+    expect(laneFolderName('- -')).toBe('lane')
+    expect(laneFolderName('..')).toBe('lane')
   })
 })
 
@@ -1234,6 +1294,74 @@ describe('Auto Run orchestrator', () => {
     })
   })
 
+  describe('orchestratorPromptTemplate', () => {
+    const allTokens = Object.values(ORCHESTRATOR_PROMPT_TOKENS)
+
+    it('names the lane and holds every launch-time token', () => {
+      const template = orchestratorPromptTemplate(inDev, context('ghostty', 'Ghostty'))
+      expect(template).toContain('"In Development" lane')
+      expect(template).toContain('still in the in-dev lane')
+      for (const token of allTokens) expect(template).toContain(token)
+      expect(template).not.toContain('osascript')
+    })
+
+    it('includes existing lane instructions', () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
+      const template = orchestratorPromptTemplate(steered, context('ghostty', 'Ghostty'))
+      expect(template).toContain('Lane instructions')
+      expect(template).toContain('Poll every 2 minutes.')
+    })
+
+    it('reports only the missing ticket tokens', () => {
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{ticket_numbers}}')).toEqual([])
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{lanes}}')).toEqual(['{{ticket_numbers}}'])
+      expect(orchestratorPromptMissingTokens('nothing')).toEqual(['{{tickets}}', '{{ticket_numbers}}'])
+    })
+  })
+
+  describe('orchestratorPrompt with an override', () => {
+    const ghostty = context('ghostty', 'Ghostty')
+    const generated = orchestratorPrompt(inDev, entries, ghostty)
+
+    it('filling the unedited template gives the generated prompt', () => {
+      for (const terminalContext of [ghostty, context('warp', 'Warp')]) {
+        const template = orchestratorPromptTemplate(inDev, terminalContext)
+        const overridden = { ...inDev, orchestratorPromptOverride: template }
+        expect(orchestratorPrompt(overridden, entries, terminalContext)).toBe(orchestratorPrompt(inDev, entries, terminalContext))
+      }
+    })
+
+    it('fills known tokens with launch data and leaves unknown ones', () => {
+      const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
+      const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
+      expect(filled).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
+      expect(filled).toContain('IN (12, 13)')
+      expect(filled).toContain('- done — Done — agent work: no')
+      expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
+      expect(filled).toContain('{{foo}}')
+      for (const token of Object.values(ORCHESTRATOR_PROMPT_TOKENS)) expect(filled).not.toContain(token)
+      expect(filled).not.toContain('You report only')
+    })
+
+    it('follows the launch terminal in an edited prompt', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+    })
+
+    it('does not expand a token that appears inside a ticket title', () => {
+      const tricky = [ticket(14, 'About {{lanes}}'), ticket(15, 'Other')].map((entry) =>
+        buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
+      )
+      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}}' }
+      expect(orchestratorPrompt(lane, tricky, ghostty)).toContain('#14 About {{lanes}}')
+    })
+
+    it('uses the generated prompt for a whitespace-only override', () => {
+      const lane = { ...inDev, orchestratorPromptOverride: '  \n\t ' }
+      expect(orchestratorPrompt(lane, entries, ghostty)).toBe(generated)
+    })
+  })
+
   describe('orchestratorPrompt', () => {
     const prompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
 
@@ -1294,11 +1422,20 @@ describe('Auto Run orchestrator', () => {
       }
     })
 
+    // The file holds a copy of this prompt; if the prompt named the file, every
+    // save would differ from the last and append another copy.
+    it('leaves the orchestrator and ticket prompts unchanged by an orchestrator markdown file', () => {
+      const linked = { ...inDev, orchestratorFilePath: 'SwimlaneAgentPrompt/In-Dev/AgentOrchestratorPrompt.md' }
+      const launchContext = context('ghostty', 'Ghostty')
+      expect(orchestratorPrompt(linked, entries, launchContext)).toBe(prompt)
+      expect(orchestratorPromptTemplate(linked, launchContext)).toBe(orchestratorPromptTemplate(inDev, launchContext))
+      expect(ticketAgentPrompt(ticket(12, 'First thing'), linked)).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
+    })
+
     it("never puts the orchestrator prompt in a ticket agent's prompt", () => {
       const steered = { ...inDev, orchestratorPrompt: 'Poll every 2 minutes.' }
       const agentPrompt = ticketAgentPrompt(ticket(12, 'First thing'), steered)
       expect(agentPrompt).toBe(ticketAgentPrompt(ticket(12, 'First thing'), inDev))
-      expect(agentPrompt).not.toContain('Poll every 2 minutes.')
     })
 
     it("polls at the lane's rate, every 2 minutes by default", () => {
@@ -1320,7 +1457,6 @@ describe('Auto Run orchestrator', () => {
     it('sends an orchestrator for a one-ticket run', () => {
       const oneTicket = entries.slice(0, 1)
       const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))!
-      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command).toContain('#12 First thing')
       expect(launch.command).not.toContain('#13 Second thing')
     })
@@ -1480,7 +1616,7 @@ describe('boardWrites', () => {
 
   it('sends only the changed field of a ticket, plus its updatedAt', () => {
     const edited = { ...board, tickets: [{ ...baseTicket, title: 'T2' }] }
-    expect(boardWrites(board, edited)).toEqual([
+    expect(boardWrites(board, edited)).toStrictEqual([
       { kind: 'ticket:update', id: 't1', patch: { title: 'T2', updatedAt: undefined } }
     ])
   })
@@ -1488,8 +1624,7 @@ describe('boardWrites', () => {
   it('keeps a cleared field as an explicit undefined', () => {
     const before = { ...board, tickets: [{ ...baseTicket, branchName: 'feat/x' }] }
     const [write] = boardWrites(before, board)
-    expect(write).toEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
-    expect(write.kind === 'ticket:update' && 'branchName' in write.patch).toBe(true)
+    expect(write).toStrictEqual({ kind: 'ticket:update', id: 't1', patch: { branchName: undefined, updatedAt: undefined } })
   })
 
   it('creates lanes before tickets and deletes last, tickets before lanes', () => {
@@ -1547,6 +1682,60 @@ describe('laneTransitions', () => {
     const lanes = [lane(UNASSIGNED_LANE_ID, 'idea'), lane('idea')]
     const tickets = [ticket('a', UNASSIGNED_LANE_ID, UNASSIGNED_LANE_ID), ticket('b', UNASSIGNED_LANE_ID, 'idea')]
     expect(laneTransitions(lanes, tickets)).toEqual([{ from: UNASSIGNED_LANE_ID, to: 'idea', kind: 'lane', ticketIds: [] }])
+  })
+})
+
+describe('promptRules / rulesToPrompt', () => {
+  const bulletPrompt = [
+    '- Fill out the missing details for the ticket in the project tracker. ',
+    "- If there are no open questions move the ticket, update the ticket status to 'PRD'. ",
+    '',
+    '- As soon as you are done, send a message to the Orchestrator agent.'
+  ].join('\n')
+  const numberedPrompt = [
+    '1. Verify if there is an existing worktree. 2. Use the /worktree skill for all work in this lane. ',
+    '3. Upon completion of work, verify all original tasks have been completed. ',
+    '5. Upon completion of steps 1-5, move the ticket.',
+    '- As soon as you are done, send a message to the Orchestrator agent.'
+  ].join('\n')
+
+  it('splits bullets into rules, dropping markers, blank lines and trailing spaces', () => {
+    expect(promptRules(bulletPrompt)).toEqual([
+      'Fill out the missing details for the ticket in the project tracker.',
+      "If there are no open questions move the ticket, update the ticket status to 'PRD'.",
+      'As soon as you are done, send a message to the Orchestrator agent.'
+    ])
+  })
+
+  it('keeps numbered lines as their own rules with the number intact', () => {
+    const rules = promptRules(numberedPrompt)
+    expect(rules).toHaveLength(4)
+    expect(rules[2]).toBe('5. Upon completion of steps 1-5, move the ticket.')
+    expect(rulesToPrompt(rules)).toBe(numberedPrompt.split('\n').map(line => line.trimEnd()).join('\n'))
+  })
+
+  it('joins continuation lines and treats text before the first bullet as a rule', () => {
+    expect(promptRules('Intro line\n- first\n  more of first\n* second')).toEqual(['Intro line', 'first\n  more of first', 'second'])
+  })
+
+  it('round-trips through rulesToPrompt', () => {
+    for (const prompt of [bulletPrompt, numberedPrompt, 'Intro\n- a\n  b\n- - dash']) {
+      const rules = promptRules(prompt)
+      expect(promptRules(rulesToPrompt(rules))).toEqual(rules)
+    }
+    expect(rulesToPrompt(promptRules(bulletPrompt))).toBe(promptRules(bulletPrompt).map(rule => `- ${rule}`).join('\n'))
+  })
+
+  it('keeps indented sub-bullets and sub-steps inside their parent rule', () => {
+    const nestedPrompt = '1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step\n- Post the link.'
+    const rules = promptRules(nestedPrompt)
+    expect(rules).toEqual(['1. Open the PR.\n   - TOF body:\n     - tabs for nesting\n   2) sub-step', 'Post the link.'])
+    expect(rulesToPrompt(rules)).toBe(nestedPrompt)
+  })
+
+  it('maps an empty prompt to no rules and back', () => {
+    expect(promptRules('  \n\n')).toEqual([])
+    expect(rulesToPrompt([])).toBe('')
   })
 })
 
