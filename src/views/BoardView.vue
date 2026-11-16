@@ -831,7 +831,8 @@ const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
 }
 
 const changeAutoRunConfirmAgent = () => {
-  autoRunConfirmModel.value = ''
+  const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  autoRunConfirmModel.value = agent.defaultModel ?? ''
   if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
 }
 
@@ -865,8 +866,9 @@ const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
 const askToAutoRunLane = (lane: SwimLane) => {
-  autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
-  autoRunConfirmModel.value = lane.autoRunModel ?? ''
+  const agent = findAgent(agents.value, lane.autoRunAgentId)
+  autoRunConfirmAgentId.value = agent.id
+  autoRunConfirmModel.value = lane.autoRunModel || agent.defaultModel || ''
   autoRunConfirmOrchestratorAgentId.value = lane.orchestratorAgentId ?? ''
   autoRunConfirmOrchestratorModel.value = lane.orchestratorModel ?? ''
   autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
@@ -1634,21 +1636,23 @@ const runTicketAgent = (ticket: Ticket) => {
       </p>
       <section v-if="orchestratorPollActive(autoRunConfirmLane)" class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
-        <label>
-          Agent
-          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-            <option value="">Same as ticket agent</option>
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label>
-          Model
-          <ModelField
-            v-model="autoRunConfirmOrchestratorModel"
-            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-          />
-        </label>
+        <div class="auto-run-orchestrator-fields">
+          <label>
+            Agent
+            <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+              <option value="">Same as ticket agent</option>
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Model
+            <ModelField
+              v-model="autoRunConfirmOrchestratorModel"
+              :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+              :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+            />
+          </label>
+        </div>
       </section>
       <p class="auto-run-question">
         Each opens in its own

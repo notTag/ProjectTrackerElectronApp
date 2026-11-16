@@ -461,7 +461,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
+- With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
 - A second click on the lane does nothing until the first launch has finished.
 
