@@ -265,6 +265,12 @@ export class StateRepository {
     })
   }
 
+  // The web server opens one repository per browser tab and closes it when the
+  // tab goes away; the desktop app keeps its one for the process lifetime.
+  close() {
+    this.db.close()
+  }
+
   get snapshotsDirectory() {
     return this.snapshotsPath
   }

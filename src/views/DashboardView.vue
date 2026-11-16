@@ -233,11 +233,27 @@ const removePendingDirectory = async () => {
   if (directory) await store.removeScanDirectory(directory)
 }
 
+const addAndScan = async (directory: string) => {
+  await store.addScanDirectory(directory)
+  await store.scan()
+}
+
 const addScanDirectory = async () => {
   const selected = await store.pickDirectory()
-  if (!selected) return
-  await store.addScanDirectory(selected)
-  await store.scan()
+  if (selected) await addAndScan(selected)
+}
+
+// Web build only: the server's macOS folder chooser can open behind the
+// browser, so a typed absolute path works too.
+const isWebBuild = import.meta.env.MODE === 'web'
+const typedScanDirectory = ref('')
+const typedScanDirectoryIsAbsolute = computed(() => typedScanDirectory.value.trim().startsWith('/'))
+
+const addTypedScanDirectory = async () => {
+  if (!typedScanDirectoryIsAbsolute.value) return
+  const directory = typedScanDirectory.value.trim()
+  typedScanDirectory.value = ''
+  await addAndScan(directory)
 }
 
 const rescan = () => {
@@ -423,6 +439,10 @@ const renderMarkdown = (markdown: string | null) => {
         </span>
       </div>
       <p v-else>No scan directories selected.</p>
+      <form v-if="isWebBuild" class="path-add" @submit.prevent="addTypedScanDirectory">
+        <input v-model="typedScanDirectory" placeholder="/Users/you/Code" aria-label="Absolute folder path" />
+        <button type="submit" class="secondary" :disabled="store.scanning || !typedScanDirectoryIsAbsolute">Add path</button>
+      </form>
     </section>
 
     <MessageBanners />

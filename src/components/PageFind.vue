@@ -20,16 +20,16 @@ function search(forward = true, next = false) {
   cancelPendingSearch()
   if (!query.value) {
     result.value = { activeMatchOrdinal: 0, matches: 0 }
-    void window.projectTracker?.stopFindInPage()
+    void window.projectTracker?.stopFindInPage?.()
     return
   }
-  void window.projectTracker?.findInPage(query.value, forward, next)
+  void window.projectTracker?.findInPage?.(query.value, forward, next)
 }
 function close() {
   cancelPendingSearch()
   if (!visible.value) return
   visible.value = false
-  void window.projectTracker?.stopFindInPage()
+  void window.projectTracker?.stopFindInPage?.()
   previousFocus?.focus()
 }
 async function keydown(event: KeyboardEvent) {
@@ -55,7 +55,7 @@ watch(query, () => {
 watch(() => route.fullPath, close)
 onMounted(() => {
   window.addEventListener('keydown', keydown, true)
-  unsubscribe = window.projectTracker?.onFindResult(value => {
+  unsubscribe = window.projectTracker?.onFindResult?.(value => {
     if (visible.value && query.value) result.value = value
   })
 })
@@ -63,7 +63,7 @@ onBeforeUnmount(() => {
   cancelPendingSearch()
   window.removeEventListener('keydown', keydown, true)
   unsubscribe?.()
-  void window.projectTracker?.stopFindInPage()
+  void window.projectTracker?.stopFindInPage?.()
 })
 </script>
 

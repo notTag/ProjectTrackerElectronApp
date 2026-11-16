@@ -11,6 +11,7 @@ import type {
   Ticket,
   TicketWritePatch
 } from '../src/shared/projectTypes.js'
+import type { IpcChannel, PageFindResult, ProjectTrackerBridge } from '../src/shared/bridgeApi.js'
 
 // Copy of src/shared/plainJson.ts: a sandboxed preload can only require('electron').
 const toPlainJson = <T,>(value: T): T => {
@@ -18,7 +19,7 @@ const toPlainJson = <T,>(value: T): T => {
   return serialized === undefined ? (undefined as T) : (JSON.parse(serialized) as T)
 }
 
-const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> => {
+const invokePlain = async <T,>(channel: IpcChannel, payload?: unknown): Promise<T> => {
   const result =
     payload === undefined
       ? await ipcRenderer.invoke(channel)
@@ -29,8 +30,8 @@ const invokePlain = async <T,>(channel: string, payload?: unknown): Promise<T> =
 contextBridge.exposeInMainWorld('projectTracker', {
   findInPage: (text: string, forward = true, next = false) => ipcRenderer.invoke('page-find:search', text, forward, next),
   stopFindInPage: () => ipcRenderer.invoke('page-find:stop'),
-  onFindResult: (callback: (result: { activeMatchOrdinal: number; matches: number }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, result: { activeMatchOrdinal: number; matches: number }) => callback(result)
+  onFindResult: (callback: (result: PageFindResult) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, result: PageFindResult) => callback(result)
     ipcRenderer.on('page-find:result', listener)
     return () => ipcRenderer.removeListener('page-find:result', listener)
   },
@@ -56,7 +57,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   scanProjectDirectories: (scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]) =>
     invokePlain('projects:scan', { scanDirectories, hiddenPaths, thirdPartyPaths }),
-  pickScanDirectory: () => ipcRenderer.invoke('dialog:pick-scan-directory'),
+  pickScanDirectory: () => invokePlain('dialog:pick-scan-directory'),
   openProjectIn: (projectPath: string, targetId: string, command?: string, title?: string) =>
     invokePlain('project:open-in', { projectPath, targetId, command, title }),
   autoRunLane: (
@@ -75,7 +76,7 @@ contextBridge.exposeInMainWorld('projectTracker', {
   },
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
-  readProjectReadme:(projectPath: string) => invokePlain('project:read-readme', projectPath),
+  readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
   saveLaneAgentMarkdown: (projectPath: string, laneName: string, agentFilePath: string, content: string) =>
     invokePlain('lane:save-agent-markdown', { projectPath, laneName, agentFilePath, content }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
@@ -84,5 +85,5 @@ contextBridge.exposeInMainWorld('projectTracker', {
     invokePlain('project:fetch-github-issues', { githubUrl, since }),
   fetchTicketPullRequest: (githubUrl: string, branchName: string, pullRequestUrl?: string) =>
     invokePlain('ticket:fetch-pull-request', { githubUrl, branchName, pullRequestUrl }),
-  setNativeTheme: (type: 'light' | 'dark') => invokePlain('theme:set-native', type)
-})
+  setNativeTheme: (type: 'light' | 'dark') => ipcRenderer.invoke('theme:set-native', type)
+} satisfies ProjectTrackerBridge)
