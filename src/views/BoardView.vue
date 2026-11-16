@@ -10,6 +10,7 @@ import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
+import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
@@ -107,6 +108,7 @@ const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
+const imageError = ref<string | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -681,6 +683,80 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
     })
   }))
 }
+
+// Same queued-mutate reasoning as editTicketLinks.
+const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  return store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const images = change(current.images ?? [])
+      return { ...current, images: images.length ? images : undefined, updatedAt }
+    })
+  }))
+}
+
+const ticketImageUrl = (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`
+
+const errorMessageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+// Files are written before the ticket lists them, so a failed save leaves at
+// worst an orphan file, never a listed path that doesn't exist.
+const attachImages = async (ticket: Ticket, saveImages: () => Promise<string[]>) => {
+  imageError.value = null
+  try {
+    const addedPaths = await saveImages()
+    if (addedPaths.length) await editTicketImages(ticket, (images) => [...images, ...addedPaths])
+  } catch (error) {
+    imageError.value = errorMessageOf(error)
+  }
+}
+
+const pickTicketImages = (ticket: Ticket) => attachImages(ticket, () => projectTrackerApi.pickTicketImages(ticket.id))
+
+const imageFilesOf = (transfer: DataTransfer | null) =>
+  [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+
+// Paste and drop both send bytes: clipboard images have no file path at all.
+const saveImageFiles = (ticket: Ticket, files: File[]) =>
+  attachImages(ticket, () =>
+    Promise.all(
+      files.map(async (file) => {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        return projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
+      })
+    )
+  )
+
+// Text pastes fall through untouched, so Cmd+V in the description still works.
+const pasteTicketImages = (ticket: Ticket, event: ClipboardEvent) => {
+  const files = imageFilesOf(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  void saveImageFiles(ticket, files)
+}
+
+const dropTicketImages = (ticket: Ticket, event: DragEvent) => {
+  const files = imageFilesOf(event.dataTransfer)
+  if (files.length) void saveImageFiles(ticket, files)
+}
+
+// The ticket stops listing the image before its file goes.
+const removeTicketImage = async (ticket: Ticket, imagePath: string) => {
+  imageError.value = null
+  try {
+    await editTicketImages(ticket, (images) => images.filter((existingPath) => existingPath !== imagePath))
+    await projectTrackerApi.removeTicketImage(ticket.id, imagePath)
+  } catch (error) {
+    imageError.value = errorMessageOf(error)
+  }
+}
+
+const openTicketImage = (imagePath: string) =>
+  projectTrackerApi.openTicketImage(imagePath).catch((error) => {
+    imageError.value = errorMessageOf(error)
+  })
 
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
@@ -1317,7 +1393,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @click.self="closeModals">
     <!-- Refresh before editing so fields include writes from other processes. -->
-    <section class="modal ticket-modal" @focusin="store.refresh()">
+    <section class="modal ticket-modal" @focusin="store.refresh()" @paste="pasteTicketImages(openTicket, $event)">
       <p class="eyebrow">
         #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
         <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
@@ -1461,6 +1537,27 @@ const runTicketAgent = (ticket: Ticket) => {
           <button type="button" @click="addLinkDraft(openTicket)">Add</button>
         </div>
         <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
+
+      <section
+        class="ticket-images"
+        @dragover.prevent
+        @drop.prevent="dropTicketImages(openTicket, $event)"
+      >
+        <p class="eyebrow">Images</p>
+        <ul v-if="openTicket.images?.length">
+          <li v-for="imagePath in openTicket.images" :key="imagePath">
+            <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
+              <img :src="ticketImageUrl(imagePath)" alt="Attached image" />
+            </button>
+            <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-images-add">
+          <button type="button" @click="pickTicketImages(openTicket)">Add image</button>
+          <span class="field-hint">or paste / drop an image here</span>
+        </div>
+        <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 
       <section class="ticket-checklist">

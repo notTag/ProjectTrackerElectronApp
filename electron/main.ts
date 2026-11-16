@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
 // electron-updater exposes `autoUpdater` as a lazy getter on a CommonJS module,
 // which Node's ESM named-export detection cannot see. Default import or bust.
 import electronUpdater from 'electron-updater'
@@ -28,6 +28,15 @@ import {
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
+import {
+  IMAGE_EXTENSIONS,
+  addTicketImages,
+  attachmentsRootOf,
+  removeTicketImage,
+  removeTicketImages,
+  resolveAttachmentPath,
+  saveTicketImageBytes
+} from './ticketImages.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
@@ -71,6 +80,14 @@ app.setName(APP_NAME)
 // (smoke test, corrupt-DB check). Must run before anything reads userData.
 const userDataOverride = process.env.PROJECT_TRACKER_USER_DATA
 if (userDataOverride) app.setPath('userData', path.resolve(userDataOverride))
+const attachmentsRoot = attachmentsRootOf(app.getPath('userData'))
+
+// Dev serves the renderer from the Vite http origin, where Chromium refuses
+// file:// images, so thumbnails load through this scheme in dev and packaged alike.
+const TICKET_IMAGE_SCHEME = 'ticket-image'
+protocol.registerSchemesAsPrivileged([
+  { scheme: TICKET_IMAGE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }
+])
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
 // rasterization (correct DOM, scrambled on-screen text). Software compositing
@@ -253,7 +270,8 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   laneId: true, title: true, description: true, updatedAt: true, labels: true, branchName: true,
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
-  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true
+  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
+  images: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
@@ -493,6 +511,46 @@ const registerIpc = () => {
     const { id } = (payload ?? {}) as { id?: unknown }
     if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
     stateRepository.deleteTicket(id)
+    removeTicketImages(attachmentsRoot, id)
+  })
+
+  ipcMain.handle('ticket-images:pick', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId } = (payload ?? {}) as { ticketId?: unknown }
+    if (typeof ticketId !== 'string') throw new Error('Invalid ticket image payload.')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Attach images',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }]
+    } satisfies Electron.OpenDialogOptions
+    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (result.canceled) return []
+    return addTicketImages(attachmentsRoot, ticketId, result.filePaths)
+  })
+
+  // Not invokePlain on the preload side: bytes arrive as a structured-clone Uint8Array.
+  ipcMain.handle('ticket-images:save-bytes', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId, bytes, mimeType } = (payload ?? {}) as { ticketId?: unknown; bytes?: unknown; mimeType?: unknown }
+    const isValidPayload = typeof ticketId === 'string' && bytes instanceof Uint8Array && typeof mimeType === 'string'
+    if (!isValidPayload) throw new Error('Invalid ticket image payload.')
+    return saveTicketImageBytes(attachmentsRoot, ticketId, bytes, mimeType)
+  })
+
+  ipcMain.handle('ticket-images:remove', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId, imagePath } = (payload ?? {}) as { ticketId?: unknown; imagePath?: unknown }
+    if (typeof ticketId !== 'string' || typeof imagePath !== 'string') throw new Error('Invalid ticket image payload.')
+    removeTicketImage(attachmentsRoot, ticketId, imagePath)
+  })
+
+  ipcMain.handle('ticket-images:open', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const imagePath = resolveAttachmentPath(attachmentsRoot, String(payload))
+    if (!imagePath) throw new Error('Not a ticket image.')
+    const failureMessage = await shell.openPath(imagePath)
+    if (failureMessage) throw new Error(failureMessage)
   })
 
   ipcMain.handle('lane:create', (event, payload: unknown) => {
@@ -879,6 +937,12 @@ app.whenReady().then(async () => {
     return
   }
   registerIpc()
+  protocol.handle(TICKET_IMAGE_SCHEME, (request) => {
+    const requestedPath = decodeURIComponent(new URL(request.url).pathname.slice(1))
+    const imagePath = resolveAttachmentPath(attachmentsRoot, requestedPath)
+    if (!imagePath) return new Response(null, { status: 404 })
+    return net.fetch(pathToFileURL(imagePath).toString())
+  })
   await createWindow()
 
   setInterval(() => {

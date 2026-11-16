@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   external_url TEXT,
   full_auto INTEGER NOT NULL DEFAULT 0,
   external_links_json TEXT,
+  images_json TEXT,
   move_to_lane_id TEXT,
   move_on_complete INTEGER NOT NULL DEFAULT 0,
   -- Owned by the triggers in CLOSED_AT_TRIGGERS_SQL, never written by the app.
@@ -171,7 +172,8 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'model', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'next_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
-  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' }
+  { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' },
+  { table: 'tickets', column: 'images_json', definition: 'TEXT' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by
