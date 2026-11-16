@@ -54,6 +54,7 @@ import {
   ticketSearchText,
   ticketShellCommand,
   ticketTabTitle,
+  ticketIdsToMove,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -745,9 +746,9 @@ const dropOnLane = async (laneId: string) => {
   const ticketId = draggedTicketId.value
   draggedTicketId.value = null
   if (!ticketId) return
-  const ticket = board.value.tickets.find((entry) => entry.id === ticketId)
-  if (!ticket || ticket.laneId === laneId) return
-  await store.updateTicket(projectPath.value, ticketId, { laneId })
+  const visibleTickets = visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id))
+  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets, laneId)
+  await store.moveTickets(projectPath.value, ticketIds, laneId)
 }
 
 const formatDate = (value: string) => {
@@ -1142,8 +1143,8 @@ const runTicketAgent = (ticket: Ticket) => {
               type="checkbox"
               class="ticket-select"
               :checked="selectedTicketIds.has(ticket.id)"
-              :aria-label="`Select #${ticket.number} to run`"
-              title="Select to run"
+              :aria-label="`Select #${ticket.number} (run / move)`"
+              title="Select (run / move)"
               @click.stop
               @change="toggleTicketSelected(ticket.id)"
             />
