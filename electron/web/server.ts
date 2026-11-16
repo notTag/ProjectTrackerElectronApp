@@ -9,7 +9,7 @@
  * other websites and DNS-rebinding pages from driving those launches.
  */
 import { execFile } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { createReadStream, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { homedir } from 'node:os'
@@ -26,8 +26,9 @@ export const DEFAULT_WEB_PORT = 5174
 const LISTEN_HOST = '127.0.0.1'
 // The biggest body is a 20 MB image (MAX_IMAGE_BYTES) as base64, about 27 MB.
 const MAX_BODY_BYTES = 32 * 1024 * 1024
-// A reload drops the SSE stream for a moment; keep the tab's repository (and
-// its diff baseline) across that instead of starting it over.
+// EventSource reconnects on its own after a blip (sleep/wake, server hiccup);
+// keep the tab's repository and diff baseline, and its running scan, across
+// that. Also how long a client that never opens a stream lives.
 const CLIENT_GRACE_MS = 30_000
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -60,7 +61,7 @@ const SECURITY_HEADERS = {
 interface Client {
   repository: StateRepository
   streams: Set<ServerResponse>
-  // Fired when the tab's last event stream closes (reload or close).
+  // Fired when the client is dropped: no event stream for CLIENT_GRACE_MS.
   pageGoneListeners: Set<() => void>
   closeTimer?: ReturnType<typeof setTimeout>
 }
@@ -107,20 +108,20 @@ const sendJson = (response: ServerResponse, status: number, body: unknown) => {
 
 const reject = (response: ServerResponse, status: number, message: string) => sendJson(response, status, { error: message })
 
+// An oversized body is drained rather than the socket destroyed, so the client
+// gets the 400 and its message instead of a bare network error.
 const readBody = (request: IncomingMessage) =>
   new Promise<string>((resolve, rejectBody) => {
     const chunks: Buffer[] = []
     let size = 0
     request.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
-        rejectBody(new Error('Request body too large.'))
-        request.destroy()
-        return
-      }
-      chunks.push(chunk)
+      if (size <= MAX_BODY_BYTES) chunks.push(chunk)
     })
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('end', () => {
+      if (size > MAX_BODY_BYTES) return rejectBody(new Error('Request body too large.'))
+      resolve(Buffer.concat(chunks).toString('utf8'))
+    })
     request.on('error', rejectBody)
   })
 
@@ -163,21 +164,30 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
   let allowedHosts = new Set<string>()
   let allowedOrigins = new Set<string>()
 
+  const dropClient = (clientId: string) => {
+    const client = clients.get(clientId)
+    if (!client || client.streams.size > 0) return
+    clearTimeout(client.closeTimer)
+    for (const listener of client.pageGoneListeners) listener()
+    client.repository.close()
+    clients.delete(clientId)
+  }
+
+  const scheduleDrop = (clientId: string, client: Client) => {
+    clearTimeout(client.closeTimer)
+    client.closeTimer = setTimeout(() => dropClient(clientId), CLIENT_GRACE_MS)
+  }
+
+  // Armed for drop from birth, so a client that never opens an event stream
+  // (a late fetch from a closing tab, a script) doesn't keep its DB handle forever.
   const clientFor = (clientId: string) => {
     let client = clients.get(clientId)
     if (!client) {
       client = { repository: new StateRepository(options.userDataPath), streams: new Set(), pageGoneListeners: new Set() }
       clients.set(clientId, client)
+      scheduleDrop(clientId, client)
     }
     return client
-  }
-
-  const dropClient = (clientId: string) => {
-    const client = clients.get(clientId)
-    if (!client || client.streams.size > 0) return
-    clearTimeout(client.closeTimer)
-    client.repository.close()
-    clients.delete(clientId)
   }
 
   const pushEvent = (client: Client, event: string, data: unknown = {}) => {
@@ -215,6 +225,12 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     }
 
     const client = clientFor(clientId)
+    // A repository made after a server restart or a drop has no baseline, and a
+    // baseline-less saveState writes every row the tab holds, reverting whatever
+    // others changed since. Make the tab re-read instead.
+    if (channel === 'project-state:save' && !client.repository.hasBaseline) {
+      return reject(response, 409, 'The web server restarted since this page loaded. Reload the page.')
+    }
     try {
       const result = await handlers[channel](payload, {
         repository: client.repository,
@@ -246,9 +262,9 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     client.streams.add(response)
     request.on('close', () => {
       client.streams.delete(response)
-      if (client.streams.size > 0) return
-      for (const listener of client.pageGoneListeners) listener()
-      client.closeTimer = setTimeout(() => dropClient(clientId), CLIENT_GRACE_MS)
+      // close() already tore the client down.
+      const isLiveClient = clients.get(clientId) === client
+      if (isLiveClient && client.streams.size === 0) scheduleDrop(clientId, client)
     })
   }
 
@@ -265,7 +281,8 @@ export const startWebServer = async (options: WebServerOptions): Promise<Running
     if (!isFile) return reject(response, 404, 'Not found.')
     const contentType = CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream'
     response.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': contentType })
-    response.end(readFileSync(filePath))
+    // Streamed: an attachment can be 20 MB, and a sync read would stall every tab.
+    createReadStream(filePath).pipe(response)
   }
 
   const serveStatic = (response: ServerResponse, urlPath: string) => {

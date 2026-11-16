@@ -5,7 +5,9 @@ import type { AgentRetryEvent, ScanProgress } from '@/shared/projectTypes'
 // electron/preload.cts sends over IPC to the local server (electron/web/server.ts),
 // which runs it through the same handlers. Keep the two files line for line.
 
-// One id per tab: the server keeps a repository (and diff baseline) per id.
+// One id per page load: the server keeps a repository (and diff baseline) per
+// id. Not kept across reloads on purpose: a reload re-reads state anyway, and a
+// duplicated tab would share sessionStorage and so share one baseline.
 const clientId = crypto.randomUUID()
 
 const invoke = async <T>(channel: IpcChannel, payload?: unknown): Promise<T> => {
@@ -14,7 +16,8 @@ const invoke = async <T>(channel: IpcChannel, payload?: unknown): Promise<T> => 
     headers: { 'Content-Type': 'application/json', 'X-Client-Id': clientId },
     body: payload === undefined ? '' : JSON.stringify(payload)
   })
-  const body = (await response.json()) as { result?: T; error?: string }
+  // A non-JSON reply (a crash page) must still surface its status, not a SyntaxError.
+  const body = (await response.json().catch(() => ({}))) as { result?: T; error?: string }
   // Same message the IPC path carries, so substring checks like
   // isGithubUnreachableError keep matching.
   if (!response.ok) throw new Error(body.error ?? `Request failed: ${response.status}`)

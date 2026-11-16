@@ -434,6 +434,11 @@ export class StateRepository {
     return Number(this.select('PRAGMA data_version')[0].data_version)
   }
 
+  // False until the first getState: a saveState then has nothing to diff against.
+  get hasBaseline(): boolean {
+    return this.baseline !== undefined
+  }
+
   // Cheap enough to poll: a header check, no table reads.
   hasExternalChanges(): boolean {
     return this.dataVersion() !== this.dataVersionAtLastRead

@@ -606,6 +606,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - Ticket images: Add image opens the browser's file picker and uploads the bytes (base64) through `ticket-images:save-bytes`, the same path paste and drop use. Thumbnails load from `GET /api/ticket-image/<path>`, confined to `<userData>/attachments` by `resolveAttachmentPath`, the web twin of the `ticket-image://` scheme. Every response has `Cross-Origin-Resource-Policy: same-origin`, so other sites can't embed them.
 - Request guard: listens on `127.0.0.1` only. `Host` must be `127.0.0.1:<port>` or `localhost:<port>` (blocks DNS rebinding). Any `Origin` must be the server's own; a `POST` needs that `Origin` and `Content-Type: application/json`. Everything else gets 403, and no CORS headers are ever sent. Responses carry `X-Frame-Options: DENY` and `frame-ancestors 'none'`.
 - Add folder runs `osascript choose folder` on the server. The Dirs panel also shows an absolute-path text box in the web build.
+- Connection cap: plain HTTP/1.1, so the browser allows 6 open connections to the server across all tabs. Each tab holds one for its event stream and each ▶ Run holds one until the agent finishes. Past 6, new requests wait silently. Fix when it bites: one SharedWorker owning the event stream, or HTTP/2 (needs TLS).
 - Missing compared with the desktop app: PageFind (the browser's ⌘F works instead), `theme:set-native`, application menu, auto-update, native window chrome.
 
 ## 5. Known quirks

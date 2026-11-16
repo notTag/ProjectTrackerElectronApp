@@ -64,6 +64,7 @@ describe('web server', () => {
     writeFileSync(path.join(staticDirectory, 'index.html'), '<!doctype html><title>Project Tracker</title>')
     pickedDirectory = '/Users/example/Code'
     running = await startWebServer({ userDataPath, staticDirectory, port: 0, pickDirectory: async () => pickedDirectory })
+    await invoke('project-state:get')
     await invoke('project-state:save', seededState())
   })
 
@@ -104,6 +105,15 @@ describe('web server', () => {
 
       const refreshed = (await invoke('project-state:refresh')) as ProjectTrackerState
       expect(refreshed.boards?.[projectPath].tickets.map((ticket) => ticket.id)).toEqual(['from-other-tab'])
+    })
+
+    it('refuses a save from a tab whose repository has never read, e.g. after a server restart', async () => {
+      await expect(invoke('project-state:save', seededState(), randomUUID())).rejects.toThrow('Reload the page')
+    })
+
+    it('answers an oversized body with its message instead of dropping the connection', async () => {
+      const hugeTitle = 'x'.repeat(33 * 1024 * 1024)
+      await expect(invoke('ticket:update', { id: 't1', patch: { title: hugeTitle } })).rejects.toThrow('Request body too large.')
     })
 
     it('normalizes the picked folder', async () => {
