@@ -76,6 +76,11 @@ export interface ScanFailure {
   message: string
 }
 
+export interface ScanProgress {
+  directoriesSeen: number
+  currentPath: string
+}
+
 export interface ScanResult {
   snapshot: ProjectSnapshot
   failures: ScanFailure[]
@@ -356,6 +361,8 @@ export interface Ticket {
   fullAuto?: boolean
   // Any further http(s) links: design docs, threads, related issues. Absent means none.
   externalLinks?: string[]
+  // Absolute paths of image copies under <userData>/attachments/<ticketId>/. Absent means none.
+  images?: string[]
   // The ticket's own Next Lane, overriding its lane's. Cleared once a completion
   // move lands, so the ticket then inherits; moveOnComplete is what arms it.
   moveToLaneId?: string
@@ -443,6 +450,9 @@ export interface Agent {
   promptArgs?: string[]
   modelArgs?: string[]
   models?: string[]
+  // Model the Auto Run dialog starts on when the lane saved none; absent means
+  // the dialog starts on "CLI default".
+  defaultModel?: string
   sessionNameArgs?: string[]
   // `{sessionId}` is replaced with the run's session id. sessionArgs start a
   // session under that id, resumeArgs pick it back up. No resumeArgs means the
@@ -471,6 +481,7 @@ export const DEFAULT_AGENT: Agent = {
     'claude-sonnet-5-5',
     'claude-haiku-5-5'
   ],
+  defaultModel: 'claude-opus-5-5',
   sessionNameArgs: ['--name'],
   sessionArgs: ['--session-id', SESSION_ID_TOKEN],
   resumeArgs: ['--resume', SESSION_ID_TOKEN]
@@ -555,6 +566,7 @@ export interface TicketPromptContext {
 const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext): string => {
   const checklistLines = (ticket.checklist ?? []).map((item) => `- [${item.done ? 'x' : ' '}] ${item.text}`)
   const linkLines = (ticket.externalLinks ?? []).map((link) => `- ${link}`)
+  const imageLines = (ticket.images ?? []).map((imagePath) => `- ${imagePath}`)
   const lines = [
     `Ticket #${ticket.number}: ${ticket.title}`,
     `Status: ${lane.name}`,
@@ -566,6 +578,7 @@ const ticketMetadataLines = (ticket: Ticket, lane: SwimLane, context: TicketProm
     ticket.pullRequestUrl ? `Pull request: ${ticket.pullRequestUrl}` : '',
     ticket.externalUrl ? `Source: ${ticket.externalUrl}` : '',
     linkLines.length ? ['Links:', ...linkLines].join('\n') : '',
+    imageLines.length ? ['Images (open each path to view it):', ...imageLines].join('\n') : '',
     checklistLines.length ? ['Checklist:', ...checklistLines].join('\n') : ''
   ]
   return lines.filter(Boolean).join('\n')
@@ -666,6 +679,30 @@ export const LANE_MARKDOWN_FILE_PATH_FIELD = {
   agent: 'agentFilePath',
   orchestrator: 'orchestratorFilePath'
 } as const satisfies Record<LaneMarkdownKind, keyof SwimLane>
+
+// Only unindented markers start a rule: indented sub-bullets and sub-steps stay
+// inside their parent rule, indentation intact.
+const BULLET_RULE = /^[-*]\s+(.*)$/
+// Numbered rules keep their number in the text: prompts refer back to "steps 1-5".
+const NUMBERED_RULE = /^\d+[.)]\s/
+
+// A lane prompt read as a list of rules: a bullet or numbered line starts a rule,
+// other lines continue the one before. Text above the first bullet is a rule too.
+export const promptRules = (prompt: string): string[] => {
+  const rules: string[] = []
+  for (const rawLine of prompt.split('\n')) {
+    const line = rawLine.trimEnd()
+    if (!line.trim()) continue
+    const bulletText = BULLET_RULE.exec(line)?.[1]
+    const startsRule = bulletText !== undefined || NUMBERED_RULE.test(line) || rules.length === 0
+    if (startsRule) rules.push(bulletText ?? line.trim())
+    else rules[rules.length - 1] += `\n${line}`
+  }
+  return rules
+}
+
+export const rulesToPrompt = (rules: string[]): string =>
+  rules.map((rule) => (NUMBERED_RULE.test(rule) ? rule : `- ${rule}`)).join('\n')
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An

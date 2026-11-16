@@ -54,6 +54,7 @@ import {
   type ProjectStatus,
   type ProjectTrackerState,
   type LaneMarkdownKind,
+  type ScanProgress,
   type SwimLane,
   type Ticket,
   LANE_MARKDOWN_FILE_PATH_FIELD,
@@ -64,6 +65,9 @@ interface ProjectsStoreState {
   state: ProjectTrackerState
   loading: boolean
   scanning: boolean
+  // Null until the first progress event of a scan arrives.
+  scanProgress: ScanProgress | null
+  scanCancelRequested: boolean
   saving: boolean
   error: string | null
   notice: string | null
@@ -257,6 +261,8 @@ export const useProjectsStore = defineStore('projects', {
     state: createSeedState(),
     loading: false,
     scanning: false,
+    scanProgress: null,
+    scanCancelRequested: false,
     saving: false,
     error: null,
     notice: null,
@@ -802,9 +808,19 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     async scan(extraDirectory?: string, options?: { requireProjects?: boolean }) {
+      if (this.scanning) return false
       this.scanning = true
+      this.scanCancelRequested = false
       this.error = null
       this.notice = null
+      const unsubscribeProgress = projectTrackerApi.onScanProgress((progress) => {
+        this.scanProgress = progress
+      })
+      const markScanCancelled = () => {
+        this.error = null
+        this.notice = 'Scan cancelled.'
+        return false
+      }
       const scanDirectories = unique(extraDirectory ? [...this.state.scanDirectories, extraDirectory] : this.state.scanDirectories)
 
       try {
@@ -813,6 +829,7 @@ export const useProjectsStore = defineStore('projects', {
           this.state.hiddenPaths,
           this.state.thirdPartyPaths
         )
+        if (this.scanCancelRequested) return markScanCancelled()
         if (options?.requireProjects && result.snapshot.projects.length === 0 && result.failures.length > 0) {
           this.error = `Scan failed for ${result.failures[0].path}: ${result.failures[0].message}`
           return false
@@ -828,11 +845,22 @@ export const useProjectsStore = defineStore('projects', {
             : `Scan found ${result.snapshot.projects.length} project${result.snapshot.projects.length === 1 ? '' : 's'}.`
         return true
       } catch (error) {
+        if (this.scanCancelRequested) return markScanCancelled()
         this.error = error instanceof Error ? error.message : String(error)
         return false
       } finally {
+        unsubscribeProgress()
         this.scanning = false
+        this.scanProgress = null
+        this.scanCancelRequested = false
       }
+    },
+
+    // Cancel keeps nothing: scan() skips its save, so stored state is untouched.
+    async cancelScan() {
+      if (!this.scanning) return
+      this.scanCancelRequested = true
+      await projectTrackerApi.cancelScan()
     },
 
     async updateProject(path: string, patch: Partial<Pick<ProjectRecord, 'notes' | 'priority' | 'status'>>) {

@@ -10,6 +10,7 @@ import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
+import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal, type OpenInTarget } from '@/shared/openInTargets'
 import {
   DEFAULT_LANE_WIDTH,
@@ -112,6 +113,7 @@ const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
+const imageError = ref<string | null>(null)
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -522,6 +524,7 @@ const closeModals = () => {
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
+  imageError.value = null
 }
 
 const focusTicketFilter = () => {
@@ -574,8 +577,30 @@ onMounted(() => {
   window.addEventListener('keydown', handleBoardKeydown)
 })
 
+// Trailing "+" zone: shown on hover, lingers after the pointer leaves so it
+// doesn't vanish mid-reach. Re-entering just cancels the pending hide.
+const ADD_ZONE_HIDE_DELAY_MS = 3000
+const addZoneShown = ref(false)
+let addZoneHideTimer: ReturnType<typeof setTimeout> | undefined
+
+const showAddZone = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = true
+}
+
+const hideAddZoneNow = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = false
+}
+
+const hideAddZoneLater = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneHideTimer = setTimeout(hideAddZoneNow, ADD_ZONE_HIDE_DELAY_MS)
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
+  clearTimeout(addZoneHideTimer)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -687,6 +712,97 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
   }))
 }
 
+// Same queued-mutate reasoning as editTicketLinks.
+const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]) => {
+  const updatedAt = new Date().toISOString()
+  return store.updateBoard(projectPath.value, (board) => ({
+    ...board,
+    tickets: board.tickets.map((current) => {
+      if (current.id !== ticket.id) return current
+      const images = change(current.images ?? [])
+      return { ...current, images: images.length ? images : undefined, updatedAt }
+    })
+  }))
+}
+
+const ticketImageUrl = (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`
+
+// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
+const ipcErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
+
+// Files are written before the ticket lists them, so a failed save leaves at
+// worst an orphan file, never a listed path that doesn't exist. Settled one by
+// one: a bad file in a drop must not keep the good ones off the ticket.
+const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) => {
+  imageError.value = null
+  const results = await Promise.allSettled(pendingSaves)
+  const addedPaths = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure) imageError.value = ipcErrorMessage(failure.reason)
+  if (!addedPaths.length) return
+  try {
+    await editTicketImages(ticket, (images) => [...images, ...addedPaths])
+  } catch (error) {
+    imageError.value = ipcErrorMessage(error)
+  }
+}
+
+const pickTicketImages = (ticket: Ticket) => attachImages(ticket, [projectTrackerApi.pickTicketImages(ticket.id)])
+
+const imageFilesOf = (transfer: DataTransfer | null) =>
+  [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+
+const saveImageFile = async (ticket: Ticket, file: File) => {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const imagePath = await projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
+  return [imagePath]
+}
+
+// Paste and drop both send bytes: clipboard images have no file path at all.
+const saveImageFiles = (ticket: Ticket, files: File[]) =>
+  attachImages(ticket, files.map((file) => saveImageFile(ticket, file)))
+
+// Rich text copied from Notes/Word/Sheets carries a PNG rendering alongside the
+// text, so a paste into a text field with text on the clipboard stays a text paste.
+const isTextFieldPaste = (event: ClipboardEvent) => {
+  const target = event.target
+  const isIntoTextField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+  const hasText = event.clipboardData?.types.includes('text/plain') ?? false
+  return isIntoTextField && hasText
+}
+
+const pasteTicketImages = (ticket: Ticket, event: ClipboardEvent) => {
+  if (isTextFieldPaste(event)) return
+  const files = imageFilesOf(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  void saveImageFiles(ticket, files)
+}
+
+const dropTicketImages = (ticket: Ticket, event: DragEvent) => {
+  const files = imageFilesOf(event.dataTransfer)
+  if (files.length) void saveImageFiles(ticket, files)
+}
+
+// The ticket stops listing the image before its file goes.
+const removeTicketImage = async (ticket: Ticket, imagePath: string) => {
+  imageError.value = null
+  try {
+    await editTicketImages(ticket, (images) => images.filter((existingPath) => existingPath !== imagePath))
+    await projectTrackerApi.removeTicketImage(ticket.id, imagePath)
+  } catch (error) {
+    imageError.value = ipcErrorMessage(error)
+  }
+}
+
+const openTicketImage = (imagePath: string) =>
+  projectTrackerApi.openTicketImage(imagePath).catch((error) => {
+    imageError.value = ipcErrorMessage(error)
+  })
+
 const editLane = (lane: SwimLane, patch: Partial<Omit<SwimLane, 'id'>>) => {
   void store.updateLane(projectPath.value, lane.id, patch)
 }
@@ -791,7 +907,8 @@ const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
 }
 
 const changeAutoRunConfirmAgent = () => {
-  autoRunConfirmModel.value = ''
+  const agent = findAgent(agents.value, autoRunConfirmAgentId.value)
+  autoRunConfirmModel.value = agent.defaultModel ?? ''
   if (!autoRunConfirmOrchestratorAgentId.value) autoRunConfirmOrchestratorModel.value = ''
 }
 
@@ -885,12 +1002,6 @@ watch(openLaneId, () => {
 const canSaveLaneMarkdown = (kind: LaneMarkdownKind) =>
   laneMarkdownDraft.value[kind].prompt.trim() !== '' && !laneMarkdownStatus.value[kind].saving
 
-// Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
-const ipcErrorMessage = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-}
-
 const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind) => {
   const { prompt, filePath } = laneMarkdownDraft.value[kind]
   const savingLaneId = openLaneId.value
@@ -935,8 +1046,9 @@ const autoRunConfirmTerminalId = ref('')
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
 const askToAutoRunLane = (lane: SwimLane) => {
-  autoRunConfirmAgentId.value = findAgent(agents.value, lane.autoRunAgentId).id
-  autoRunConfirmModel.value = lane.autoRunModel ?? ''
+  const agent = findAgent(agents.value, lane.autoRunAgentId)
+  autoRunConfirmAgentId.value = agent.id
+  autoRunConfirmModel.value = lane.autoRunModel || agent.defaultModel || ''
   autoRunConfirmOrchestratorAgentId.value = lane.orchestratorAgentId ?? ''
   autoRunConfirmOrchestratorModel.value = lane.orchestratorModel ?? ''
   autoRunConfirmTerminalId.value = autoRunTerminal(lane).id
@@ -1117,7 +1229,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" @edit-lane="editLane" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1292,6 +1404,22 @@ const runTicketAgent = (ticket: Ticket) => {
           @pointercancel="endLaneResize"
         />
       </section>
+
+      <!-- Kept (inert) during a lane drag: removing its box would re-center
+           every lane under "safe center" the moment the drag starts.
+           Unmounting under the pointer fires no mouseleave → reset on unmount. -->
+      <div
+        v-if="!filterLaneId"
+        class="lane-add-zone"
+        :class="{ shown: addZoneShown }"
+        :inert="laneDrag?.active"
+        :style="{ width: `${DEFAULT_LANE_WIDTH}px` }"
+        @mouseenter="showAddZone"
+        @mouseleave="hideAddZoneLater"
+        @vue:before-unmount="hideAddZoneNow"
+      >
+        <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">+</button>
+      </div>
     </section>
   </main>
 
@@ -1382,7 +1510,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @click.self="closeModals">
     <!-- Refresh before editing so fields include writes from other processes. -->
-    <section class="modal ticket-modal" @focusin="store.refresh()">
+    <section class="modal ticket-modal" @focusin="store.refresh()" @paste="pasteTicketImages(openTicket, $event)">
       <p class="eyebrow">
         #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
         <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
@@ -1526,6 +1654,27 @@ const runTicketAgent = (ticket: Ticket) => {
           <button type="button" @click="addLinkDraft(openTicket)">Add</button>
         </div>
         <span v-if="linkDraftInvalid" class="field-hint field-error">Use an http(s) URL</span>
+      </section>
+
+      <section
+        class="ticket-images"
+        @dragover.prevent
+        @drop.prevent="dropTicketImages(openTicket, $event)"
+      >
+        <p class="eyebrow">Images</p>
+        <ul v-if="openTicket.images?.length">
+          <li v-for="imagePath in openTicket.images" :key="imagePath">
+            <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
+              <img :src="ticketImageUrl(imagePath)" alt="Attached image" loading="lazy" decoding="async" />
+            </button>
+            <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
+          </li>
+        </ul>
+        <div class="ticket-images-add">
+          <button type="button" @click="pickTicketImages(openTicket)">Add image</button>
+          <span class="field-hint">or paste / drop an image here</span>
+        </div>
+        <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 
       <section class="ticket-checklist">
@@ -1699,21 +1848,23 @@ const runTicketAgent = (ticket: Ticket) => {
       </p>
       <section v-if="orchestratorPollActive(autoRunConfirmLane)" class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
-        <label>
-          Agent
-          <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
-            <option value="">Same as ticket agent</option>
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label>
-          Model
-          <ModelField
-            v-model="autoRunConfirmOrchestratorModel"
-            :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
-            :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-          />
-        </label>
+        <div class="auto-run-orchestrator-fields">
+          <label>
+            Agent
+            <select v-model="autoRunConfirmOrchestratorAgentId" @change="autoRunConfirmOrchestratorModel = ''">
+              <option value="">Same as ticket agent</option>
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label>
+            Model
+            <ModelField
+              v-model="autoRunConfirmOrchestratorModel"
+              :agent="findAgent(agents, autoRunConfirmOrchestratorAgentId || autoRunConfirmAgentId)"
+              :placeholder="autoRunConfirmOrchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+            />
+          </label>
+        </div>
       </section>
       <p class="auto-run-question">
         Each opens in its own

@@ -12,6 +12,7 @@ import type {
   ProjectTrackerState,
   ProjectWritePatch,
   PullRequestStatus,
+  ScanProgress,
   ScanResult,
   SwimLane,
   TabLiveness,
@@ -31,6 +32,11 @@ interface ProjectTrackerElectronApi {
   createTicket(projectPath: string, ticket: Omit<Ticket, 'number'>): Promise<Ticket>
   updateTicket(id: string, patch: TicketWritePatch): Promise<Ticket>
   deleteTicket(id: string): Promise<void>
+  // Each returns/accepts absolute paths of the copies under <userData>/attachments.
+  pickTicketImages(ticketId: string): Promise<string[]>
+  saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string): Promise<string>
+  removeTicketImage(ticketId: string, imagePath: string): Promise<void>
+  openTicketImage(imagePath: string): Promise<void>
   createLane(projectPath: string, lane: SwimLane): Promise<SwimLane>
   updateLane(projectPath: string, laneId: string, patch: LaneWritePatch): Promise<SwimLane>
   reorderLanes(projectPath: string, laneIds: string[]): Promise<void>
@@ -42,6 +48,8 @@ interface ProjectTrackerElectronApi {
     hiddenPaths: string[],
     thirdPartyPaths: string[]
   ): Promise<ScanResult>
+  onScanProgress(callback: (progress: ScanProgress) => void): () => void
+  cancelScan(): Promise<void>
   pickScanDirectory(): Promise<string | null>
   openProjectIn(
     path: string,

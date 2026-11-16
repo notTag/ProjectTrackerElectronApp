@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
 // electron-updater exposes `autoUpdater` as a lazy getter on a CommonJS module,
 // which Node's ESM named-export detection cannot see. Default import or bust.
 import electronUpdater from 'electron-updater'
@@ -28,6 +28,15 @@ import {
   warpLaunchConfigYaml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
+import {
+  IMAGE_EXTENSIONS,
+  addTicketImages,
+  attachmentsRootOf,
+  removeTicketImage,
+  removeTicketImages,
+  resolveAttachmentPath,
+  saveTicketImageBytes
+} from './ticketImages.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
@@ -47,7 +56,8 @@ import {
   type TicketWritePatch,
   type LaneMarkdownKind,
   type LaneWritePatch,
-  type ProjectWritePatch
+  type ProjectWritePatch,
+  type ScanProgress
 } from '../src/shared/projectTypes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -72,6 +82,14 @@ app.setName(APP_NAME)
 // (smoke test, corrupt-DB check). Must run before anything reads userData.
 const userDataOverride = process.env.PROJECT_TRACKER_USER_DATA
 if (userDataOverride) app.setPath('userData', path.resolve(userDataOverride))
+const attachmentsRoot = attachmentsRootOf(app.getPath('userData'))
+
+// Dev serves the renderer from the Vite http origin, where Chromium refuses
+// file:// images, so thumbnails load through this scheme in dev and packaged alike.
+const TICKET_IMAGE_SCHEME = 'ticket-image'
+protocol.registerSchemesAsPrivileged([
+  { scheme: TICKET_IMAGE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }
+])
 
 // Packaged/hardened-runtime builds on some Apple Silicon GPUs garble glyph
 // rasterization (correct DOM, scrambled on-screen text). Software compositing
@@ -254,7 +272,8 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   laneId: true, title: true, description: true, updatedAt: true, labels: true, branchName: true,
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
-  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true
+  externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
+  images: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
@@ -500,6 +519,51 @@ const registerIpc = () => {
     const { id } = (payload ?? {}) as { id?: unknown }
     if (typeof id !== 'string') throw new Error('Invalid ticket delete payload.')
     stateRepository.deleteTicket(id)
+    // The row is already gone, so a cleanup failure must not report a failed delete.
+    try {
+      removeTicketImages(attachmentsRoot, id)
+    } catch (error) {
+      console.warn(`Could not remove attachments for ticket ${id}:`, error)
+    }
+  })
+
+  ipcMain.handle('ticket-images:pick', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId } = (payload ?? {}) as { ticketId?: unknown }
+    if (typeof ticketId !== 'string') throw new Error('Invalid ticket image payload.')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Attach images',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }]
+    } satisfies Electron.OpenDialogOptions
+    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (result.canceled) return []
+    return addTicketImages(attachmentsRoot, ticketId, result.filePaths)
+  })
+
+  // Not invokePlain on the preload side: bytes arrive as a structured-clone Uint8Array.
+  ipcMain.handle('ticket-images:save-bytes', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId, bytes, mimeType } = (payload ?? {}) as { ticketId?: unknown; bytes?: unknown; mimeType?: unknown }
+    const isValidPayload = typeof ticketId === 'string' && bytes instanceof Uint8Array && typeof mimeType === 'string'
+    if (!isValidPayload) throw new Error('Invalid ticket image payload.')
+    return saveTicketImageBytes(attachmentsRoot, ticketId, bytes, mimeType)
+  })
+
+  ipcMain.handle('ticket-images:remove', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const { ticketId, imagePath } = (payload ?? {}) as { ticketId?: unknown; imagePath?: unknown }
+    if (typeof ticketId !== 'string' || typeof imagePath !== 'string') throw new Error('Invalid ticket image payload.')
+    removeTicketImage(attachmentsRoot, ticketId, imagePath)
+  })
+
+  ipcMain.handle('ticket-images:open', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const imagePath = resolveAttachmentPath(attachmentsRoot, String(payload))
+    if (!imagePath) throw new Error('Not a ticket image.')
+    const failureMessage = await shell.openPath(imagePath)
+    if (failureMessage) throw new Error(failureMessage)
   })
 
   ipcMain.handle('lane:create', (event, payload: unknown) => {
@@ -539,7 +603,10 @@ const registerIpc = () => {
     return toPlainJson(stateRepository.updateProject(normalizePath(projectPath), patch))
   })
 
-  ipcMain.handle('projects:scan', (event, payload: unknown) => {
+  // ponytail: one scan app-wide, per-window controllers if multi-window scanning ever matters
+  let activeScan: AbortController | null = null
+
+  ipcMain.handle('projects:scan', async (event, payload: unknown) => {
     assertTrustedSender(event)
     const candidate = payload as {
       scanDirectories?: unknown
@@ -554,11 +621,40 @@ const registerIpc = () => {
       throw new Error('Invalid scan payload.')
     }
 
-    return toPlainJson(scanProjectDirectories(
-      candidate.scanDirectories.map(normalizePath),
-      candidate.hiddenPaths.map(normalizePath),
-      candidate.thirdPartyPaths.map(normalizePath)
-    ))
+    if (activeScan) throw new Error('A scan is already running.')
+
+    const scan = new AbortController()
+    activeScan = scan
+    // A cancelled walk can still be finishing an fs call after a newer scan starts;
+    // its progress must not show up in the newer scan.
+    const sendProgress = (progress: ScanProgress) => {
+      const isCurrentScan = activeScan === scan
+      if (isCurrentScan && !event.sender.isDestroyed()) event.sender.send('projects:scan-progress', progress)
+    }
+    // A reload drops the renderer's scanning state and its Cancel button, so a hung
+    // scan would otherwise block every later scan until restart.
+    const abortOnReload = (navigation: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+      const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
+      if (isPageLoad) scan.abort()
+    }
+    event.sender.on('did-start-navigation', abortOnReload)
+    try {
+      const result = await scanProjectDirectories(
+        candidate.scanDirectories.map(normalizePath),
+        candidate.hiddenPaths.map(normalizePath),
+        candidate.thirdPartyPaths.map(normalizePath),
+        { signal: scan.signal, onProgress: sendProgress }
+      )
+      return toPlainJson(result)
+    } finally {
+      activeScan = null
+      if (!event.sender.isDestroyed()) event.sender.off('did-start-navigation', abortOnReload)
+    }
+  })
+
+  ipcMain.handle('projects:scan-cancel', (event) => {
+    assertTrustedSender(event)
+    activeScan?.abort()
   })
 
   ipcMain.handle('dialog:pick-scan-directory', async (event) => {
@@ -886,6 +982,14 @@ app.whenReady().then(async () => {
     return
   }
   registerIpc()
+  protocol.handle(TICKET_IMAGE_SCHEME, (request) => {
+    const requestUrl = new URL(request.url)
+    const encodedPath = requestUrl.pathname.slice(1)
+    const requestedPath = decodeURIComponent(encodedPath)
+    const imagePath = resolveAttachmentPath(attachmentsRoot, requestedPath)
+    if (!imagePath) return new Response(null, { status: 404 })
+    return net.fetch(pathToFileURL(imagePath).toString())
+  })
   await createWindow()
 
   setInterval(() => {
