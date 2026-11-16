@@ -657,8 +657,10 @@ describe('moveTickets', () => {
   const stateWithThreeTickets = (): ProjectTrackerState => {
     const state = stateWithTicketIn('idea')
     const board = state.boards![PROJECT_PATH]
-    const [first] = board.tickets
-    const tickets = [first, { ...first, id: 'ticket-2', number: 8 }, { ...first, id: 'ticket-3', number: 9, laneId: 'prd' }]
+    const [ideaTicket] = board.tickets
+    const secondIdeaTicket = { ...ideaTicket, id: 'ticket-2', number: 8 }
+    const prdTicket = { ...ideaTicket, id: 'ticket-3', number: 9, laneId: 'prd' }
+    const tickets = [ideaTicket, secondIdeaTicket, prdTicket]
     return { ...state, boards: { [PROJECT_PATH]: { ...board, tickets } } }
   }
 
@@ -676,6 +678,18 @@ describe('moveTickets', () => {
     expect(sentPatches.every((patch) => patch.laneId === 'dev')).toBe(true)
     expect(sentUpdatedAts.size).toBe(1)
     expect(store.board(PROJECT_PATH).tickets.every((ticket) => ticket.laneId === 'dev')).toBe(true)
+  })
+
+  it('leaves a ticket already in the target lane untouched', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    const prdTicketBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+
+    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
+
+    const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+    expect(api.updateTicket).toHaveBeenCalledTimes(1)
+    expect(prdTicketAfter?.updatedAt).toBe(prdTicketBefore?.updatedAt)
   })
 
   it('writes nothing for an empty id list', async () => {
