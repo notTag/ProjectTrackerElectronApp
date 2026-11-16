@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
+import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
@@ -31,6 +32,7 @@ import {
   clampLaneWidth,
   findAgent,
   formatLabels,
+  githubErrorMessage,
   isFullAuto,
   isWebUrl,
   moveLaneInBoard,
@@ -438,7 +440,7 @@ const refreshOpenTicketPullRequest = async () => {
   try {
     await store.refreshPullRequest(projectPath.value, ticket)
   } catch (error) {
-    pullRequestError.value = error instanceof Error ? error.message : String(error)
+    pullRequestError.value = githubErrorMessage(error)
   } finally {
     pullRequestRefreshing.value = false
   }
@@ -965,6 +967,7 @@ const runTicketAgent = (ticket: Ticket) => {
   <header class="titlebar">
     <span class="titlebar-title">{{ projectTitle }}</span>
     <div class="titlebar-actions">
+      <OfflineBadge />
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
       <MetricsPanel :project-paths="[projectPath]" scope="board" />
       <OpenInPicker />

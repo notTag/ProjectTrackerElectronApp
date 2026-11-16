@@ -34,6 +34,7 @@ import {
   createSeedState,
   getBoard,
   getBoardPreferences,
+  githubErrorMessage,
   isGithubUnreachableError,
   isPullRequestSettled,
   mergeScannedProjects,
@@ -444,8 +445,7 @@ export const useProjectsStore = defineStore('projects', {
         // A background pull while offline is not worth a banner; the caller retries later.
         const isQuietOfflinePull = quiet && isGithubUnreachableError(error)
         if (isQuietOfflinePull) return 'offline'
-        const message = error instanceof Error ? error.message : String(error)
-        this.error = `${project.name}: ${message}`
+        this.error = `${project.name}: ${githubErrorMessage(error)}`
       } finally {
         this.githubLoading[projectPath] = false
       }
@@ -1200,7 +1200,7 @@ export const useProjectsStore = defineStore('projects', {
         }))
         this.notice = `Updated GitHub data for ${project.name}.`
       } catch (error) {
-        this.error = error instanceof Error ? error.message : String(error)
+        this.error = githubErrorMessage(error)
       } finally {
         this.githubLoading[path] = false
       }
