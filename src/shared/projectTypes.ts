@@ -221,8 +221,9 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
-  // Appended, never substituted: the generated orchestrator prompt carries the
-  // read-only DB rule. Never reaches ticket agents. Optional so older lanes load.
+  // Appended to the generated orchestrator prompt under "Lane instructions".
+  // Folded into orchestratorPromptOverride on the first edit, and unused while
+  // one is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
   // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
   // are filled in. Empty means the generated prompt. Optional so older lanes load.
@@ -1058,17 +1059,17 @@ const orchestratorPromptParts = (
   }
 }
 
-const TOKEN_NAME_BY_TEXT = new Map<string, keyof OrchestratorPromptParts>(
-  Object.entries(ORCHESTRATOR_PROMPT_TOKENS).map(([name, token]) => [token, name as keyof OrchestratorPromptParts])
-)
-
 // One pass, so a ticket title that happens to contain a token is never
 // expanded a second time. Unknown {{…}} is left as typed.
-const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts): string =>
-  template.replace(/\{\{\w+\}\}/g, (token) => {
-    const partName = TOKEN_NAME_BY_TEXT.get(token)
-    return partName ? parts[partName] : token
-  })
+const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts): string => {
+  const valueByToken: Record<string, string> = {
+    [ORCHESTRATOR_PROMPT_TOKENS.tickets]: parts.tickets,
+    [ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]: parts.ticketNumbers,
+    [ORCHESTRATOR_PROMPT_TOKENS.lanes]: parts.lanes,
+    [ORCHESTRATOR_PROMPT_TOKENS.terminal]: parts.terminal
+  }
+  return template.replace(/\{\{\w+\}\}/g, (token) => valueByToken[token] ?? token)
+}
 
 // The default prompt for the lane, with launch-time tokens in place of the
 // tickets, lanes and terminal section.
@@ -1088,7 +1089,6 @@ export const orchestratorPrompt = (
   if (!override.trim()) return renderOrchestratorPrompt(lane, parts, context)
   return fillOrchestratorTokens(override, parts)
 }
-
 
 export const buildOrchestratorLaunch = (
   lane: SwimLane,

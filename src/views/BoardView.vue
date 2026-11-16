@@ -858,19 +858,25 @@ const openLaneOrchestratorTemplate = computed(() => {
   return orchestratorPromptTemplate(lane, context)
 })
 
-const openLaneOrchestratorOverride = computed(() => openLane.value?.orchestratorPromptOverride ?? '')
+// Blank counts as no override, the same as at launch.
+const openLaneOrchestratorOverride = computed(() => {
+  const override = openLane.value?.orchestratorPromptOverride ?? ''
+  return override.trim() ? override : ''
+})
 
 const openLaneMissingOrchestratorTokens = computed(() => {
   const override = openLaneOrchestratorOverride.value
-  return override.trim() ? orchestratorPromptMissingTokens(override) : []
+  return override ? orchestratorPromptMissingTokens(override) : []
 })
 
-// Saving the untouched template keeps the lane on the generated prompt, so app
-// updates to it still arrive. An edit folds the old extras into the override,
-// since they are already part of the text the user just saved.
+// Saving the untouched template, or clearing the box, keeps the lane on the
+// generated prompt, so app updates to it still arrive and the old extras stay.
+// An edit folds the extras into the override, since they are already part of
+// the text the user just saved.
 const saveOrchestratorPrompt = (lane: SwimLane, text: string) => {
-  const isUnchangedTemplate = text.trim() === openLaneOrchestratorTemplate.value.trim()
-  if (isUnchangedTemplate) {
+  const trimmedText = text.trim()
+  const isUnchangedTemplate = trimmedText === openLaneOrchestratorTemplate.value.trim()
+  if (!trimmedText || isUnchangedTemplate) {
     editLane(lane, { orchestratorPromptOverride: '' })
     return
   }
