@@ -447,6 +447,9 @@ export interface Agent {
   promptArgs?: string[]
   modelArgs?: string[]
   models?: string[]
+  // Model the Auto Run dialog starts on when the lane saved none; absent means
+  // the dialog starts on "CLI default".
+  defaultModel?: string
   sessionNameArgs?: string[]
   // `{sessionId}` is replaced with the run's session id. sessionArgs start a
   // session under that id, resumeArgs pick it back up. No resumeArgs means the
@@ -475,6 +478,7 @@ export const DEFAULT_AGENT: Agent = {
     'claude-sonnet-5-5',
     'claude-haiku-5-5'
   ],
+  defaultModel: 'claude-opus-5-5',
   sessionNameArgs: ['--name'],
   sessionArgs: ['--session-id', SESSION_ID_TOKEN],
   resumeArgs: ['--resume', SESSION_ID_TOKEN]
