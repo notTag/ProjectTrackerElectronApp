@@ -573,8 +573,30 @@ onMounted(() => {
   window.addEventListener('keydown', handleBoardKeydown)
 })
 
+// Trailing "+" zone: shown on hover, lingers after the pointer leaves so it
+// doesn't vanish mid-reach. Re-entering just cancels the pending hide.
+const ADD_ZONE_HIDE_DELAY_MS = 3000
+const addZoneShown = ref(false)
+let addZoneHideTimer: ReturnType<typeof setTimeout> | undefined
+
+const showAddZone = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = true
+}
+
+const hideAddZoneNow = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = false
+}
+
+const hideAddZoneLater = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneHideTimer = setTimeout(hideAddZoneNow, ADD_ZONE_HIDE_DELAY_MS)
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
+  clearTimeout(addZoneHideTimer)
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -1265,6 +1287,22 @@ const runTicketAgent = (ticket: Ticket) => {
           @pointercancel="endLaneResize"
         />
       </section>
+
+      <!-- Kept (inert) during a lane drag: removing its box would re-center
+           every lane under "safe center" the moment the drag starts.
+           Unmounting under the pointer fires no mouseleave → reset on unmount. -->
+      <div
+        v-if="!filterLaneId"
+        class="lane-add-zone"
+        :class="{ shown: addZoneShown }"
+        :inert="laneDrag?.active"
+        :style="{ width: `${DEFAULT_LANE_WIDTH}px` }"
+        @mouseenter="showAddZone"
+        @mouseleave="hideAddZoneLater"
+        @vue:before-unmount="hideAddZoneNow"
+      >
+        <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">+</button>
+      </div>
     </section>
   </main>
 
