@@ -561,6 +561,17 @@ textarea {
   gap: 8px;
 }
 
+.path-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.path-add input {
+  flex: 1;
+  min-width: 0;
+}
+
 .path-row {
   display: inline-flex;
   align-items: center;

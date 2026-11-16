@@ -725,7 +725,7 @@ const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]
   }))
 }
 
-const ticketImageUrl = (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`
+const ticketImageUrl = (imagePath: string) => projectTrackerApi.ticketImageUrl(imagePath)
 
 // Electron prefixes errors thrown in main with "Error invoking remote method '<channel>': Error: ".
 const ipcErrorMessage = (error: unknown) => {
