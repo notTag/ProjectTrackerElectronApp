@@ -580,11 +580,14 @@ const showAddZone = () => {
   addZoneShown.value = true
 }
 
+const hideAddZoneNow = () => {
+  clearTimeout(addZoneHideTimer)
+  addZoneShown.value = false
+}
+
 const hideAddZoneLater = () => {
   clearTimeout(addZoneHideTimer)
-  addZoneHideTimer = setTimeout(() => {
-    addZoneShown.value = false
-  }, ADD_ZONE_HIDE_DELAY_MS)
+  addZoneHideTimer = setTimeout(hideAddZoneNow, ADD_ZONE_HIDE_DELAY_MS)
 }
 
 onBeforeUnmount(() => {
@@ -1248,14 +1251,17 @@ const runTicketAgent = (ticket: Ticket) => {
       </section>
 
       <!-- Kept (inert) during a lane drag: removing its box would re-center
-           every lane under "safe center" the moment the drag starts. -->
+           every lane under "safe center" the moment the drag starts.
+           Unmounting under the pointer fires no mouseleave → reset on unmount. -->
       <div
         v-if="!filterLaneId"
         class="lane-add-zone"
-        :class="{ shown: addZoneShown, inert: laneDrag?.active }"
+        :class="{ shown: addZoneShown }"
+        :inert="laneDrag?.active"
         :style="{ width: `${DEFAULT_LANE_WIDTH}px` }"
         @mouseenter="showAddZone"
         @mouseleave="hideAddZoneLater"
+        @vue:before-unmount="hideAddZoneNow"
       >
         <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">+</button>
       </div>

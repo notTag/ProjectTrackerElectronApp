@@ -274,6 +274,7 @@ From left to right:
 
 - When the board has no lanes: "No swim lanes yet." with a **Create swim lane** button.
 - Otherwise the columns are No status followed by the board's lanes in order. Hidden columns and the lane filter apply.
+- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while the lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
 
 #### Lane column
 

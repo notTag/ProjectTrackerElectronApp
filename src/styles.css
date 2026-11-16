@@ -1110,8 +1110,6 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Clips the parked "+" so it never widens the board's scroll area. */
-  overflow: hidden;
 }
 
 .lane-add-button {
@@ -1130,24 +1128,15 @@ code {
   transition: transform 200ms ease-out, opacity 200ms ease-out;
 }
 
-.lane-add-zone.shown .lane-add-button,
+/* [inert] during a lane drag blocks pointer + focus; :not() keeps it hidden. */
+.lane-add-zone.shown:not([inert]) .lane-add-button,
 .lane-add-button:focus-visible {
   opacity: 1;
   transform: none;
 }
 
-.lane-add-zone.inert {
-  pointer-events: none;
-}
-
-.lane-add-zone.inert .lane-add-button {
-  opacity: 0;
-  transform: translateX(100%);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .lane-add-button,
-  .lane-add-zone.inert .lane-add-button {
+  .lane-add-button {
     transform: none;
     transition: opacity 200ms ease-out;
   }
