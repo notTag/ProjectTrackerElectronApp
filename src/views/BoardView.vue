@@ -696,6 +696,13 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
   editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
+const orchestratorPollTooltip = (lane: SwimLane): string => {
+  if (!orchestratorPollActive(lane)) return 'The Orchestrator agent will not poll running agents.'
+  const minutes = orchestratorPollMinutes(lane)
+  const unit = minutes === 1 ? 'minute' : 'minutes'
+  return `The Orchestrator agent will poll running agents every ${minutes} ${unit}.`
+}
+
 // Live copies of the two lane fields, because both inputs only commit on blur:
 // the button has to enable as soon as a prompt is typed, and has to send what
 // is on screen rather than whatever state held before the blur landed.
@@ -1740,6 +1747,14 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <div class="orchestrator-poll-row">
+        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
+          <input
+            type="checkbox"
+            aria-label="Orchestrator poll active"
+            :checked="orchestratorPollActive(openLane)"
+            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
+          />
+        </label>
         <label>
           Orchestrator poll (minutes)
           <input
@@ -1750,14 +1765,6 @@ const runTicketAgent = (ticket: Ticket) => {
             :disabled="!orchestratorPollActive(openLane)"
             @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
           />
-        </label>
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-          Active
         </label>
       </div>
 
