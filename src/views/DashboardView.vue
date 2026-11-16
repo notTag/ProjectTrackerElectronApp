@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 
 import CardMetrics from '@/components/CardMetrics.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
+import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
@@ -384,6 +385,7 @@ const renderMarkdown = (markdown: string | null) => {
   <header class="titlebar">
     <span class="titlebar-title">Project Tracker</span>
     <div class="titlebar-actions">
+      <OfflineBadge />
       <MetricsPanel :project-paths="metricsProjectPaths" scope="dashboard" />
       <OpenInPicker />
       <ThemePicker />
