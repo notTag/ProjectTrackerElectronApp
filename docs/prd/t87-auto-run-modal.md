@@ -58,4 +58,4 @@ None.
 
 ## Branch / worktree
 - Branch: `t87-auto-run-modal`
-- Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t87`
+- Worktree: `.worktrees/t87`
