@@ -359,6 +359,7 @@ describe('row-level writes', () => {
     repository.reorderSwimLanes(projectPath, ['qa', 'idea', 'prd'])
     repository.deleteSwimLane(projectPath, 'prd')
 
+    expect(created).toMatchObject({ id: 'qa', name: 'QA' })
     const lanes = reopenedBoard(userDataPath, projectPath).lanes
     expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['qa', 'QA'], ['idea', 'Ideas']])
   })
@@ -390,8 +391,12 @@ describe('row-level writes', () => {
     const { repository } = seededRepository(userDataPath)
 
     vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
-    const stamped = repository.updateTicket('ticket-a', { title: 'A2' })
-    vi.useRealTimers()
+    let stamped
+    try {
+      stamped = repository.updateTicket('ticket-a', { title: 'A2' })
+    } finally {
+      vi.useRealTimers()
+    }
     expect(stamped.updatedAt).toBe('2030-01-01T00:00:00.000Z')
     const kept = repository.updateTicket('ticket-a', { title: 'A3', updatedAt: '2026-02-02T00:00:00.000Z' })
     expect(kept.updatedAt).toBe('2026-02-02T00:00:00.000Z')
@@ -1160,7 +1165,8 @@ describe('snapshots', () => {
     const repository = new StateRepository(userDataPath)
     const loadedState = repository.getState()
     const projectPath = loadedState.snapshot.projects[0].path
-    const ticketIds = loadedState.boards![projectPath].tickets.map((ticket) => ticket.id)
+    const loadedBoard = loadedState.boards?.[projectPath]
+    const ticketIds = loadedBoard?.tickets.map((ticket) => ticket.id)
     expect(ticketIds).toEqual(['ticket-a', 'ticket-b'])
     expect(statSync(snapshotsIn(userDataPath)).isFile()).toBe(true)
   })

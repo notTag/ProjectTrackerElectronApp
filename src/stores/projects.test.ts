@@ -124,8 +124,11 @@ describe('markAgentRunSeen', () => {
     store.state = withRun('2026-01-02T00:00:00.000Z')
 
     vi.useFakeTimers({ now: new Date('2030-01-01T00:00:00.000Z'), toFake: ['Date'] })
-    await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
-    vi.useRealTimers()
+    try {
+      await store.markAgentRunSeen(PROJECT_PATH, 'ticket-1', '2026-01-02T00:00:00.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
 
     expect(savedTicket(store).agentRun?.seenAt).toBe('2030-01-01T00:00:00.000Z')
     expect(savedTicket(store).updatedAt).toBeUndefined()
@@ -684,15 +687,14 @@ describe('moveTickets', () => {
   it('leaves a ticket already in the target lane untouched', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
-    const prdTicketBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
+    const prdTicketBefore = toPlainJson(store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3'))
 
     await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
 
     const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
     const writtenIds = api.updateTicket.mock.calls.map(([id]) => id)
     expect(writtenIds).toEqual(['ticket-1'])
-    expect(prdTicketBefore?.updatedAt).toBeUndefined()
-    expect(prdTicketAfter?.updatedAt).toBeUndefined()
+    expect(toPlainJson(prdTicketAfter)).toStrictEqual(prdTicketBefore)
   })
 
   it('writes nothing for an empty id list', async () => {
@@ -786,13 +788,14 @@ describe('per-entity writes', () => {
     store.state = stateWithTicketIn('idea')
     saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
     api.scanProjectDirectories.mockResolvedValue({ snapshot: { projects: [] }, failures: [] })
+    const expectedPreferences = toPlainJson({ ...store.boardPreferences(PROJECT_PATH), hiddenLaneIds: ['idea'] })
 
-    await store.saveBoardPreferences(PROJECT_PATH, store.boardPreferences(PROJECT_PATH))
+    await store.saveBoardPreferences(PROJECT_PATH, { ...expectedPreferences, hiddenLaneIds: ['idea'] })
     await store.scan('/code')
 
     expect(saveProjectState).toHaveBeenCalledTimes(2)
     const [[preferencesSave], [scanSave]] = saveProjectState.mock.calls
-    expect(preferencesSave.boardPreferences[PROJECT_PATH]).toEqual(store.boardPreferences(PROJECT_PATH))
+    expect(preferencesSave.boardPreferences[PROJECT_PATH]).toEqual(expectedPreferences)
     expect(scanSave.scanDirectories).toContain('/code')
   })
 })
