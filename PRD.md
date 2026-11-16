@@ -23,16 +23,7 @@ Primary user: a developer managing many local projects who wants a quick desktop
 
 ## Current System
 
-The existing app lives in `web-app/` and is a Vite/Vue/Pinia single-page app.
-
-Important current pieces:
-
-- `web-app/src/views/DashboardView.vue`: main dashboard experience.
-- `web-app/src/stores/projects.ts`: project state and dashboard workflows.
-- `web-app/src/services/projectTrackerApi.ts`: browser API client.
-- `web-app/dev/projectStateServer.ts`: Vite middleware for state, scan, and folder picking.
-- `scripts/scan-projects.sh`: current local project scanner to be ported to TypeScript.
-- `projecttracker-state.json`: current repo-local persisted state.
+The Vue/Pinia app in `src/` is the only UI. It runs in the Electron window, and the same code runs in a browser through `bun run web`, a local Node server that calls the same channel handlers (`electron/ipcHandlers.ts`). The old standalone `web-app/` and its Vite middleware were removed in #85.
 
 ## Milestones
 

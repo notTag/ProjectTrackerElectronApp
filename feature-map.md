@@ -531,7 +531,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - Saves write only what changed: changed fields for tickets, changed rows for everything else.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
 - When a board is read, any ticket whose lane no longer exists moves to No status, and tickets without a number get one.
-- In a plain browser, without Electron, state falls back to `localStorage`. Scanning then uses `/api/project-scan`, and the desktop-only actions report "desktop APIs are unavailable".
+- The web build (4.8) reaches the same file through the local web server, one repository connection per browser tab.
 
 ### 4.3 Agents — `src/shared/projectTypes.ts`, `electron/agentRun.ts`
 
@@ -563,10 +563,10 @@ The parts below are joined in this order, and empty parts are left out:
 
 If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doesn't read it as an option. For the terminal command, the prompt is wrapped in single quotes, so text from GitHub issues is passed as one literal argument and never runs as code.
 
-### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`
+### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`, `electron/ipcHandlers.ts`
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
-- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development.
+- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development. The web server's equivalent is its request guard (4.8).
 - Payloads are type-checked, and paths are normalized to POSIX absolute paths.
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
@@ -598,6 +598,19 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
   - `evals/behavioral/sync.eval.test.ts` checks each lane's committed prompt file (saved path, else `SwimlaneAgentPrompt/<lane>/AgentPrompt.md`) against its lane's prompt in the live DB.
 
 ---
+
+### 4.8 Web app — `electron/web/server.ts`, `src/services/webBridge.ts`
+
+- `bun run web` builds `src/` with `vite build --mode web` into `out/web/` and starts a Node server on `http://127.0.0.1:5174` (`PROJECT_TRACKER_WEB_PORT` to change it).
+- `src/main.ts` installs `webBridge` as `window.projectTracker` before mount. Each method posts the preload's payload to `POST /api/invoke/<channel>`. Both the preload and the web bridge `satisfies ProjectTrackerBridge` (`src/shared/bridgeApi.ts`), so neither can drift from the interface.
+- The server runs the same `createIpcHandlers` as `electron/main.ts`. The channel list is `IPC_CHANNELS` in `src/shared/bridgeApi.ts`.
+- One `StateRepository` per browser tab, keyed by a random client id, so each tab has its own diff baseline and sees other tabs' writes as outside changes. Closed 30 s after the tab's event stream drops.
+- Outside changes, agent retries and scan progress arrive over Server-Sent Events, `GET /api/events?client=<id>`. Outside changes come from the same 10 s `data_version` poll. A scan running when the tab's last event stream drops is aborted, like a reload in Electron.
+- Ticket images: Add image opens the browser's file picker and uploads the bytes (base64) through `ticket-images:save-bytes`, the same path paste and drop use. Thumbnails load from `GET /api/ticket-image/<path>`, confined to `<userData>/attachments` by `resolveAttachmentPath`, the web twin of the `ticket-image://` scheme. Every response has `Cross-Origin-Resource-Policy: same-origin`, so other sites can't embed them.
+- Request guard: listens on `127.0.0.1` only. `Host` must be `127.0.0.1:<port>` or `localhost:<port>` (blocks DNS rebinding). Any `Origin` must be the server's own; a `POST` needs that `Origin` and `Content-Type: application/json`. Everything else gets 403, and no CORS headers are ever sent. Responses carry `X-Frame-Options: DENY` and `frame-ancestors 'none'`.
+- Add folder runs `osascript choose folder` on the server. The Dirs panel also shows an absolute-path text box in the web build.
+- Connection cap: plain HTTP/1.1, so the browser allows 6 open connections to the server across all tabs. Each tab holds one for its event stream and each ▶ Run holds one until the agent finishes. Past 6, new requests wait silently. Fix when it bites: one SharedWorker owning the event stream, or HTTP/2 (needs TLS).
+- Missing compared with the desktop app: PageFind (the browser's ⌘F works instead), `theme:set-native`, application menu, auto-update, native window chrome.
 
 ## 5. Known quirks
 

@@ -3,11 +3,14 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { configDefaults, defineConfig } from 'vitest/config'
 
-export default defineConfig({
+// `--mode web` builds the browser app served by electron/web/server.ts: absolute
+// asset paths (served from /) and its own outDir so it never overwrites the
+// desktop renderer.
+export default defineConfig(({ mode }) => ({
   plugins: [vue()],
-  base: './',
+  base: mode === 'web' ? '/' : './',
   build: {
-    outDir: 'out/renderer'
+    outDir: mode === 'web' ? 'out/web' : 'out/renderer'
   },
   resolve: {
     alias: {
@@ -25,4 +28,4 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173
   }
-})
+}))
