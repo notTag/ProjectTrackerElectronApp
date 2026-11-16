@@ -443,7 +443,8 @@ In graph view this opens as a side panel instead of a centered modal.
   - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
 - **Save to Agent Orchestrator Markdown** button, under the Orchestrator prompt. Writes the text in the box (override or generated) with the same file rules as Save to Agent Markdown; default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, and the path lands in **Agent Orchestrator markdown file**. The text is stored with the same override rules as leaving the box, so saving the untouched default doesn't create an override.
 - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): where that save writes. The file is a copy for versioning and review; the launch prompt never reads or names it, so re-saving unchanged text stays a no-op. Ticket agents never see it.
-- **Orchestrator poll (minutes)** + **Active** checkbox, one row under the Orchestrator prompt. Defaults: 2 minutes, Active.
+- **Orchestrator poll (minutes)** input with an unlabeled **Active** checkbox to its left, one row under the Orchestrator prompt; the checkbox sits centered on the input box (#84). Defaults: 2 minutes, Active.
+  - Hovering the checkbox shows "The Orchestrator agent will poll running agents every N minute(s)." or, when off, "Off: Auto Run launches no Orchestrator agent for this lane."
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
   - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
@@ -486,9 +487,9 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
-- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator **Active** box is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
+- The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator poll **Active** checkbox is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
-- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator **Active** box is off.
+- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view

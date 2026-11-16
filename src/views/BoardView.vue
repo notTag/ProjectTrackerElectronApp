@@ -72,7 +72,8 @@ import {
   UNASSIGNED_LANE_NAME,
   type SwimLane,
   type Ticket,
-  type TicketPatch
+  type TicketPatch,
+  plural
 } from '@/shared/projectTypes'
 
 const route = useRoute()
@@ -816,6 +817,12 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
     return
   }
   editLane(lane, { orchestratorPollMinutes: minutes })
+}
+
+const orchestratorPollTooltip = (lane: SwimLane): string => {
+  if (!orchestratorPollActive(lane)) return 'Off: Auto Run launches no Orchestrator agent for this lane.'
+  const pollInterval = plural(orchestratorPollMinutes(lane), 'minute')
+  return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
 const dropOnLane = async (laneId: string) => {
@@ -1995,7 +2002,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="saveOrchestratorPrompt(openLane, ($event.target as HTMLTextAreaElement).value)"
         />
         <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run while Active). {{tickets}}, {{ticket_numbers}},
+          Sent to the Auto Run orchestrator (runs on every Auto Run while the poll checkbox is on). {{tickets}}, {{ticket_numbers}},
           {{lanes}}, {{terminal}} are filled in at launch.
         </span>
         <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
@@ -2040,6 +2047,14 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <div class="orchestrator-poll-row">
+        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
+          <input
+            type="checkbox"
+            aria-label="Orchestrator poll active"
+            :checked="orchestratorPollActive(openLane)"
+            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
+          />
+        </label>
         <label>
           Orchestrator poll (minutes)
           <input
@@ -2050,14 +2065,6 @@ const runTicketAgent = (ticket: Ticket) => {
             :disabled="!orchestratorPollActive(openLane)"
             @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
           />
-        </label>
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-          Active
         </label>
       </div>
 
