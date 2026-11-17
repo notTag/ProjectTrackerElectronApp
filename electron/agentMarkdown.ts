@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import {
@@ -60,24 +60,10 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
   return path.join(projectPath, SWIMLANE_PROMPT_DIRECTORY, laneFolder, fileName)
 }
 
-const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
-
-// A guide that already has content may have been written by hand, so it is
-// never replaced: the prompt goes on the end, after a blank line. Only a
-// missing or blank file is written outright. Re-saving the same prompt is a
-// no-op, so repeated clicks don't stack copies.
+// The board is the source of truth, so the file always mirrors the lane's
+// current prompt; edits made directly in the file are lost on the next save.
 export const saveAgentMarkdown = (filePath: string, content: string) => {
   mkdirSync(path.dirname(filePath), { recursive: true })
-
-  const existing = readIfExists(filePath)
-  const hasContent = existing.trim() !== ''
-  const alreadySaved = hasContent && existing.trimEnd().endsWith(content.trimEnd())
-  const appended = hasContent && !alreadySaved
-  if (appended) {
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n'
-    appendFileSync(filePath, `${separator}${content}`, 'utf8')
-  } else if (!hasContent) {
-    writeFileSync(filePath, content, 'utf8')
-  }
-  return { filePath, appended }
+  writeFileSync(filePath, content, 'utf8')
+  return { filePath }
 }

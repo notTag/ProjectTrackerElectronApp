@@ -128,7 +128,7 @@ export interface ProjectTrackerBridge {
     laneName: string,
     filePath: string,
     content: string
-  ): Promise<{ filePath: string; appended: boolean }>
+  ): Promise<{ filePath: string }>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>

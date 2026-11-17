@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -103,7 +103,6 @@ describe('saveAgentMarkdown', () => {
   it('creates the lane folder recursively and writes the prompt', () => {
     const projectPath = freshProjectPath()
     const saved = save(target(projectPath), '# Guide\n')
-    expect(saved.appended).toBe(false)
     expect(readFileSync(saved.filePath, 'utf8')).toBe('# Guide\n')
   })
 
@@ -114,33 +113,10 @@ describe('saveAgentMarkdown', () => {
     expect(readFileSync(explicitPath, 'utf8')).toBe('first')
   })
 
-  it('replaces a blank file', () => {
+  it('overwrites an existing file with the current prompt', () => {
     const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'guide.md')
-    writeFileSync(explicitPath, '  \n')
-    const saved = save(target(projectPath, explicitPath), 'prompt')
-    expect(saved.appended).toBe(false)
-    expect(readFileSync(explicitPath, 'utf8')).toBe('prompt')
-  })
-
-  it('appends to a file that has content, after a blank line', () => {
-    const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'guide.md')
-    writeFileSync(explicitPath, '# Hand-written')
-    const saved = save(target(projectPath, explicitPath), 'prompt')
-    expect(saved.appended).toBe(true)
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written\n\nprompt')
-
-    writeFileSync(explicitPath, '# Ends with newline\n')
-    save(target(projectPath, explicitPath), 'prompt')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Ends with newline\n\nprompt')
-  })
-
-  it('does not stack a second copy when the same prompt is saved again', () => {
-    const projectPath = freshProjectPath()
-    save(target(projectPath), 'prompt\n')
-    const again = save(target(projectPath), 'prompt\n')
-    expect(again.appended).toBe(false)
-    expect(readFileSync(again.filePath, 'utf8')).toBe('prompt\n')
+    save(target(projectPath), 'abc')
+    const saved = save(target(projectPath), 'abcdef')
+    expect(readFileSync(saved.filePath, 'utf8')).toBe('abcdef')
   })
 })

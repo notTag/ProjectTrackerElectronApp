@@ -1023,8 +1023,7 @@ const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind) => {
     // override rules as a blur, so saving the untouched template doesn't freeze it.
     const promptPatch = kind === 'agent' ? { agentPrompt: prompt } : orchestratorPromptPatch(prompt)
     const saved = await store.saveLaneMarkdown(projectPath.value, lane, kind, prompt, filePath, promptPatch)
-    const verb = saved.appended ? 'Appended to' : 'Saved to'
-    setStatus({ saving: false, savedMessage: `${verb} ${saved.filePath}`, error: '' })
+    setStatus({ saving: false, savedMessage: `Saved to ${saved.filePath}`, error: '' })
   } catch (error) {
     setStatus({ saving: false, savedMessage: '', error: ipcErrorMessage(error) })
   }

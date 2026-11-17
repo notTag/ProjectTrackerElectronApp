@@ -754,7 +754,7 @@ describe('per-entity writes', () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
     const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
-    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath, appended: false })
+    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
     const prd = store.board(PROJECT_PATH).lanes[1]
 
     const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
