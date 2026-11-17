@@ -119,8 +119,8 @@ export const webBridge = {
   appStartedAt: () => invoke('app:started-at'),
   terminalTabsAlive: (targetId, titles) => invoke('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath) => invoke('project:read-readme', projectPath),
-  saveLaneMarkdown: (kind, projectPath, laneName, filePath, content) =>
-    invoke('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content }),
+  saveLaneMarkdown: (kind, projectPath, laneName, filePath, content, previousContent) =>
+    invoke('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content, previousContent }),
   fetchProjectGithub: (githubUrl) => invoke('project:fetch-github', githubUrl),
   getMetrics: (projectPaths) => invoke('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl, since) => invoke('project:fetch-github-issues', { githubUrl, since }),

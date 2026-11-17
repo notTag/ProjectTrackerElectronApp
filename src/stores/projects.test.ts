@@ -754,13 +754,14 @@ describe('per-entity writes', () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
     const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
-    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath, appended: false })
+    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
     const prd = store.board(PROJECT_PATH).lanes[1]
 
     const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
-    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', promptPatch)
+    const text = { prompt: 'Flag red PRs.', previousPrompt: 'Flag' }
+    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', text, '', promptPatch)
 
-    expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.')
+    expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.', 'Flag')
     expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', {
       ...promptPatch,
       orchestratorFilePath: savedPath
@@ -773,7 +774,8 @@ describe('per-entity writes', () => {
     api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'x.txt', {})).rejects.toThrow()
+    const text = { prompt: 'Flag red PRs.', previousPrompt: '' }
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', text, 'x.txt', {})).rejects.toThrow()
 
     expect(api.updateLane).not.toHaveBeenCalled()
   })

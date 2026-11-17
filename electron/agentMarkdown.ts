@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import {
@@ -46,22 +46,21 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
 
-// A guide that already has content may have been written by hand, so it is
-// never replaced: the prompt goes on the end, after a blank line. Only a
-// missing or blank file is written outright. Re-saving the same prompt is a
-// no-op, so repeated clicks don't stack copies.
-export const saveAgentMarkdown = (filePath: string, content: string) => {
-  mkdirSync(path.dirname(filePath), { recursive: true })
-
+// The file mirrors its prompt box, so every autosave replaces it. A file holding
+// anything other than what this lane last wrote may be a hand-written guide or
+// an edit made in an editor, so it is left alone and the save fails instead,
+// until the box holds the same text (the user pasted the edits in).
+export const saveAgentMarkdown = (filePath: string, content: string, previousContent: string) => {
   const existing = readIfExists(filePath)
-  const hasContent = existing.trim() !== ''
-  const alreadySaved = hasContent && existing.trimEnd().endsWith(content.trimEnd())
-  const appended = hasContent && !alreadySaved
-  if (appended) {
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n'
-    appendFileSync(filePath, `${separator}${content}`, 'utf8')
-  } else if (!hasContent) {
-    writeFileSync(filePath, content, 'utf8')
+  const isBlank = existing.trim() === ''
+  const holdsLastSave = existing.trimEnd() === previousContent.trimEnd()
+  const matchesBox = existing.trimEnd() === content.trimEnd()
+  if (!isBlank && !holdsLastSave && !matchesBox) {
+    throw new Error(
+      `${filePath} has other content, so it wasn't overwritten. Paste it into the box to keep it, or point the field at another file.`
+    )
   }
-  return { filePath, appended }
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  if (existing !== content) writeFileSync(filePath, content, 'utf8')
+  return { filePath }
 }

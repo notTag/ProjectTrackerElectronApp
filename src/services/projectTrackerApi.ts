@@ -150,8 +150,15 @@ export const projectTrackerApi = {
     return bridge().readProjectReadme(path)
   },
 
-  saveLaneMarkdown(kind: LaneMarkdownKind, projectPath: string, laneName: string, filePath: string, content: string) {
-    return bridge().saveLaneMarkdown(kind, projectPath, laneName, filePath, content)
+  saveLaneMarkdown(
+    kind: LaneMarkdownKind,
+    projectPath: string,
+    laneName: string,
+    filePath: string,
+    content: string,
+    previousContent: string
+  ) {
+    return bridge().saveLaneMarkdown(kind, projectPath, laneName, filePath, content, previousContent)
   },
 
   fetchProjectGithub(githubUrl: string) {

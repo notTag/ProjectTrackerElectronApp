@@ -641,7 +641,9 @@ const versionInstruction = (ticket: Ticket, context: TicketPromptContext): strin
 export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext = {}): string => {
   const lanePrompt = lane.agentPrompt.trim()
   const laneFilePath = lane.agentFilePath.trim()
-  const laneFileReference = laneFilePath ? `Follow the guidance in ${laneFilePath}.` : ''
+  // The file autosaves a copy of the prompt, so it is only pointed at when there
+  // is no typed prompt (a hand-written guide); otherwise the agent reads it twice.
+  const laneFileReference = laneFilePath && !lanePrompt ? `Follow the guidance in ${laneFilePath}.` : ''
   const ticketMetadata = ticketMetadataLines(ticket, lane, context)
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''

@@ -714,6 +714,12 @@ describe('ticketShellCommand', () => {
     expect(command).toContain('Follow the guidance in docs/dev.md.')
   })
 
+  it('sends a typed prompt once, without also pointing at its autosaved file', () => {
+    const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Write a PRD.', agentFilePath: 'docs/dev.md' }))
+    expect(command).toContain('Write a PRD.')
+    expect(command).not.toContain('docs/dev.md')
+  })
+
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
     expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")

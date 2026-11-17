@@ -722,8 +722,12 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     },
 
     'lane:save-agent-markdown': (request, { repository }) => {
-      const { kind, projectPath, laneName, filePath: requestedFilePath, content } = (request ?? {}) as Record<string, unknown>
-      const fieldsAreStrings = [projectPath, laneName, requestedFilePath, content].every((field) => typeof field === 'string')
+      const { kind, projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
+        string,
+        unknown
+      >
+      const fields = [projectPath, laneName, requestedFilePath, content, previousContent]
+      const fieldsAreStrings = fields.every((field) => typeof field === 'string')
       const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
       if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid save request.')
 
@@ -743,7 +747,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
         throw new Error('Markdown file must be inside a scanned directory.')
       }
-      return saveAgentMarkdown(filePath, content as string)
+      return saveAgentMarkdown(filePath, content as string, previousContent as string)
     }
   }
 }

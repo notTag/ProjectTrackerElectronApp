@@ -325,11 +325,12 @@ export const useProjectsStore = defineStore('projects', {
       projectPath: string,
       lane: SwimLane,
       kind: LaneMarkdownKind,
-      prompt: string,
+      text: { prompt: string; previousPrompt: string },
       filePath: string,
       promptPatch: Partial<Omit<SwimLane, 'id'>>
     ) {
-      const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt)
+      const { prompt, previousPrompt } = text
+      const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt, previousPrompt)
       const filePathField = LANE_MARKDOWN_FILE_PATH_FIELD[kind]
       const patch: Partial<Omit<SwimLane, 'id'>> = { ...promptPatch, [filePathField]: saved.filePath }
       const persisted = await this.updateLane(projectPath, lane.id, patch)
