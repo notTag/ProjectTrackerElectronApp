@@ -5,46 +5,46 @@
     {
       "id": "github-value-determination",
       "name": "Github Value Determination",
-      "promptFile": "agent-context/ProjectTracker-electron-app-Github-Value-Determination-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/Github-Value-Determination/AgentPrompt.md"
     },
     {
       "id": "idea",
       "name": "Idea",
       "fullAuto": true,
       "outputTarget": "The ticket being run against with completed meta data. ",
-      "promptFile": "agent-context/ProjectTracker-electron-app-Idea-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/Idea/AgentPrompt.md"
     },
     {
       "id": "prd",
       "name": "PRD",
       "outputTarget": "A PRD document. ",
-      "promptFile": "agent-context/ProjectTracker-electron-app-PRD-AgentContext.md",
-      "agentFilePath": "agent-context/ProjectTracker-electron-app-PRD-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/PRD/AgentPrompt.md",
+      "agentFilePath": "SwimlaneAgentPrompt/PRD/AgentPrompt.md"
     },
     { "id": "value-determination-jev", "name": "Value Determination (jev?)" },
     {
       "id": "in-development",
       "name": "In Development",
       "fullAuto": true,
-      "promptFile": "agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md",
-      "agentFilePath": "agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/In-Development/AgentPrompt.md",
+      "agentFilePath": "SwimlaneAgentPrompt/In-Development/AgentPrompt.md"
     },
     {
       "id": "in-pr",
       "name": "Merge Request",
-      "promptFile": "agent-context/ProjectTracker-electron-app-Merge-Request-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/Merge-Request/AgentPrompt.md"
     },
     {
       "id": "in-dev",
       "name": "In Dev Env",
       "closesTicket": true,
-      "promptFile": "agent-context/ProjectTracker-electron-app-In-Dev-Env-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/In-Dev-Env/AgentPrompt.md"
     },
     {
       "id": "in-production",
       "name": "In Prod Env",
       "closesTicket": true,
-      "promptFile": "agent-context/ProjectTracker-electron-app-In-Prod-Env-AgentContext.md"
+      "promptFile": "SwimlaneAgentPrompt/Done/AgentPrompt.md"
     }
   ]
 }

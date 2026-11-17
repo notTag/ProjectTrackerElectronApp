@@ -1,0 +1,1 @@
+- Listen for a message from each agent session letting you know when they have completed their work, make sure they do not have any open questions, if they have an open question, raise it or solve it . If there are no open questions then close the agent session and shell tab. 
