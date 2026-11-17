@@ -60,6 +60,7 @@ import {
   ticketShellCommand,
   ticketTabTitle,
   ticketIdsToMove,
+  carriedTicketIds,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -826,12 +827,61 @@ const orchestratorPollTooltip = (lane: SwimLane): string => {
   return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
+const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id)))
+
+const carriedIds = computed(() => {
+  const ticketId = draggedTicketId.value
+  if (!ticketId) return new Set<string>()
+  return new Set(carriedTicketIds(ticketId, selectedTicketIds.value, visibleTickets.value))
+})
+
+const isCarriedBehind = (ticketId: string) => carriedIds.value.has(ticketId) && ticketId !== draggedTicketId.value
+
+const MAX_STACK_LAYERS = 3
+// Matches .ticket-drag-stack padding in styles.css.
+const STACK_GHOST_PADDING = 8
+
+// setDragImage snapshots the element when called, so the ghost must be in the
+// DOM and painted (off-screen, not display:none); it is removed a frame later.
+const buildStackGhost = (card: HTMLElement, carriedCount: number): HTMLElement => {
+  const ghost = document.createElement('div')
+  ghost.className = 'ticket-drag-stack'
+  ghost.style.width = `${card.offsetWidth}px`
+  const layersBehind = Math.min(carriedCount, MAX_STACK_LAYERS) - 1
+  for (let depth = layersBehind; depth >= 1; depth--) {
+    const layer = document.createElement('div')
+    layer.className = 'ticket-drag-layer'
+    layer.style.setProperty('--stack-depth', String(depth))
+    ghost.append(layer)
+  }
+  const frontCard = card.cloneNode(true) as HTMLElement
+  frontCard.classList.add('ticket-drag-front')
+  const countBadge = document.createElement('span')
+  countBadge.className = 'ticket-drag-count'
+  countBadge.textContent = String(carriedCount)
+  ghost.append(frontCard, countBadge)
+  return ghost
+}
+
+const startTicketDrag = (event: DragEvent, ticketId: string) => {
+  draggedTicketId.value = ticketId
+  const carriedCount = carriedIds.value.size
+  const card = event.currentTarget as HTMLElement
+  if (carriedCount < 2 || !event.dataTransfer) return
+  const ghost = buildStackGhost(card, carriedCount)
+  document.body.append(ghost)
+  const cardBounds = card.getBoundingClientRect()
+  const pointerX = event.clientX - cardBounds.left + STACK_GHOST_PADDING
+  const pointerY = event.clientY - cardBounds.top + STACK_GHOST_PADDING
+  event.dataTransfer.setDragImage(ghost, pointerX, pointerY)
+  requestAnimationFrame(() => ghost.remove())
+}
+
 const dropOnLane = async (laneId: string) => {
   const ticketId = draggedTicketId.value
   draggedTicketId.value = null
   if (!ticketId) return
-  const visibleTickets = visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id))
-  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets, laneId)
+  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets.value, laneId)
   await store.moveTickets(projectPath.value, ticketIds, laneId)
 }
 
@@ -1393,8 +1443,9 @@ const runTicketAgent = (ticket: Ticket) => {
             v-for="ticket in ticketsInLane(lane.id)"
             :key="ticket.id"
             class="ticket"
+            :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
             draggable="true"
-            @dragstart="draggedTicketId = ticket.id"
+            @dragstart="startTicketDrag($event, ticket.id)"
             @dragend="draggedTicketId = null"
             @click="openTicketId = ticket.id"
           >

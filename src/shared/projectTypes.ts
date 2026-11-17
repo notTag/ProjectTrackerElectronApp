@@ -1759,18 +1759,33 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
 }
 
 // Dragging a checked card carries every checked ticket the user can see;
-// dragging an unchecked one moves just that card. Tickets already in the
-// target lane are left out so their updatedAt stays put.
+// dragging an unchecked one carries just that card.
+export const carriedTickets = (
+  draggedTicketId: string,
+  selectedTicketIds: ReadonlySet<string>,
+  visibleTickets: Ticket[]
+): Ticket[] => {
+  const draggedIsSelected = selectedTicketIds.has(draggedTicketId)
+  const isCarried = (ticket: Ticket) =>
+    draggedIsSelected ? selectedTicketIds.has(ticket.id) : ticket.id === draggedTicketId
+  return visibleTickets.filter(isCarried)
+}
+
+export const carriedTicketIds = (
+  draggedTicketId: string,
+  selectedTicketIds: ReadonlySet<string>,
+  visibleTickets: Ticket[]
+): string[] => carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets).map((ticket) => ticket.id)
+
+// Tickets already in the target lane are left out so their updatedAt stays put.
 export const ticketIdsToMove = (
   draggedTicketId: string,
   selectedTicketIds: ReadonlySet<string>,
   visibleTickets: Ticket[],
   targetLaneId: string
 ): string[] => {
-  const draggedIsSelected = selectedTicketIds.has(draggedTicketId)
-  const isCarried = (ticket: Ticket) =>
-    draggedIsSelected ? selectedTicketIds.has(ticket.id) : ticket.id === draggedTicketId
-  const ticketsToMove = visibleTickets.filter((ticket) => isCarried(ticket) && ticket.laneId !== targetLaneId)
+  const carried = carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets)
+  const ticketsToMove = carried.filter((ticket) => ticket.laneId !== targetLaneId)
   return ticketsToMove.map((ticket) => ticket.id)
 }
 
