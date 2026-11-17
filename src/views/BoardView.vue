@@ -2027,7 +2027,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Agent prompt
         <textarea
           class="agent-prompt"
-          :value="openLane.agentPrompt"
+          :value="laneMarkdownDraft.agent.prompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
           @input="onLaneMarkdownPromptInput(openLane, 'agent', $event)"
           @change="storeTypedPrompts"
@@ -2066,7 +2066,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Orchestrator prompt
         <textarea
           class="agent-prompt orchestrator-prompt"
-          :value="openLaneOrchestratorOverride || openLaneOrchestratorTemplate"
+          :value="laneMarkdownDraft.orchestrator.prompt"
           spellcheck="false"
           @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
           @change="storeTypedPrompts"
