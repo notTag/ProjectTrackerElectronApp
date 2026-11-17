@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -6,18 +6,9 @@ import { describe, expect, it } from 'vitest'
 import { SWIMLANE_PROMPT_DIRECTORY, ticketAgentPrompt } from '../../src/shared/projectTypes.js'
 import { REPO_ROOT, fixtureLanes, promptedLanes } from '../fixtures.js'
 
-// agent-context/ holds files saved before #81; newer saves go to SwimlaneAgentPrompt/<lane>/.
-const PROMPT_DIRECTORIES = ['agent-context', SWIMLANE_PROMPT_DIRECTORY]
-
-const markdownFilesIn = (directoryName: string): string[] => {
-  const directory = path.join(REPO_ROOT, directoryName)
-  if (!existsSync(directory)) return []
-  const relativeNames = readdirSync(directory, { recursive: true, encoding: 'utf8' })
-  const markdownNames = relativeNames.filter((name) => name.endsWith('.md'))
-  return markdownNames.map((name) => path.join(directoryName, name))
-}
-
-const promptFiles = PROMPT_DIRECTORIES.flatMap(markdownFilesIn)
+const promptRelativeNames = readdirSync(path.join(REPO_ROOT, SWIMLANE_PROMPT_DIRECTORY), { recursive: true, encoding: 'utf8' })
+const promptMarkdownNames = promptRelativeNames.filter((name) => name.endsWith('.md'))
+const promptFiles = promptMarkdownNames.map((name) => path.join(SWIMLANE_PROMPT_DIRECTORY, name))
 const fixtureLaneIds = new Set(fixtureLanes.map((lane) => lane.id))
 
 // Prompts must defer to CLAUDE.md or the injected path. A hard-coded path

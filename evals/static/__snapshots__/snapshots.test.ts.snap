@@ -191,7 +191,7 @@ exports[`assembled prompt: in-development > bare 1`] = `
 6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/In-Development/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: In Development
@@ -209,7 +209,7 @@ exports[`assembled prompt: in-development > branch + worktree 1`] = `
 6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/In-Development/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: In Development
@@ -229,7 +229,7 @@ exports[`assembled prompt: in-development > checklist 1`] = `
 6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/In-Development/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: In Development
@@ -250,7 +250,7 @@ exports[`assembled prompt: in-development > full auto 1`] = `
 6. Send a message to the orchestrator agent saying what task number you just completed, what branch and what worktree, you will already have this information from your last prompt so do not recalculate it.
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-In-Development-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/In-Development/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: In Development
@@ -467,7 +467,7 @@ exports[`assembled prompt: prd > bare 1`] = `
 - If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-PRD-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/PRD/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: PRD
@@ -487,7 +487,7 @@ exports[`assembled prompt: prd > branch + worktree 1`] = `
 - If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-PRD-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/PRD/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: PRD
@@ -509,7 +509,7 @@ exports[`assembled prompt: prd > checklist 1`] = `
 - If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-PRD-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/PRD/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: PRD
@@ -532,7 +532,7 @@ exports[`assembled prompt: prd > full auto 1`] = `
 - If a branch/worktree has been made, make sure that is noted in the ticket so the "In Development" swimlane can work off of it. 
 - As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows \`Open Questions: 0\`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen.
 
-Follow the guidance in agent-context/ProjectTracker-electron-app-PRD-AgentContext.md.
+Follow the guidance in SwimlaneAgentPrompt/PRD/AgentPrompt.md.
 
 Ticket #7: Add the thing
 Status: PRD
