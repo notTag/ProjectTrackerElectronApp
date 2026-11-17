@@ -1426,7 +1426,9 @@ const runTicketAgent = (ticket: Ticket) => {
         @mouseleave="hideAddZoneLater"
         @vue:before-unmount="hideAddZoneNow"
       >
-        <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">+</button>
+        <button class="lane-add-button" aria-label="Add swim lane" title="Add swim lane" @click="laneDraftName = ''">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg>
+        </button>
       </div>
     </section>
   </main>
