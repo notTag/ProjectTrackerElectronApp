@@ -108,10 +108,16 @@ const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
 
 // nextLaneId stays null until the user picks one, so the field follows the
-// Status lane's default as Status changes.
-const ticketDraft = ref<{ title: string; description: string; laneId: string; nextLaneId: string | null } | null>(
-  null
-)
+// Status lane's default as Status changes. Images wait as Files until Save,
+// since their folder is keyed by a ticket id that doesn't exist yet.
+const ticketDraft = ref<{
+  title: string
+  description: string
+  laneId: string
+  nextLaneId: string | null
+  images: File[]
+} | null>(null)
+const draftImageInput = ref<HTMLInputElement | null>(null)
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
 const linkDraft = ref('')
@@ -608,8 +614,27 @@ onBeforeUnmount(() => {
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
-  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null }
+  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null, images: [] }
 }
+
+const stageDraftImages = (files: File[]) => {
+  if (ticketDraft.value) ticketDraft.value.images.push(...files)
+}
+
+const pickDraftImages = (input: HTMLInputElement) => {
+  stageDraftImages(imageFilesOf(input))
+  input.value = ''
+}
+
+const pasteDraftImages = (event: ClipboardEvent) => {
+  if (isTextFieldPaste(event)) return
+  const files = imageFilesOf(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  stageDraftImages(files)
+}
+
+const unstageDraftImage = (index: number) => ticketDraft.value?.images.splice(index, 1)
 
 const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
 
@@ -636,13 +661,14 @@ const saveTicketDraft = async () => {
     moveOnComplete: Boolean(resolvedNextLaneId)
   }
   ticketDraft.value = null
-  await store.addTicket(
+  const ticketId = await store.addTicket(
     projectPath.value,
     draft.laneId,
     draft.title.trim(),
     templateWasLeftUntouched ? '' : description,
     completion
   )
+  if (draft.images.length) await saveImageFiles({ id: ticketId }, draft.images)
 }
 
 const saveLaneDraft = async () => {
@@ -717,7 +743,7 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
 }
 
 // Same queued-mutate reasoning as editTicketLinks.
-const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]) => {
+const editTicketImages = (ticket: Pick<Ticket, 'id'>, change: (images: string[]) => string[]) => {
   const updatedAt = new Date().toISOString()
   return store.updateBoard(projectPath.value, (board) => ({
     ...board,
@@ -740,7 +766,7 @@ const ipcErrorMessage = (error: unknown) => {
 // Files are written before the ticket lists them, so a failed save leaves at
 // worst an orphan file, never a listed path that doesn't exist. Settled one by
 // one: a bad file in a drop must not keep the good ones off the ticket.
-const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) => {
+const attachImages = async (ticket: Pick<Ticket, 'id'>, pendingSaves: Promise<string[]>[]) => {
   imageError.value = null
   const results = await Promise.allSettled(pendingSaves)
   const addedPaths = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
@@ -756,17 +782,17 @@ const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) =
 
 const pickTicketImages = (ticket: Ticket) => attachImages(ticket, [projectTrackerApi.pickTicketImages(ticket.id)])
 
-const imageFilesOf = (transfer: DataTransfer | null) =>
-  [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+const imageFilesOf = (source: DataTransfer | HTMLInputElement | null) =>
+  [...(source?.files ?? [])].filter((file) => file.type.startsWith('image/'))
 
-const saveImageFile = async (ticket: Ticket, file: File) => {
+const saveImageFile = async (ticket: Pick<Ticket, 'id'>, file: File) => {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const imagePath = await projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
   return [imagePath]
 }
 
 // Paste and drop both send bytes: clipboard images have no file path at all.
-const saveImageFiles = (ticket: Ticket, files: File[]) =>
+const saveImageFiles = (ticket: Pick<Ticket, 'id'>, files: File[]) =>
   attachImages(ticket, files.map((file) => saveImageFile(ticket, file)))
 
 // Rich text copied from Notes/Word/Sheets carries a PNG rendering alongside the
@@ -1593,7 +1619,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="ticketDraft" class="modal-backdrop" @click.self="ticketDraft = null">
-    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }">
+    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
         <button
@@ -1642,6 +1668,28 @@ const runTicketAgent = (ticket: Ticket) => {
         Description
         <textarea v-model="ticketDraft.description" placeholder="Details, acceptance criteria, links..." />
       </label>
+
+      <section class="ticket-images" @dragover.prevent @drop.prevent="stageDraftImages(imageFilesOf($event.dataTransfer))">
+        <p class="eyebrow">Images</p>
+        <ul v-if="ticketDraft.images.length" class="ticket-images-staged">
+          <li v-for="(file, index) in ticketDraft.images" :key="index">
+            <span>{{ file.name || 'Pasted image' }}</span>
+            <button class="icon-button" title="Remove image" @click="unstageDraftImage(index)">×</button>
+          </li>
+        </ul>
+        <input
+          ref="draftImageInput"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          hidden
+          @change="pickDraftImages($event.target as HTMLInputElement)"
+        />
+        <button type="button" class="image-dropzone" @click="draftImageInput?.click()">
+          <span>Drag Images here</span>
+          <span class="image-dropzone-plus" aria-hidden="true">+</span>
+        </button>
+      </section>
 
       <div class="modal-actions">
         <button class="secondary" @click="ticketDraft = null">Cancel</button>
@@ -1846,10 +1894,10 @@ const runTicketAgent = (ticket: Ticket) => {
             <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
           </li>
         </ul>
-        <div class="ticket-images-add">
-          <button type="button" @click="pickTicketImages(openTicket)">Add image</button>
-          <span class="field-hint">or paste / drop an image here</span>
-        </div>
+        <button type="button" class="image-dropzone" @click="pickTicketImages(openTicket)">
+          <span>Drag Images here</span>
+          <span class="image-dropzone-plus" aria-hidden="true">+</span>
+        </button>
         <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 

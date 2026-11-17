@@ -1406,14 +1406,12 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
 
 export const addTicketToBoard = (
   board: ProjectBoard,
-  input: { laneId: string; title: string; description: string; moveToLaneId?: string; moveOnComplete?: boolean }
-): ProjectBoard => ({
-  ...board,
-  tickets: [
-    ...board.tickets,
-    { id: crypto.randomUUID(), number: nextTicketNumber(board), createdAt: new Date().toISOString(), ...input }
-  ]
-})
+  input: { id?: string; laneId: string; title: string; description: string; moveToLaneId?: string; moveOnComplete?: boolean }
+): ProjectBoard => {
+  const { id = crypto.randomUUID(), ...fields } = input
+  const ticket = { id, number: nextTicketNumber(board), createdAt: new Date().toISOString(), ...fields }
+  return { ...board, tickets: [...board.tickets, ticket] }
+}
 
 export const getBoard = (state: ProjectTrackerState, projectPath: string): ProjectBoard =>
   normalizeBoard(state.boards?.[projectPath] ?? createDefaultBoard())

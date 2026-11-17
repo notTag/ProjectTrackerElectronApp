@@ -368,12 +368,14 @@ export const useProjectsStore = defineStore('projects', {
       title: string,
       description = '',
       completion: { moveToLaneId?: string; moveOnComplete?: boolean } = {}
-    ) {
+    ): Promise<string> {
+      const ticketId = crypto.randomUUID()
       // Built inside the mutate callback so the ticket number is derived from the
       // same board revision it is appended to.
       await this.updateBoard(projectPath, (board) =>
-        addTicketToBoard(board, { laneId, title, description, ...completion })
+        addTicketToBoard(board, { id: ticketId, laneId, title, description, ...completion })
       )
+      return ticketId
     },
 
     // Every single-ticket edit funnels through here — modal fields and checklist
