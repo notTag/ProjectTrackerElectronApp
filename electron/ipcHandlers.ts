@@ -747,7 +747,11 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
         throw new Error('Markdown file must be inside a scanned directory.')
       }
-      return saveAgentMarkdown(filePath, content as string, previousContent as string)
+      // The orchestrator file is a copy the launch never reads, so it is replaced
+      // freely: its generated text changes with the app, which a check would
+      // mistake for a hand edit and refuse forever.
+      const guardedPreviousContent = kind === 'agent' ? (previousContent as string) : null
+      return saveAgentMarkdown(filePath, content as string, guardedPreviousContent)
     }
   }
 }

@@ -750,22 +750,31 @@ describe('per-entity writes', () => {
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
   })
 
-  it('saves the orchestrator markdown, then stores the prompt patch and the written path', async () => {
+  it('writes the orchestrator markdown, then stores only the new path', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
     const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
     api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    const promptPatch = { orchestratorPromptOverride: 'Flag red PRs.', orchestratorPrompt: '' }
-    const text = { prompt: 'Flag red PRs.', previousPrompt: 'Flag' }
-    await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', text, '', promptPatch)
+    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'Flag', '')
 
     expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.', 'Flag')
-    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', {
-      ...promptPatch,
-      orchestratorFilePath: savedPath
-    })
+    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', { orchestratorFilePath: savedPath })
+    expect(saved).toEqual({ filePath: savedPath, laneUpdated: true })
+  })
+
+  it('skips the lane update when the path is already stored', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
+    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
+    const prd = { ...store.board(PROJECT_PATH).lanes[1], agentFilePath: savedPath }
+
+    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'agent', 'Write a PRD.', 'Write', savedPath)
+
+    expect(api.updateLane).not.toHaveBeenCalled()
+    expect(saved.laneUpdated).toBe(true)
   })
 
   it('leaves the lane untouched when the markdown write fails', async () => {
@@ -774,8 +783,7 @@ describe('per-entity writes', () => {
     api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    const text = { prompt: 'Flag red PRs.', previousPrompt: '' }
-    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', text, 'x.txt', {})).rejects.toThrow()
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', 'x.txt')).rejects.toThrow()
 
     expect(api.updateLane).not.toHaveBeenCalled()
   })

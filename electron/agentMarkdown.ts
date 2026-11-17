@@ -50,10 +50,11 @@ const readIfExists = (filePath: string): string => (existsSync(filePath) ? readF
 // anything other than what this lane last wrote may be a hand-written guide or
 // an edit made in an editor, so it is left alone and the save fails instead,
 // until the box holds the same text (the user pasted the edits in).
-export const saveAgentMarkdown = (filePath: string, content: string, previousContent: string) => {
+// previousContent null skips the check, for files the app only ever writes.
+export const saveAgentMarkdown = (filePath: string, content: string, previousContent: string | null) => {
   const existing = readIfExists(filePath)
   const isBlank = existing.trim() === ''
-  const holdsLastSave = existing.trimEnd() === previousContent.trimEnd()
+  const holdsLastSave = previousContent === null || existing.trimEnd() === previousContent.trimEnd()
   const matchesBox = existing.trimEnd() === content.trimEnd()
   if (!isBlank && !holdsLastSave && !matchesBox) {
     throw new Error(

@@ -319,23 +319,20 @@ export const useProjectsStore = defineStore('projects', {
     },
 
     // File first, DB second: a failed write throws before the lane is touched.
-    // promptPatch is saved alongside the path because the textarea only commits
-    // on blur, so the text being written may not be in state yet.
+    // Only a new path is stored; the prompt text is stored on blur.
     async saveLaneMarkdown(
       projectPath: string,
       lane: SwimLane,
       kind: LaneMarkdownKind,
-      text: { prompt: string; previousPrompt: string },
-      filePath: string,
-      promptPatch: Partial<Omit<SwimLane, 'id'>>
+      prompt: string,
+      previousPrompt: string,
+      filePath: string
     ) {
-      const { prompt, previousPrompt } = text
       const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt, previousPrompt)
       const filePathField = LANE_MARKDOWN_FILE_PATH_FIELD[kind]
-      const patch: Partial<Omit<SwimLane, 'id'>> = { ...promptPatch, [filePathField]: saved.filePath }
-      const persisted = await this.updateLane(projectPath, lane.id, patch)
-      if (!persisted) throw new Error(this.error ?? 'Saved the file but could not update the lane.')
-      return saved
+      const pathIsStored = lane[filePathField] === saved.filePath
+      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { [filePathField]: saved.filePath }))
+      return { filePath: saved.filePath, laneUpdated }
     },
 
     // Optimistic: the lane lands in its new slot on drop rather than after the

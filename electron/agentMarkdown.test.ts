@@ -127,6 +127,14 @@ describe('saveAgentMarkdown', () => {
     expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written')
   })
 
+  it('replaces any content when there is no previous save to check against', () => {
+    const projectPath = freshProjectPath()
+    const explicitPath = path.join(projectPath, 'copy.md')
+    writeFileSync(explicitPath, 'an older generated prompt')
+    saveAgentMarkdown(explicitPath, 'the current prompt', null)
+    expect(readFileSync(explicitPath, 'utf8')).toBe('the current prompt')
+  })
+
   it('takes over a hand-edited file once the box holds the same text', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
