@@ -48,9 +48,25 @@ describe('resolveAgentMarkdownPath', () => {
     }
   })
 
-  it('keeps an existing explicit agent-context/ path untouched', () => {
-    const legacyPath = '/code/app/agent-context/ProjectTracker-electron-app-PRD-AgentContext.md'
-    expect(resolveAgentMarkdownPath(target('/code/app', legacyPath))).toBe(legacyPath)
+  it('moves a pre-#81 agent-context/ path into the lane folder', () => {
+    const legacyPath = '/code/app/agent-context/ProjectTracker-electron-app-In-Review-AgentContext.md'
+    const resolved = resolveAgentMarkdownPath(target('/code/app', legacyPath))
+    expect(resolved).toBe('/code/app/SwimlaneAgentPrompt/In-Review/AgentPrompt.md')
+  })
+
+  it("follows a lane rename instead of keeping the old name's folder", () => {
+    for (const kind of ['agent', 'orchestrator'] as const) {
+      const fileName = kind === 'agent' ? 'AgentPrompt.md' : 'AgentOrchestratorPrompt.md'
+      const oldNamePath = `/code/app/SwimlaneAgentPrompt/QA/${fileName}`
+      const resolved = resolveAgentMarkdownPath(target('/code/app', oldNamePath, kind))
+      expect(resolved).toBe(`/code/app/SwimlaneAgentPrompt/In-Review/${fileName}`)
+    }
+  })
+
+  it('keeps a path the user chose, even inside the prompt folders', () => {
+    for (const chosenPath of ['/code/app/agent-context/notes.md', '/code/app/SwimlaneAgentPrompt/QA/extra.md']) {
+      expect(resolveAgentMarkdownPath(target('/code/app', chosenPath))).toBe(chosenPath)
+    }
   })
 
   it('resolves a relative explicit path against the project', () => {

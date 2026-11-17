@@ -428,7 +428,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before, so the box never re-renders under the cursor. Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.
-  - File field empty: writes `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. Paths saved before #81 (`agent-context/...`) keep working as explicit paths.
+  - File field empty: writes `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. A path the app generated (an old `agent-context/*-AgentContext.md`, or a lane folder under the lane's old name) is re-derived on the next save, so a lane's prompts always share one folder; the old file is left in place. Any other path you typed is kept.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project. Changing the path saves the current prompt there, unless the prompt is empty.
   - The file mirrors the box: each save replaces it, and clearing the prompt leaves it blank. A file holding anything other than what this lane last wrote (a hand-written guide, an edit made in an editor) is never overwritten: the save fails with "<path> has other content…". Pasting the file's text into the box (or pointing the field at another file) lets autosave carry on.
   - Field hint: "Saved to <path>" on success, the error on failure (lane left unchanged). Works on **No status** too.
@@ -588,7 +588,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.7 Lane prompt evals — `evals/`
 
 - Static tier, part of `bun run test`:
-  - `evals/static/lint.test.ts` checks every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
+  - `evals/static/lint.test.ts` checks every `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `evals/fixtures/board.json`, no hard-coded real DB path, assembled prompt never starts with `-`.
   - `evals/static/snapshots.test.ts` snapshots the assembled prompt for each prompted lane × 4 ticket variants (bare, full auto, branch + worktree, checklist). A prompt edit shows as a snapshot diff in the PR.
 - Behavioral tier, `bun run eval`:
   - Each case in `evals/fixtures/cases/<lane>/` runs the lane's real agent against a throwaway world: temp git repo with a local bare `origin`, temp Project Tracker DB, stubbed `gh` / `osascript` / `mise`.

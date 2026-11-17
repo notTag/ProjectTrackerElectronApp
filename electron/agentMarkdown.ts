@@ -22,6 +22,22 @@ const MARKDOWN_KINDS = {
   orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', fileName: ORCHESTRATOR_PROMPT_FILE_NAME }
 } as const
 
+const LEGACY_AGENT_CONTEXT_DIRECTORY = 'agent-context'
+
+// A path the app generated itself, not one the user chose: a lane folder file
+// (maybe under the lane's old name) or a pre-#81 agent-context/ file. These
+// are re-derived on save so a lane's prompts always share one folder, even
+// after a rename. The old file is left where it is.
+const isGeneratedPath = (projectPath: string, resolvedPath: string, fileName: string): boolean => {
+  const segments = path.relative(projectPath, resolvedPath).split(path.sep)
+  const topDirectory = segments[0]
+  const lastSegment = segments[segments.length - 1]
+  const inLaneFolder = segments.length === 3 && topDirectory === SWIMLANE_PROMPT_DIRECTORY && lastSegment === fileName
+  const inLegacyFolder =
+    segments.length === 2 && topDirectory === LEGACY_AGENT_CONTEXT_DIRECTORY && lastSegment.endsWith('-AgentContext.md')
+  return inLaneFolder || inLegacyFolder
+}
+
 // An empty field gets <project>/SwimlaneAgentPrompt/<lane>/<fileName>; the
 // sanitized folder name has no separators or leading dots, so it can't climb
 // out. A path the user typed is honoured, but only as a .md file, so a stray
@@ -31,9 +47,9 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
   const projectPath = path.resolve(target.projectPath)
   const explicitPath = target.filePath.trim()
   const { fieldLabel, fileName } = MARKDOWN_KINDS[target.kind]
+  const resolved = path.resolve(projectPath, explicitPath)
 
-  if (explicitPath) {
-    const resolved = path.resolve(projectPath, explicitPath)
+  if (explicitPath && !isGeneratedPath(projectPath, resolved, fileName)) {
     if (path.extname(resolved).toLowerCase() !== '.md') {
       throw new Error(`${fieldLabel} must end in .md.`)
     }

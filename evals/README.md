@@ -3,7 +3,7 @@
 Two tiers check that a lane prompt still does its job after an edit.
 
 ## Static — part of `bun run test`
-- `static/lint.test.ts` — every `agent-context/*.md` and `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `fixtures/board.json`, no hard-coded real DB path; assembled prompts never start with `-`.
+- `static/lint.test.ts` — every `SwimlaneAgentPrompt/**/*.md`: not empty, names only lane ids on `fixtures/board.json`, no hard-coded real DB path; assembled prompts never start with `-`.
 - `static/snapshots.test.ts` — `ticketAgentPrompt` per prompted lane × 4 ticket variants. A prompt edit shows as a snapshot diff; accept it with `bunx vitest run evals/static -u`.
 
 ## Behavioral — `bun run eval` (opt-in, real agent runs, costs tokens)

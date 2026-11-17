@@ -40,7 +40,7 @@ const liveLanes = () => {
   })
 }
 
-describe.skipIf(!existsSync(REAL_DATABASE_PATH))('agent-context files match the live board', () => {
+describe.skipIf(!existsSync(REAL_DATABASE_PATH))('lane prompt files match the live board', () => {
   it.each(existsSync(REAL_DATABASE_PATH) ? liveLanes().map((lane) => [lane.name, lane] as const) : [])(
     '%s',
     (_laneName, lane) => {
