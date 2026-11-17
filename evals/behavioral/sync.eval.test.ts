@@ -44,7 +44,7 @@ describe.skipIf(!existsSync(REAL_DATABASE_PATH))('lane prompt files match the li
   it.each(existsSync(REAL_DATABASE_PATH) ? liveLanes().map((lane) => [lane.name, lane] as const) : [])(
     '%s',
     (_laneName, lane) => {
-      const fix = 'Click "Save to Agent Markdown" in the lane\'s ⚙ settings, then commit the file.'
+      const fix = "Type in the lane's ⚙ Agent prompt (it autosaves to the file), then commit the file."
       expect(existsSync(lane.committedFile), `${lane.committedFile} is missing. ${fix}`).toBe(true)
       const committed = readFileSync(lane.committedFile, 'utf8').trim()
       expect(committed, `${path.basename(lane.committedFile)} is out of sync with the app. ${fix}`).toBe(

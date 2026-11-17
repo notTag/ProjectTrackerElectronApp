@@ -96,14 +96,13 @@ describe('resolveAgentMarkdownPath', () => {
   })
 })
 
-const save = (markdownTarget: ReturnType<typeof target>, content: string) =>
-  saveAgentMarkdown(resolveAgentMarkdownPath(markdownTarget), content)
+const save = (markdownTarget: ReturnType<typeof target>, content: string, previousContent = '') =>
+  saveAgentMarkdown(resolveAgentMarkdownPath(markdownTarget), content, previousContent)
 
 describe('saveAgentMarkdown', () => {
   it('creates the lane folder recursively and writes the prompt', () => {
     const projectPath = freshProjectPath()
     const saved = save(target(projectPath), '# Guide\n')
-    expect(saved.appended).toBe(false)
     expect(readFileSync(saved.filePath, 'utf8')).toBe('# Guide\n')
   })
 
@@ -118,29 +117,46 @@ describe('saveAgentMarkdown', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
     writeFileSync(explicitPath, '  \n')
-    const saved = save(target(projectPath, explicitPath), 'prompt')
-    expect(saved.appended).toBe(false)
+    save(target(projectPath, explicitPath), 'prompt')
     expect(readFileSync(explicitPath, 'utf8')).toBe('prompt')
   })
 
-  it('appends to a file that has content, after a blank line', () => {
+  it('replaces its own last save, so autosaves mirror the box instead of stacking', () => {
+    const projectPath = freshProjectPath()
+    save(target(projectPath), 'Flag')
+    const saved = save(target(projectPath), 'Flag red PRs.', 'Flag')
+    expect(readFileSync(saved.filePath, 'utf8')).toBe('Flag red PRs.')
+  })
+
+  it('mirrors a cleared prompt as a blank file', () => {
+    const projectPath = freshProjectPath()
+    save(target(projectPath), 'prompt')
+    const saved = save(target(projectPath), '', 'prompt')
+    expect(readFileSync(saved.filePath, 'utf8')).toBe('')
+  })
+
+  it('refuses to overwrite content it did not write, e.g. a hand-written guide or an editor edit', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
     writeFileSync(explicitPath, '# Hand-written')
-    const saved = save(target(projectPath, explicitPath), 'prompt')
-    expect(saved.appended).toBe(true)
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written\n\nprompt')
-
-    writeFileSync(explicitPath, '# Ends with newline\n')
-    save(target(projectPath, explicitPath), 'prompt')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Ends with newline\n\nprompt')
+    expect(() => save(target(projectPath, explicitPath), 'prompt', 'older prompt')).toThrow('has other content')
+    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written')
   })
 
-  it('does not stack a second copy when the same prompt is saved again', () => {
+  it('replaces any content when there is no previous save to check against', () => {
     const projectPath = freshProjectPath()
-    save(target(projectPath), 'prompt\n')
-    const again = save(target(projectPath), 'prompt\n')
-    expect(again.appended).toBe(false)
-    expect(readFileSync(again.filePath, 'utf8')).toBe('prompt\n')
+    const explicitPath = path.join(projectPath, 'copy.md')
+    writeFileSync(explicitPath, 'an older generated prompt')
+    saveAgentMarkdown(explicitPath, 'the current prompt', null)
+    expect(readFileSync(explicitPath, 'utf8')).toBe('the current prompt')
+  })
+
+  it('takes over a hand-edited file once the box holds the same text', () => {
+    const projectPath = freshProjectPath()
+    const explicitPath = path.join(projectPath, 'guide.md')
+    writeFileSync(explicitPath, '# Hand-written\n')
+    save(target(projectPath, explicitPath), '# Hand-written', 'older prompt')
+    save(target(projectPath, explicitPath), '# Hand-written, then more', '# Hand-written')
+    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written, then more')
   })
 })
