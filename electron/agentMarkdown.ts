@@ -30,10 +30,11 @@ const LEGACY_AGENT_CONTEXT_DIRECTORY = 'agent-context'
 // after a rename. The old file is left where it is.
 const isGeneratedPath = (projectPath: string, resolvedPath: string, fileName: string): boolean => {
   const segments = path.relative(projectPath, resolvedPath).split(path.sep)
-  const [directory, laneFolder, laneFile] = segments
-  const inLaneFolder = segments.length === 3 && directory === SWIMLANE_PROMPT_DIRECTORY && laneFile === fileName
+  const topDirectory = segments[0]
+  const lastSegment = segments[segments.length - 1]
+  const inLaneFolder = segments.length === 3 && topDirectory === SWIMLANE_PROMPT_DIRECTORY && lastSegment === fileName
   const inLegacyFolder =
-    segments.length === 2 && directory === LEGACY_AGENT_CONTEXT_DIRECTORY && laneFolder.endsWith('-AgentContext.md')
+    segments.length === 2 && topDirectory === LEGACY_AGENT_CONTEXT_DIRECTORY && lastSegment.endsWith('-AgentContext.md')
   return inLaneFolder || inLegacyFolder
 }
 
