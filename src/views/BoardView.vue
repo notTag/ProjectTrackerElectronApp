@@ -115,9 +115,15 @@ const ticketDraft = ref<{
   description: string
   laneId: string
   nextLaneId: string | null
-  images: File[]
+  images: { file: File; previewUrl: string }[]
 } | null>(null)
 const draftImageInput = ref<HTMLInputElement | null>(null)
+
+// Blob URLs pin their File in memory until revoked, so a closed or replaced
+// draft releases every preview it made.
+watch(ticketDraft, (_draft, previousDraft) => {
+  previousDraft?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
+})
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
 const linkDraft = ref('')
@@ -618,7 +624,10 @@ const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_I
 }
 
 const stageDraftImages = (files: File[]) => {
-  if (ticketDraft.value) ticketDraft.value.images.push(...files)
+  const draft = ticketDraft.value
+  if (!draft) return
+  const stagedImages = files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))
+  draft.images.push(...stagedImages)
 }
 
 const pickDraftImages = (input: HTMLInputElement) => {
@@ -634,7 +643,10 @@ const pasteDraftImages = (event: ClipboardEvent) => {
   stageDraftImages(files)
 }
 
-const unstageDraftImage = (index: number) => ticketDraft.value?.images.splice(index, 1)
+const unstageDraftImage = (index: number) => {
+  const removed = ticketDraft.value?.images.splice(index, 1) ?? []
+  removed.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
+}
 
 const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
 
@@ -668,7 +680,8 @@ const saveTicketDraft = async () => {
     templateWasLeftUntouched ? '' : description,
     completion
   )
-  if (draft.images.length) await saveImageFiles({ id: ticketId }, draft.images)
+  const stagedFiles = draft.images.map((stagedImage) => stagedImage.file)
+  if (stagedFiles.length) await saveImageFiles({ id: ticketId }, stagedFiles)
 }
 
 const saveLaneDraft = async () => {
@@ -1671,12 +1684,6 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <section class="ticket-images" @dragover.prevent @drop.prevent="stageDraftImages(imageFilesOf($event.dataTransfer))">
         <p class="eyebrow">Images</p>
-        <ul v-if="ticketDraft.images.length" class="ticket-images-staged">
-          <li v-for="(file, index) in ticketDraft.images" :key="index">
-            <span>{{ file.name || 'Pasted image' }}</span>
-            <button class="icon-button" title="Remove image" @click="unstageDraftImage(index)">×</button>
-          </li>
-        </ul>
         <input
           ref="draftImageInput"
           type="file"
@@ -1689,6 +1696,14 @@ const runTicketAgent = (ticket: Ticket) => {
           <span>Drag Images here</span>
           <span class="image-dropzone-plus" aria-hidden="true">+</span>
         </button>
+        <ul v-if="ticketDraft.images.length">
+          <li v-for="(stagedImage, index) in ticketDraft.images" :key="stagedImage.previewUrl">
+            <span class="ticket-image-thumb" :title="stagedImage.file.name">
+              <img :src="stagedImage.previewUrl" alt="Staged image" decoding="async" />
+            </span>
+            <button class="icon-button" title="Remove image" @click="unstageDraftImage(index)">×</button>
+          </li>
+        </ul>
       </section>
 
       <div class="modal-actions">
@@ -1886,6 +1901,10 @@ const runTicketAgent = (ticket: Ticket) => {
         @drop.prevent="dropTicketImages(openTicket, $event)"
       >
         <p class="eyebrow">Images</p>
+        <button type="button" class="image-dropzone" @click="pickTicketImages(openTicket)">
+          <span>Drag Images here</span>
+          <span class="image-dropzone-plus" aria-hidden="true">+</span>
+        </button>
         <ul v-if="openTicket.images?.length">
           <li v-for="imagePath in openTicket.images" :key="imagePath">
             <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
@@ -1894,10 +1913,6 @@ const runTicketAgent = (ticket: Ticket) => {
             <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
           </li>
         </ul>
-        <button type="button" class="image-dropzone" @click="pickTicketImages(openTicket)">
-          <span>Drag Images here</span>
-          <span class="image-dropzone-plus" aria-hidden="true">+</span>
-        </button>
         <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 

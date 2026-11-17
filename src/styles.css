@@ -1677,6 +1677,11 @@ code {
   cursor: zoom-in;
 }
 
+/* A staged preview in the new-ticket modal has no file to open yet. */
+span.ticket-image-thumb {
+  cursor: default;
+}
+
 .ticket-image-thumb img {
   display: block;
   width: 96px;
@@ -1714,17 +1719,6 @@ code {
   font-size: 2.5rem;
   font-weight: 300;
   line-height: 1;
-}
-
-.ticket-images-staged li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.8rem;
-}
-
-.ticket-images-staged li .icon-button {
-  position: static;
 }
 
 .checklist-done {
