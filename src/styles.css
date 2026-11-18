@@ -1257,7 +1257,7 @@ code {
   background: var(--color-surface);
   cursor: grab;
   flex: 0 0 auto;
-  transition: border-color 120ms ease;
+  transition: border-color 120ms ease, opacity 180ms ease, transform 180ms ease;
   /* Checkbox column on the left; every other child stacks in the second
      column, so a wrapped title stays clear of the checkbox. */
   display: grid;
@@ -1268,6 +1268,61 @@ code {
 
 .ticket > :not(.ticket-select) {
   grid-column: 2;
+}
+
+/* Other checked cards riding along with a multi-ticket drag. */
+.ticket-carried {
+  opacity: 0.4;
+  transform: scale(0.96);
+}
+
+/* Off-screen but painted: setDragImage snapshots it, then it is removed.
+   The padding keeps the offset layers and badge inside the snapshot. */
+.ticket-drag-stack {
+  --stack-step: 4px;
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  box-sizing: content-box;
+  padding: 8px;
+  pointer-events: none;
+}
+
+.ticket-drag-front {
+  position: relative;
+}
+
+.ticket-drag-layer {
+  position: absolute;
+  inset: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  transform: translate(
+    calc(var(--stack-depth) * var(--stack-step)),
+    calc(var(--stack-depth) * var(--stack-step))
+  );
+}
+
+.ticket-drag-count {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket {
+    transition: border-color 120ms ease;
+  }
 }
 
 .ticket-select {
@@ -1628,6 +1683,11 @@ code {
   cursor: zoom-in;
 }
 
+/* A staged preview in the new-ticket modal has no file to open yet. */
+span.ticket-image-thumb {
+  cursor: default;
+}
+
 .ticket-image-thumb img {
   display: block;
   width: 96px;
@@ -1641,10 +1701,30 @@ code {
   right: 2px;
 }
 
-.ticket-images-add {
+.image-dropzone {
+  width: 100%;
+  padding: 18px 12px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  border: 2px dashed var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.image-dropzone:hover,
+.image-dropzone:focus-visible {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.image-dropzone-plus {
+  font-size: 2.5rem;
+  font-weight: 300;
+  line-height: 1;
 }
 
 .checklist-done {
