@@ -1081,6 +1081,32 @@ describe('closed_at triggers (#27)', () => {
     cli.close()
   })
 
+  it('upgrading an older file seeds the waiting lane once, and the flag round-trips', () => {
+    const { userDataPath, projectPath, cli } = setUp()
+    cli
+      .prepare(
+        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position) VALUES ('in-pr', ?, 'In PR', '', '', 98)`
+      )
+      .run(projectPath)
+    cli.exec('UPDATE schema_meta SET version = 5')
+
+    new StateRepository(userDataPath)
+    const seeded = cli.prepare('SELECT id FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all().map((row) => row.id)
+    expect(seeded).toEqual(['in-pr'])
+
+    const repository = new StateRepository(userDataPath)
+    const inPr = repository.getState().boards![projectPath].lanes.find((entry) => entry.id === 'in-pr')
+    expect(inPr?.waitsForPullRequestMerge).toBe(true)
+    repository.updateSwimLane(projectPath, 'in-dev', { waitsForPullRequestMerge: true })
+    repository.updateSwimLane(projectPath, 'in-pr', { waitsForPullRequestMerge: false })
+
+    // Already at the current version: the user's choices survive a reopen.
+    const reopened = reopenedBoard(userDataPath, projectPath).lanes
+    expect(reopened.find((entry) => entry.id === 'in-dev')?.waitsForPullRequestMerge).toBe(true)
+    expect(reopened.find((entry) => entry.id === 'in-pr')?.waitsForPullRequestMerge).toBe(false)
+    cli.close()
+  })
+
   it('counts closed tickets per window, only for visible, non-archived projects', () => {
     const { repository, projectPath, cli } = setUp()
     cli.exec(`

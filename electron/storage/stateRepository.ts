@@ -13,6 +13,7 @@ import {
   orderedIds,
   sameRow,
   SEEDED_CLOSING_LANE_IDS,
+  SEEDED_WAITING_LANE_IDS,
   UNASSIGNED_LANE_ID,
   type BoardPreferences,
   type MetricWindowCounts,
@@ -32,6 +33,7 @@ import {
   ADDED_COLUMNS,
   CLOSED_AT_TRIGGERS_SQL,
   CLOSING_LANES_SCHEMA_VERSION,
+  WAITING_LANES_SCHEMA_VERSION,
   PATH_KIND_HIDDEN,
   PATH_KIND_SCAN,
   PATH_KIND_THIRD_PARTY,
@@ -175,6 +177,7 @@ const laneFromRow = (row: Row): SwimLane => ({
     fullAuto: asBool(row.full_auto),
     agentSetsVersion: asBool(row.agent_sets_version),
     closesTicket: asBool(row.closes_ticket),
+    waitsForPullRequestMerge: asBool(row.waits_for_pull_request_merge),
     autoRunModel: asNonEmptyText(row.auto_run_model),
     orchestratorAgentId: asText(row.orchestrator_agent_id),
     orchestratorModel: asNonEmptyText(row.orchestrator_model),
@@ -271,6 +274,7 @@ export class StateRepository {
       this.addMissingColumns()
       this.db.exec(CLOSED_AT_TRIGGERS_SQL)
       this.seedClosingLanesOnce()
+      this.seedWaitingLanesOnce()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
@@ -401,6 +405,13 @@ export class StateRepository {
     if (storedVersion >= CLOSING_LANES_SCHEMA_VERSION) return
     const placeholders = SEEDED_CLOSING_LANE_IDS.map(() => '?').join(', ')
     this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
+  }
+
+  private seedWaitingLanesOnce() {
+    const storedVersion = Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
+    if (storedVersion >= WAITING_LANES_SCHEMA_VERSION) return
+    const placeholders = SEEDED_WAITING_LANE_IDS.map(() => '?').join(', ')
+    this.run(`UPDATE swim_lanes SET waits_for_pull_request_merge = 1 WHERE id IN (${placeholders})`, SEEDED_WAITING_LANE_IDS)
   }
 
   private recordSchemaVersion() {
@@ -673,8 +684,8 @@ export class StateRepository {
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
-         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, waits_for_pull_request_merge
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
@@ -685,7 +696,8 @@ export class StateRepository {
          auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
          orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id,
          orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
-         orchestrator_file_path = excluded.orchestrator_file_path`,
+         orchestrator_file_path = excluded.orchestrator_file_path,
+         waits_for_pull_request_merge = excluded.waits_for_pull_request_merge`,
       [
         lane.id,
         projectPath,
@@ -709,7 +721,8 @@ export class StateRepository {
         lane.nextLaneId ?? null,
         orchestratorPollMinutes(lane),
         orchestratorPollActive(lane) ? 1 : 0,
-        lane.orchestratorFilePath ?? ''
+        lane.orchestratorFilePath ?? '',
+        lane.waitsForPullRequestMerge ? 1 : 0
       ]
     )
   }

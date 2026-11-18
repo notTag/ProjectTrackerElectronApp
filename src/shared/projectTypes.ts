@@ -258,6 +258,9 @@ export interface SwimLane {
   // This lane's agent is told it may set the ticket's semantic version, and how.
   // When to set it is the agent's call, not a rule here. Absent means off.
   agentSetsVersion?: boolean
+  // Tickets here move on when their PR merges, not when their checklist
+  // completes. Absent means off.
+  waitsForPullRequestMerge?: boolean
   // How often this lane's Auto Run orchestrator polls, in whole minutes. Absent means 2.
   orchestratorPollMinutes?: number
   // Off means this lane's Auto Run opens no orchestrator tab. Absent means on.
@@ -1262,8 +1265,12 @@ export const moveGatePasses = (ticket: Ticket | undefined): boolean => {
   const checklist = ticket.checklist ?? []
   const allItemsDone = checklist.every((item) => item.done)
   const checklistPasses = allItemsDone && (checklist.length > 0 || hasRules)
-  const rulesPass = !hasRules || ticket.moveRulesPassedLaneId === ticket.laneId
-  return checklistPasses && rulesPass
+  return checklistPasses && moveRulesPass(ticket)
+}
+
+const moveRulesPass = (ticket: Ticket): boolean => {
+  const hasRules = moveRulesList(ticket).length > 0
+  return !hasRules || ticket.moveRulesPassedLaneId === ticket.laneId
 }
 
 // The lane a ticket is ready to move to, for the card label. With rules the gate
@@ -1275,6 +1282,8 @@ export const isReadyToMove = (ticket: Ticket, board: ProjectBoard): string | und
   const targetLaneId = effectiveNextLaneId(ticket, currentLane)
   if (!targetLaneId || targetLaneId === ticket.laneId) return undefined
   if (!boardLaneById(board, targetLaneId)) return undefined
+  const heldForMerge = currentLane?.waitsForPullRequestMerge && !isPullRequestSettled(ticket.pullRequestState)
+  if (heldForMerge) return undefined
   const hasRules = moveRulesList(ticket).length > 0
   const ready = hasRules ? moveGatePasses(ticket) : ticket.readyLaneId === ticket.laneId
   return ready ? targetLaneId : undefined
@@ -1293,6 +1302,11 @@ export interface CompletionMove {
 // once the gate stops passing. Every completed ticket with Next Lane armed is
 // disarmed, even when it is already in its target lane or that lane is gone,
 // so a later re-completion never moves it.
+//
+// In a lane that waits for PR merge, merging is what completes the ticket: an
+// unmerged PR (or none yet — its state may simply not have synced) holds it in
+// place, and the PR turning merged completes it whatever the checklist says
+// (rules still have to pass).
 export const completionMoves = (
   previousBoard: ProjectBoard,
   nextBoard: ProjectBoard,
@@ -1300,10 +1314,16 @@ export const completionMoves = (
   at = new Date().toISOString()
 ): { board: ProjectBoard; moves: CompletionMove[] } => {
   const previousTicketById = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket]))
-  const isJustCompleted = (ticket: Ticket) => {
-    const gatePassedBefore = moveGatePasses(previousTicketById.get(ticket.id))
+  const isJustCompleted = (ticket: Ticket, currentLane: SwimLane | undefined) => {
+    const previousTicket = previousTicketById.get(ticket.id)
+    if (currentLane?.waitsForPullRequestMerge) {
+      const isMerged = isPullRequestSettled(ticket.pullRequestState)
+      if (!isMerged) return false
+      const pullRequestJustMerged = previousTicket !== undefined && !isPullRequestSettled(previousTicket.pullRequestState)
+      if (pullRequestJustMerged) return moveRulesPass(ticket)
+    }
     const gatePassesNow = moveGatePasses(ticket)
-    const gateJustPassed = gatePassesNow && !gatePassedBefore
+    const gateJustPassed = gatePassesNow && !moveGatePasses(previousTicket)
     const hasRules = moveRulesList(ticket).length > 0
     const runCompleted = alsoCompletedIds.includes(ticket.id) && (!hasRules || gatePassesNow)
     return gateJustPassed || runCompleted
@@ -1314,12 +1334,12 @@ export const completionMoves = (
   const moves: CompletionMove[] = []
   const tickets = nextBoard.tickets.map((ticket) => {
     if (ticket.readyLaneId && gateJustFailed(ticket)) return { ...ticket, readyLaneId: undefined, updatedAt: at }
-    if (!isJustCompleted(ticket)) return ticket
+    const currentLane = boardLaneById(nextBoard, ticket.laneId)
+    if (!isJustCompleted(ticket, currentLane)) return ticket
     if (!ticket.moveOnComplete) {
       if (ticket.readyLaneId === ticket.laneId) return ticket
       return { ...ticket, readyLaneId: ticket.laneId, updatedAt: at }
     }
-    const currentLane = boardLaneById(nextBoard, ticket.laneId)
     const toLaneId = effectiveNextLaneId(ticket, currentLane)
     const toLane = toLaneId ? boardLaneById(nextBoard, toLaneId) : undefined
     const movesLane = toLane !== undefined && toLane.id !== ticket.laneId
@@ -1376,6 +1396,8 @@ const laneIdFromName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/
 // New boards get these flags; the storage migration seeds the same ids once.
 const CLOSING_LANE_NAMES = ['In Dev', 'In QA', 'In Production']
 export const SEEDED_CLOSING_LANE_IDS = CLOSING_LANE_NAMES.map(laneIdFromName)
+// The Merge Request lane: tickets wait there until their PR merges.
+export const SEEDED_WAITING_LANE_IDS = [laneIdFromName('In PR')]
 
 // Tickets with no status live under a lane id that is never stored in
 // board.lanes — the board renders it as a virtual column, so it cannot be
@@ -1449,7 +1471,8 @@ export const createDefaultBoard = (): ProjectBoard => ({
     name,
     agentPrompt: '',
     agentFilePath: '',
-    closesTicket: SEEDED_CLOSING_LANE_IDS.includes(laneIdFromName(name))
+    closesTicket: SEEDED_CLOSING_LANE_IDS.includes(laneIdFromName(name)),
+    waitsForPullRequestMerge: SEEDED_WAITING_LANE_IDS.includes(laneIdFromName(name))
   })),
   tickets: []
 })
