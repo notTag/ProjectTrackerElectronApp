@@ -729,7 +729,7 @@ describe('per-entity writes', () => {
     store.state = { ...state, snapshot: { ...state.snapshot, projects: [project] } }
 
     await store.updateTicket(PROJECT_PATH, 'ticket-1', { title: 'Retitled' })
-    await store.addTicket(PROJECT_PATH, 'idea', 'New one')
+    const newTicketId = await store.addTicket(PROJECT_PATH, 'idea', 'New one')
     await store.removeTicket(PROJECT_PATH, 'ticket-1')
     await store.addLane(PROJECT_PATH, 'QA')
     await store.updateLane(PROJECT_PATH, 'prd', { name: 'Spec' })
@@ -741,6 +741,7 @@ describe('per-entity writes', () => {
     expect(store.error).toBeNull()
     expect(api.updateTicket).toHaveBeenCalledWith('ticket-1', expect.objectContaining({ title: 'Retitled' }))
     expect(api.createTicket).toHaveBeenCalledTimes(1)
+    expect(api.createTicket).toHaveBeenCalledWith(PROJECT_PATH, expect.objectContaining({ id: newTicketId, title: 'New one' }))
     expect(api.deleteTicket).toHaveBeenCalledWith('ticket-1')
     expect(api.createLane).toHaveBeenCalledWith(PROJECT_PATH, expect.objectContaining({ name: 'QA' }))
     expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', { name: 'Spec' })

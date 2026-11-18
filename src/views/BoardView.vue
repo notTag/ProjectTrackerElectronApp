@@ -60,6 +60,7 @@ import {
   ticketShellCommand,
   ticketTabTitle,
   ticketIdsToMove,
+  carriedTicketIds,
   ticketsToRun,
   toggleCardField,
   toggleHiddenLane,
@@ -107,16 +108,32 @@ const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
 
 // nextLaneId stays null until the user picks one, so the field follows the
-// Status lane's default as Status changes.
-const ticketDraft = ref<{ title: string; description: string; laneId: string; nextLaneId: string | null } | null>(
-  null
-)
+// Status lane's default as Status changes. Images wait as Files until Save,
+// since their folder is keyed by a ticket id that doesn't exist yet.
+const ticketDraft = ref<{
+  title: string
+  description: string
+  laneId: string
+  nextLaneId: string | null
+  images: { file: File; previewUrl: string }[]
+} | null>(null)
+const draftImageInput = ref<HTMLInputElement | null>(null)
+
+// Blob URLs pin their File in memory until revoked, so a closed or replaced
+// draft releases every preview it made.
+watch(ticketDraft, (_draft, previousDraft) => {
+  previousDraft?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
+})
 const laneDraftName = ref<string | null>(null)
 const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
 const imageError = ref<string | null>(null)
+// An image error belongs to the ticket it happened on, not the next one opened.
+watch(openTicketId, (ticketId) => {
+  if (!ticketId) imageError.value = null
+})
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -604,10 +621,40 @@ const hideAddZoneLater = () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
   clearTimeout(addZoneHideTimer)
+  ticketDraft.value?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
-  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null }
+  ticketDraft.value = { title: '', description: TICKET_DESCRIPTION_TEMPLATE, laneId, nextLaneId: null, images: [] }
+}
+
+const stageDraftImages = (files: File[]) => {
+  const draft = ticketDraft.value
+  if (!draft) return
+  const stagedImages = files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))
+  draft.images.push(...stagedImages)
+}
+
+const pickDraftImages = (input: HTMLInputElement) => {
+  stageDraftImages(imageFilesOf(input))
+  input.value = ''
+}
+
+const pasteDraftImages = (event: ClipboardEvent) => {
+  if (isTextFieldPaste(event)) return
+  const files = imageFilesOf(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  stageDraftImages(files)
+}
+
+const dropDraftImages = (event: DragEvent) => {
+  stageDraftImages(imageFilesOf(event.dataTransfer))
+}
+
+const unstageDraftImage =(index: number) => {
+  const removed = ticketDraft.value?.images.splice(index, 1) ?? []
+  removed.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 }
 
 const laneNextLaneId = (laneId: string) => boardLaneById(board.value, laneId)?.nextLaneId ?? ''
@@ -635,13 +682,18 @@ const saveTicketDraft = async () => {
     moveOnComplete: Boolean(resolvedNextLaneId)
   }
   ticketDraft.value = null
-  await store.addTicket(
+  const ticketId = await store.addTicket(
     projectPath.value,
     draft.laneId,
     draft.title.trim(),
     templateWasLeftUntouched ? '' : description,
     completion
   )
+  const stagedFiles = draft.images.map((stagedImage) => stagedImage.file)
+  if (!ticketId || !stagedFiles.length) return
+  await saveImageFiles({ id: ticketId }, stagedFiles)
+  // The draft modal is gone, so show an upload failure on the ticket it belongs to.
+  if (imageError.value) openTicketId.value = ticketId
 }
 
 const saveLaneDraft = async () => {
@@ -716,7 +768,7 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
 }
 
 // Same queued-mutate reasoning as editTicketLinks.
-const editTicketImages = (ticket: Ticket, change: (images: string[]) => string[]) => {
+const editTicketImages = (ticket: Pick<Ticket, 'id'>, change: (images: string[]) => string[]) => {
   const updatedAt = new Date().toISOString()
   return store.updateBoard(projectPath.value, (board) => ({
     ...board,
@@ -739,7 +791,7 @@ const ipcErrorMessage = (error: unknown) => {
 // Files are written before the ticket lists them, so a failed save leaves at
 // worst an orphan file, never a listed path that doesn't exist. Settled one by
 // one: a bad file in a drop must not keep the good ones off the ticket.
-const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) => {
+const attachImages = async (ticket: Pick<Ticket, 'id'>, pendingSaves: Promise<string[]>[]) => {
   imageError.value = null
   const results = await Promise.allSettled(pendingSaves)
   const addedPaths = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
@@ -755,17 +807,17 @@ const attachImages = async (ticket: Ticket, pendingSaves: Promise<string[]>[]) =
 
 const pickTicketImages = (ticket: Ticket) => attachImages(ticket, [projectTrackerApi.pickTicketImages(ticket.id)])
 
-const imageFilesOf = (transfer: DataTransfer | null) =>
-  [...(transfer?.files ?? [])].filter((file) => file.type.startsWith('image/'))
+const imageFilesOf = (source: DataTransfer | HTMLInputElement | null) =>
+  [...(source?.files ?? [])].filter((file) => file.type.startsWith('image/'))
 
-const saveImageFile = async (ticket: Ticket, file: File) => {
+const saveImageFile = async (ticket: Pick<Ticket, 'id'>, file: File) => {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const imagePath = await projectTrackerApi.saveTicketImageBytes(ticket.id, bytes, file.type)
   return [imagePath]
 }
 
 // Paste and drop both send bytes: clipboard images have no file path at all.
-const saveImageFiles = (ticket: Ticket, files: File[]) =>
+const saveImageFiles = (ticket: Pick<Ticket, 'id'>, files: File[]) =>
   attachImages(ticket, files.map((file) => saveImageFile(ticket, file)))
 
 // Rich text copied from Notes/Word/Sheets carries a PNG rendering alongside the
@@ -826,12 +878,61 @@ const orchestratorPollTooltip = (lane: SwimLane): string => {
   return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
+const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id)))
+
+const carriedIds = computed(() => {
+  const ticketId = draggedTicketId.value
+  if (!ticketId) return new Set<string>()
+  return new Set(carriedTicketIds(ticketId, selectedTicketIds.value, visibleTickets.value))
+})
+
+const isCarriedBehind = (ticketId: string) => carriedIds.value.has(ticketId) && ticketId !== draggedTicketId.value
+
+const MAX_STACK_LAYERS = 3
+// Matches .ticket-drag-stack padding in styles.css.
+const STACK_GHOST_PADDING = 8
+
+// setDragImage snapshots the element when called, so the ghost must be in the
+// DOM and painted (off-screen, not display:none); it is removed a frame later.
+const buildStackGhost = (card: HTMLElement, carriedCount: number): HTMLElement => {
+  const ghost = document.createElement('div')
+  ghost.className = 'ticket-drag-stack'
+  ghost.style.width = `${card.offsetWidth}px`
+  const layersBehind = Math.min(carriedCount, MAX_STACK_LAYERS) - 1
+  for (let depth = layersBehind; depth >= 1; depth--) {
+    const layer = document.createElement('div')
+    layer.className = 'ticket-drag-layer'
+    layer.style.setProperty('--stack-depth', String(depth))
+    ghost.append(layer)
+  }
+  const frontCard = card.cloneNode(true) as HTMLElement
+  frontCard.classList.add('ticket-drag-front')
+  const countBadge = document.createElement('span')
+  countBadge.className = 'ticket-drag-count'
+  countBadge.textContent = String(carriedCount)
+  ghost.append(frontCard, countBadge)
+  return ghost
+}
+
+const startTicketDrag = (event: DragEvent, ticketId: string) => {
+  draggedTicketId.value = ticketId
+  const carriedCount = carriedIds.value.size
+  const card = event.currentTarget as HTMLElement
+  if (carriedCount < 2 || !event.dataTransfer) return
+  const ghost = buildStackGhost(card, carriedCount)
+  document.body.append(ghost)
+  const cardBounds = card.getBoundingClientRect()
+  const pointerX = event.clientX - cardBounds.left + STACK_GHOST_PADDING
+  const pointerY = event.clientY - cardBounds.top + STACK_GHOST_PADDING
+  event.dataTransfer.setDragImage(ghost, pointerX, pointerY)
+  requestAnimationFrame(() => ghost.remove())
+}
+
 const dropOnLane = async (laneId: string) => {
   const ticketId = draggedTicketId.value
   draggedTicketId.value = null
   if (!ticketId) return
-  const visibleTickets = visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id))
-  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets, laneId)
+  const ticketIds = ticketIdsToMove(ticketId, selectedTicketIds.value, visibleTickets.value, laneId)
   await store.moveTickets(projectPath.value, ticketIds, laneId)
 }
 
@@ -1041,6 +1142,12 @@ watch(openLaneId, () => {
   flushMarkdownSaves()
   commitTypedPrompts()
   laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
+  // The source watches only fire on a changed value, so two lanes storing the
+  // same prompt would otherwise hand one lane's typed text to the next.
+  for (const kind of ['agent', 'orchestrator'] as const) {
+    const source = laneMarkdownSources[kind]
+    laneMarkdownDraft.value[kind] = { prompt: source.prompt(), filePath: source.filePath() }
+  }
 })
 onBeforeUnmount(() => {
   flushMarkdownSaves()
@@ -1072,8 +1179,8 @@ const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind, prompt: 
 // show another lane.
 const scheduleLaneMarkdownSave = (lane: SwimLane, kind: LaneMarkdownKind) => {
   const savedKey = `${lane.id}:${kind}`
-  // Before the first save the file should hold the stored prompt, which the box
-  // still shows until blur commits the new text.
+  // Before the first save the file should hold the stored prompt: the lane
+  // keeps it until blur commits the new text.
   if (!lastSavedMarkdown.has(savedKey)) lastSavedMarkdown.set(savedKey, laneMarkdownSources[kind].prompt())
   const { prompt, filePath } = laneMarkdownDraft.value[kind]
   const run = () => {
@@ -1393,8 +1500,9 @@ const runTicketAgent = (ticket: Ticket) => {
             v-for="ticket in ticketsInLane(lane.id)"
             :key="ticket.id"
             class="ticket"
+            :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
             draggable="true"
-            @dragstart="draggedTicketId = ticket.id"
+            @dragstart="startTicketDrag($event, ticket.id)"
             @dragend="draggedTicketId = null"
             @click="openTicketId = ticket.id"
           >
@@ -1542,7 +1650,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="ticketDraft" class="modal-backdrop" @click.self="ticketDraft = null">
-    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }">
+    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
         <button
@@ -1591,6 +1699,30 @@ const runTicketAgent = (ticket: Ticket) => {
         Description
         <textarea v-model="ticketDraft.description" placeholder="Details, acceptance criteria, links..." />
       </label>
+
+      <section class="ticket-images" @dragover.prevent @drop.prevent="dropDraftImages">
+        <p class="eyebrow">Images</p>
+        <input
+          ref="draftImageInput"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          hidden
+          @change="pickDraftImages($event.target as HTMLInputElement)"
+        />
+        <button type="button" class="image-dropzone" @click="draftImageInput?.click()">
+          <span>Drag or paste images here</span>
+          <span class="image-dropzone-plus" aria-hidden="true">+</span>
+        </button>
+        <ul v-if="ticketDraft.images.length">
+          <li v-for="(stagedImage, index) in ticketDraft.images" :key="stagedImage.previewUrl">
+            <span class="ticket-image-thumb" :title="stagedImage.file.name">
+              <img :src="stagedImage.previewUrl" alt="Staged image" decoding="async" />
+            </span>
+            <button class="icon-button" title="Remove image" @click="unstageDraftImage(index)">×</button>
+          </li>
+        </ul>
+      </section>
 
       <div class="modal-actions">
         <button class="secondary" @click="ticketDraft = null">Cancel</button>
@@ -1787,6 +1919,10 @@ const runTicketAgent = (ticket: Ticket) => {
         @drop.prevent="dropTicketImages(openTicket, $event)"
       >
         <p class="eyebrow">Images</p>
+        <button type="button" class="image-dropzone" @click="pickTicketImages(openTicket)">
+          <span>Drag or paste images here</span>
+          <span class="image-dropzone-plus" aria-hidden="true">+</span>
+        </button>
         <ul v-if="openTicket.images?.length">
           <li v-for="imagePath in openTicket.images" :key="imagePath">
             <button type="button" class="ticket-image-thumb" :title="imagePath" @click="openTicketImage(imagePath)">
@@ -1795,10 +1931,6 @@ const runTicketAgent = (ticket: Ticket) => {
             <button class="icon-button" title="Remove image" @click="removeTicketImage(openTicket, imagePath)">×</button>
           </li>
         </ul>
-        <div class="ticket-images-add">
-          <button type="button" @click="pickTicketImages(openTicket)">Add image</button>
-          <span class="field-hint">or paste / drop an image here</span>
-        </div>
         <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 
@@ -2027,7 +2159,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Agent prompt
         <textarea
           class="agent-prompt"
-          :value="openLane.agentPrompt"
+          :value="laneMarkdownDraft.agent.prompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
           @input="onLaneMarkdownPromptInput(openLane, 'agent', $event)"
           @change="storeTypedPrompts"
@@ -2066,7 +2198,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Orchestrator prompt
         <textarea
           class="agent-prompt orchestrator-prompt"
-          :value="openLaneOrchestratorOverride || openLaneOrchestratorTemplate"
+          :value="laneMarkdownDraft.orchestrator.prompt"
           spellcheck="false"
           @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
           @change="storeTypedPrompts"

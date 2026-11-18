@@ -51,6 +51,7 @@ import {
   UNASSIGNED_LANE_ID,
   addChecklistItem,
   ticketIdsToMove,
+  carriedTicketIds,
   ticketsToRun,
   agentForTicket,
   availableAgents,
@@ -928,6 +929,32 @@ describe('ticketIdsToMove', () => {
   it('moves nothing when every carried ticket is already there', () => {
     expect(ticketIdsToMove('a', new Set(['a', 'c']), tickets, 'idea')).toEqual([])
     expect(ticketIdsToMove('d', new Set(), tickets, 'dev')).toEqual([])
+  })
+})
+
+describe('carriedTicketIds', () => {
+  const tickets = [
+    { id: 'a', laneId: 'idea' },
+    { id: 'b', laneId: 'prd' },
+    { id: 'c', laneId: 'idea' },
+    { id: 'd', laneId: 'dev' }
+  ] as Ticket[]
+
+  it('carries only the dragged card when it is unchecked', () => {
+    expect(carriedTicketIds('a', new Set(['b', 'c']), tickets)).toEqual(['a'])
+  })
+
+  it('carries every checked visible ticket when the dragged card is checked', () => {
+    expect(carriedTicketIds('a', new Set(['a', 'b', 'c']), tickets)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('leaves out a checked ticket that is not visible', () => {
+    const visibleTickets = tickets.filter((ticket) => ticket.id !== 'b')
+    expect(carriedTicketIds('a', new Set(['a', 'b']), visibleTickets)).toEqual(['a'])
+  })
+
+  it('keeps tickets in every lane, since the target is unknown at dragstart', () => {
+    expect(carriedTicketIds('a', new Set(['a', 'c', 'd']), tickets)).toEqual(['a', 'c', 'd'])
   })
 })
 

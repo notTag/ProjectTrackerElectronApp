@@ -296,6 +296,7 @@ From left to right:
   - Dragging an unchecked card moves only that card.
   - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
   - Moved tickets stay checked.
+  - **Stack ghost** (2+ tickets carried): the drag image is the dragged card with up to 2 offset card edges behind it (3 layers max) and an accent count badge with the carried count. The other carried cards fade and shrink in place (`.ticket-carried`) until `dragend`. The count is every checked visible ticket, including ones already in the drop lane (`carriedTicketIds` in `projectTypes.ts`, `startTicketDrag` in `BoardView.vue`). Reduce Motion drops the fade/shrink transition; the ghost and dimming stay. An unchecked card, or the only checked one, uses the browser's default drag image.
 - The title always shows. These fields show only when switched on in Display:
   - **#number**
   - **Description** preview
@@ -328,6 +329,7 @@ From left to right:
   ## Out of scope
   ```
   A template you didn't change is thrown away on save, so the ticket is saved with an empty description.
+- **Images**: the same dropzone as the Ticket modal (3.8): click to pick, drop files, or Cmd+V. Images wait as previews (blob URLs) and are saved to the new ticket's attachments folder after Save; × removes one before saving. If a save fails, the new ticket opens so its image error shows.
 - **Cancel** or **Save**. Save is disabled while the title is blank.
 - The ticket gets the next number on the board (highest + 1). Numbers stay fixed after that.
 
@@ -374,7 +376,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Images**
 
-- Attach png/jpg/jpeg/gif/webp images: **Add image** (native picker, multi-select), Cmd+V anywhere in the ticket panel (text pastes still go to the field), or drop files onto the section. 20 MB cap per image.
+- Attach png/jpg/jpeg/gif/webp images: the full-width **Drag or paste images here +** dropzone (click opens the native picker, multi-select; thumbnails list below it), Cmd+V anywhere in the ticket panel (text pastes still go to the field), or drop files onto the section. 20 MB cap per image.
 - Each image is copied to `<userData>/attachments/<ticketId>/<uuid>.<ext>`, so moving or deleting the original doesn't break the ticket. Paths are stored as `images_json` on the ticket row.
 - Thumbnails load through the `ticket-image:` scheme, which only serves files inside the attachments folder. Clicking one opens it in the OS viewer; **×** removes it and deletes the copy.
 - Passed to agents as an `Images (open each path to view it):` block of absolute paths, only when the ticket has images. Deleting the ticket deletes its attachments folder.
@@ -427,7 +429,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
-- **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before, so the box never re-renders under the cursor. Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.
+- **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before. The box is bound to the typed draft, so autosave status, a first-save path update or an outside DB refresh never puts old text back mid-typing (#92). Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.
   - File field empty: writes `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. A path the app generated (an old `agent-context/*-AgentContext.md`, or a lane folder under the lane's old name) is re-derived on the next save, so a lane's prompts always share one folder; the old file is left in place. Any other path you typed is kept.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project. Changing the path saves the current prompt there, unless the prompt is empty.
   - The file mirrors the box: each save replaces it, and clearing the prompt leaves it blank. A file holding anything other than what this lane last wrote (a hand-written guide, an edit made in an editor) is never overwritten: the save fails with "<path> has other content…". Pasting the file's text into the box (or pointing the field at another file) lets autosave carry on.
