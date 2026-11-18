@@ -1249,8 +1249,8 @@ export const completionMoves = (
   const previousTicketById = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket]))
   const isJustCompleted = (ticket: Ticket, currentLane: SwimLane | undefined) => {
     const previousTicket = previousTicketById.get(ticket.id)
-    const isMerged = isPullRequestSettled(ticket.pullRequestState)
     if (currentLane?.waitsForPullRequestMerge) {
+      const isMerged = isPullRequestSettled(ticket.pullRequestState)
       if (!isMerged) return false
       const pullRequestJustMerged = previousTicket !== undefined && !isPullRequestSettled(previousTicket.pullRequestState)
       if (pullRequestJustMerged) return true
