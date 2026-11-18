@@ -178,6 +178,7 @@ Either of these sets works instead (both `dist` and `release` accept them):
 | `bun run start:prod` | Open the packaged `Project Tracker.app` from `dist/` |
 | `bun run dist` | Build a signed, notarized `.dmg` and `.zip` in `dist/` |
 | `bun run release` | Build and upload a GitHub release for automatic updates |
+| `bun run set-version <version> <ticket>...` | Stamp one SemVer on tickets (`12 #14 15,16`) in this repo's board; `--project <path>` / `--db <path>` override the defaults |
 
 ## Project structure
 
