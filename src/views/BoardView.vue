@@ -130,6 +130,10 @@ const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
 const imageError = ref<string | null>(null)
+// An image error belongs to the ticket it happened on, not the next one opened.
+watch(openTicketId, (ticketId) => {
+  if (!ticketId) imageError.value = null
+})
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -617,6 +621,7 @@ const hideAddZoneLater = () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
   clearTimeout(addZoneHideTimer)
+  ticketDraft.value?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
 
 const startTicketDraft = (laneId = board.value.lanes[0]?.id ?? UNASSIGNED_LANE_ID) => {
@@ -643,7 +648,11 @@ const pasteDraftImages = (event: ClipboardEvent) => {
   stageDraftImages(files)
 }
 
-const unstageDraftImage = (index: number) => {
+const dropDraftImages = (event: DragEvent) => {
+  stageDraftImages(imageFilesOf(event.dataTransfer))
+}
+
+const unstageDraftImage =(index: number) => {
   const removed = ticketDraft.value?.images.splice(index, 1) ?? []
   removed.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 }
@@ -681,7 +690,10 @@ const saveTicketDraft = async () => {
     completion
   )
   const stagedFiles = draft.images.map((stagedImage) => stagedImage.file)
-  if (stagedFiles.length) await saveImageFiles({ id: ticketId }, stagedFiles)
+  if (!ticketId || !stagedFiles.length) return
+  await saveImageFiles({ id: ticketId }, stagedFiles)
+  // The draft modal is gone, so show an upload failure on the ticket it belongs to.
+  if (imageError.value) openTicketId.value = ticketId
 }
 
 const saveLaneDraft = async () => {
@@ -1682,7 +1694,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <textarea v-model="ticketDraft.description" placeholder="Details, acceptance criteria, links..." />
       </label>
 
-      <section class="ticket-images" @dragover.prevent @drop.prevent="stageDraftImages(imageFilesOf($event.dataTransfer))">
+      <section class="ticket-images" @dragover.prevent @drop.prevent="dropDraftImages">
         <p class="eyebrow">Images</p>
         <input
           ref="draftImageInput"
@@ -1693,7 +1705,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="pickDraftImages($event.target as HTMLInputElement)"
         />
         <button type="button" class="image-dropzone" @click="draftImageInput?.click()">
-          <span>Drag Images here</span>
+          <span>Drag or paste images here</span>
           <span class="image-dropzone-plus" aria-hidden="true">+</span>
         </button>
         <ul v-if="ticketDraft.images.length">
@@ -1902,7 +1914,7 @@ const runTicketAgent = (ticket: Ticket) => {
       >
         <p class="eyebrow">Images</p>
         <button type="button" class="image-dropzone" @click="pickTicketImages(openTicket)">
-          <span>Drag Images here</span>
+          <span>Drag or paste images here</span>
           <span class="image-dropzone-plus" aria-hidden="true">+</span>
         </button>
         <ul v-if="openTicket.images?.length">
