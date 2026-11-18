@@ -42,6 +42,7 @@ import {
   isWebUrl,
   moveLaneInBoard,
   orchestratorPollActive,
+  steppedOrchestratorPoll,
   orchestratorPollMinutes,
   parseLabels,
   pullRequestLabel,
@@ -870,6 +871,11 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
     return
   }
   editLane(lane, { orchestratorPollMinutes: minutes })
+}
+
+const stepOrchestratorPoll = (lane: SwimLane, step: -1 | 1) => {
+  const patch = steppedOrchestratorPoll(lane, step)
+  if (patch) editLane(lane, patch)
 }
 
 const orchestratorPollTooltip = (lane: SwimLane): string => {
@@ -2241,26 +2247,40 @@ const runTicketAgent = (ticket: Ticket) => {
         </span>
       </label>
 
+      <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+           clicking a wrapping caption would fire − and switch the lane off. -->
       <div class="orchestrator-poll-row">
-        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
-          <input
-            type="checkbox"
-            aria-label="Orchestrator poll active"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-        </label>
-        <label>
-          Orchestrator poll (minutes)
-          <input
-            type="number"
-            min="1"
-            step="1"
-            :value="orchestratorPollMinutes(openLane)"
+        <label id="orchestrator-poll-caption" for="orchestrator-poll-minutes">Orchestrator poll (minutes)</label>
+        <div
+          class="poll-stepper"
+          role="group"
+          aria-labelledby="orchestrator-poll-caption"
+          :title="orchestratorPollTooltip(openLane)"
+        >
+          <button
+            type="button"
+            aria-label="Decrease orchestrator poll"
             :disabled="!orchestratorPollActive(openLane)"
-            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
-          />
-        </label>
+            @click="stepOrchestratorPoll(openLane, -1)"
+          >−</button>
+          <span class="poll-stepper-value" aria-live="polite">
+            <input
+              v-if="orchestratorPollActive(openLane)"
+              id="orchestrator-poll-minutes"
+              type="number"
+              min="1"
+              step="1"
+              :value="orchestratorPollMinutes(openLane)"
+              @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+            />
+            <span v-else aria-label="Orchestrator off">∞</span>
+          </span>
+          <button
+            type="button"
+            aria-label="Increase orchestrator poll"
+            @click="stepOrchestratorPoll(openLane, 1)"
+          >+</button>
+        </div>
       </div>
 
       <section class="ticket-agent">
