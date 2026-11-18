@@ -412,7 +412,7 @@ const renderMarkdown = (markdown: string | null) => {
 
 <template>
   <header class="titlebar">
-    <span class="titlebar-title">Project Tracker</span>
+    <span class="titlebar-title" title="Project Tracker">Project Tracker</span>
     <div class="titlebar-actions">
       <OfflineBadge />
       <MetricsPanel :project-paths="metricsProjectPaths" scope="dashboard" />
