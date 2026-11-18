@@ -133,9 +133,11 @@ const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
 const imageError = ref<string | null>(null)
+const modalFieldsMenuOpen = ref(false)
 // An image error belongs to the ticket it happened on, not the next one opened.
 watch(openTicketId, (ticketId) => {
   if (!ticketId) imageError.value = null
+  modalFieldsMenuOpen.value = false
 })
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
@@ -177,7 +179,6 @@ const hidesModalField = (field: TicketModalField) => preferences.value.hiddenMod
 const toggleModalFieldVisibility = (field: TicketModalField) =>
   savePreferences(toggleModalField(preferences.value, field))
 
-const modalFieldsMenuOpen = ref(false)
 const modalFieldsMenuRef = ref<HTMLElement | null>(null)
 const closeModalFieldsMenuOnOutsideClick = (event: PointerEvent) => {
   if (modalFieldsMenuRef.value?.contains(event.target as Node)) return
@@ -556,7 +557,6 @@ const closeModals = () => {
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
-  modalFieldsMenuOpen.value = false
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
@@ -1964,7 +1964,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </section>
 
       <section
-        v-if="!hidesModalField('images')"
+        v-if="!hidesModalField('images') || imageError"
         class="ticket-images"
         @dragover.prevent
         @drop.prevent="dropTicketImages(openTicket, $event)"

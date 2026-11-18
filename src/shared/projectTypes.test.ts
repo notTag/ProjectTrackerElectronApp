@@ -664,9 +664,9 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
   })
 
-  // Hiding modal fields is display-only: the prompt takes no preferences, so a
-  // hidden field with a value still reaches the agent and an empty one never does.
-  it('sends filled fields and drops empty ones, independent of hidden modal fields', () => {
+  // Hiding modal fields is display-only: ticketAgentPrompt takes no preferences, so
+  // a hidden field with a value still reaches the agent and an empty one never does.
+  it('sends filled fields and drops empty ones', () => {
     const filledTicket = ticket({ description: 'Make it pop', labels: ['ui'], branchName: 'feat/pop', version: undefined })
     const prompt = ticketAgentPrompt(filledTicket, lane())
     expect(prompt).toContain('Make it pop')
