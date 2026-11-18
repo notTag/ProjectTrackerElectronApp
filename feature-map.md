@@ -18,6 +18,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 
 - Opens at 1280×840 and can't be made smaller than 960×680.
 - The native title bar is hidden. Each view draws its own themed title strip, and the macOS window buttons (close, minimize, zoom) sit inside it at (12, 17).
+- Narrow windows: title-strip and filter-bar labels never wrap. The title strip's name gives up space first: it shrinks with an ellipsis, and the full name shows in its tooltip. Below 1180px the title-strip buttons use tighter padding. The board's filter bar drops controls to a second row instead of squeezing them. (`.titlebar-title`, `.titlebar-actions`, `.board-filters` in `src/styles.css`)
 - Hardware acceleration is off. Some Apple Silicon GPUs scrambled the text in packaged builds.
 - Clicking the Dock icon reopens the window if every window was closed. On macOS, closing all windows doesn't quit the app.
 - The Dock icon and the About panel icon come from `assets/app-icon.png`.
