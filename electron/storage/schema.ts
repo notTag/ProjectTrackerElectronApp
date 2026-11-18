@@ -2,9 +2,11 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 // First version with closing lanes; opening an older file seeds and backfills them once.
 export const CLOSING_LANES_SCHEMA_VERSION = 5
+// First version with lanes that wait for PR merge; older files seed in-pr once.
+export const WAITING_LANES_SCHEMA_VERSION = 6
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   -- it is flagged here rather than living in the ordered lane list.
   is_unassigned INTEGER NOT NULL DEFAULT 0,
   agent_sets_version INTEGER NOT NULL DEFAULT 0,
+  waits_for_pull_request_merge INTEGER NOT NULL DEFAULT 0,
   orchestrator_poll_minutes INTEGER NOT NULL DEFAULT 2,
   orchestrator_poll_active INTEGER NOT NULL DEFAULT 1,
   auto_run_model TEXT NOT NULL DEFAULT '',
@@ -177,7 +180,8 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'orchestrator_poll_minutes', definition: 'INTEGER NOT NULL DEFAULT 2' },
   { table: 'swim_lanes', column: 'orchestrator_poll_active', definition: 'INTEGER NOT NULL DEFAULT 1' },
   { table: 'swim_lanes', column: 'orchestrator_file_path', definition: "TEXT NOT NULL DEFAULT ''" },
-  { table: 'tickets', column: 'images_json', definition: 'TEXT' }
+  { table: 'tickets', column: 'images_json', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by
