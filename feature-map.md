@@ -458,6 +458,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - Note: Terminal needs Accessibility permission to open tabs.
 - **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
 - **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
+- **Wait for PR merge before moving on** checkbox. When on, an armed ticket here moves to its Next Lane when its PR turns merged, not when its checklist completes or a ▶ Run succeeds. A ticket with no PR, or an open one, stays put and stays armed. A ticket whose PR is already merged moves on completion as usual. On for In PR (`in-pr`) on new boards and, once, on existing boards (`swim_lanes.waits_for_pull_request_merge`, `completionMoves` in `projectTypes.ts`). The move happens when the app learns of the merge: the board-open PR sync, or an outside write to `pull_request_state`.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
 - **Delete lane** moves the lane's tickets to No status; no ticket is deleted. No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
 - **Done** closes the modal.

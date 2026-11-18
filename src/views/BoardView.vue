@@ -2359,6 +2359,15 @@ const runTicketAgent = (ticket: Ticket) => {
         <label class="checkbox-label">
           <input
             type="checkbox"
+            :checked="Boolean(openLane.waitsForPullRequestMerge)"
+            @change="editLane(openLane, { waitsForPullRequestMerge: ($event.target as HTMLInputElement).checked })"
+          />
+          Wait for PR merge before moving on
+        </label>
+        <span class="field-hint">Armed tickets here move to the Next Lane when their PR merges, not when their checklist completes.</span>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
             :checked="Boolean(openLane.agentSetsVersion)"
             @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
           />
