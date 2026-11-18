@@ -12,6 +12,7 @@ import {
   agentResumeCommand,
   autoRunUsesWorktrees,
   boardLaneById,
+  currentLaneOf,
   canResume,
   isFullAuto,
   newAgentSessionId,
@@ -1142,7 +1143,7 @@ export const useProjectsStore = defineStore('projects', {
 
     // Asks each terminal once for all its candidate tabs. A terminal that
     // can't answer leaves its runs to the stale threshold.
-    async tabLivenessFor(candidates: Ticket[]): Promise<Record<string, TabLiveness>> {
+    async tabLivenessFor(board: ProjectBoard, candidates: Ticket[]): Promise<Record<string, TabLiveness>> {
       const terminalCandidates = candidates.filter((ticket) => ticket.agentRun?.mode === 'terminal')
       const ticketsByTerminal = new Map<string, Ticket[]>()
       for (const ticket of terminalCandidates) {
@@ -1154,7 +1155,7 @@ export const useProjectsStore = defineStore('projects', {
       const livenessByTicketId: Record<string, TabLiveness> = {}
       for (const [terminalId, tickets] of ticketsByTerminal) {
         // The title the tab opened with: a ticket renamed since would match nothing.
-        const titles = tickets.map((ticket) => ticket.agentRun?.tabTitle ?? ticketTabTitle(ticket))
+        const titles = tickets.map((ticket) => ticket.agentRun?.tabTitle ?? ticketTabTitle(ticket, currentLaneOf(board, ticket)))
         const liveness = await projectTrackerApi
           .terminalTabsAlive(terminalId, titles)
           .catch((): TabLiveness[] => titles.map(() => 'unknown'))
@@ -1175,7 +1176,7 @@ export const useProjectsStore = defineStore('projects', {
         const board = getBoard(this.state, projectPath)
         const candidates = runningAgentRuns(board.tickets).filter((ticket) => !this.agentRunning[ticket.id])
         if (candidates.length === 0) continue
-        const livenessByTicketId = await this.tabLivenessFor(candidates)
+        const livenessByTicketId = await this.tabLivenessFor(board, candidates)
         const toInterrupt = runsToInterrupt(candidates, livenessByTicketId, Date.now(), startedAt)
         if (toInterrupt.length === 0) continue
 
@@ -1211,7 +1212,8 @@ export const useProjectsStore = defineStore('projects', {
       try {
         const command = agentResumeCommand(agent, run, RESUME_PROMPT)
         const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
-        const tabTitle = ticketTabTitle(ticket)
+        const ticketLane = currentLaneOf(getBoard(this.state, projectPath), ticket)
+        const tabTitle = ticketTabTitle(ticket, ticketLane)
         const ranInTab = await this.openIn(projectPath, terminal.id, command, tabTitle)
         if (!ranInTab) return
         const startedAt = new Date().toISOString()

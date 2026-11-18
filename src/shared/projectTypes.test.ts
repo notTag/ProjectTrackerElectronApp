@@ -59,6 +59,9 @@ import {
   ticketAgentPrompt,
   ticketBranchName,
   ticketTabTitle,
+  ticketSessionName,
+  laneTitleToken,
+  currentLaneOf,
   ticketShellCommand,
   type SwimLane,
   type Ticket,
@@ -574,7 +577,7 @@ describe('ticketShellCommand', () => {
   it('leads with the lane prompt, then the ticket', () => {
     const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Ship small diffs.' }))
     expect(command).toBe(
-      "claude --name 'Ticket #7' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
+      "claude --name '7-In-Development' 'Ship small diffs.\n\nTicket #7: Add the thing\nStatus: In Development\n\nMake it work.'"
     )
   })
 
@@ -611,7 +614,7 @@ describe('ticketShellCommand', () => {
 
   it('omits an empty lane prompt and description rather than leaving blank gaps', () => {
     const command = ticketShellCommand(ticket({ description: '   ' }), lane())
-    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development'")
+    expect(command).toBe("claude --name '7-In-Development' 'Ticket #7: Add the thing\nStatus: In Development'")
   })
 
   it('never starts the prompt with "-", which a CLI would parse as an option', () => {
@@ -723,7 +726,7 @@ describe('ticketShellCommand', () => {
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
     const command = ticketShellCommand(ticket({ description: "don't break" }), lane())
-    expect(command).toBe("claude --name 'Ticket #7' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
+    expect(command).toBe("claude --name '7-In-Development' 'Ticket #7: Add the thing\nStatus: In Development\n\ndon'\\''t break'")
   })
   it("uses a ticket's own branch, else a short one from its number and first title words", () => {
     expect(ticketBranchName(ticket({ branchName: 'feat/mine' }))).toBe('feat/mine')
@@ -959,25 +962,67 @@ describe('carriedTicketIds', () => {
 })
 
 describe('ticketTabTitle', () => {
-  it('leads with the ticket number', () => {
-    expect(ticketTabTitle({ number: 33, title: 'Short title' })).toBe('#33 Short title')
+  const prd = { id: 'prd', name: 'PRD' }
+
+  it('leads with the ticket number and lane', () => {
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, prd)).toBe('33-PRD-Short title')
   })
 
-  it('cuts a long title to 40 code points plus an ellipsis', () => {
-    const title = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' })
-    expect(title).toBe('#33 Auto-run should attempt to set a tit…')
-    expect(Array.from(title)).toHaveLength(41)
+  it('cuts only the title, keeping the whole within 40 code points plus an ellipsis', () => {
+    const title = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, prd)
+    expect(title).toBe('33-PRD-Auto-run should attempt to set a…')
+    expect(Array.from(title).length).toBeLessThanOrEqual(41)
   })
 
   it('never splits an emoji at the cut', () => {
-    const title = ticketTabTitle({ number: 1, title: `${'a'.repeat(37)}🚀🚀` })
-    expect(title).toBe(`#1 ${'a'.repeat(37)}…`)
-    const atCut = ticketTabTitle({ number: 1, title: `${'a'.repeat(36)}🚀tail` })
-    expect(atCut).toBe(`#1 ${'a'.repeat(36)}🚀…`)
+    const title = ticketTabTitle({ number: 1, title: `${'a'.repeat(34)}🚀🚀` }, prd)
+    expect(title).toBe(`1-PRD-${'a'.repeat(34)}…`)
+    const atCut = ticketTabTitle({ number: 1, title: `${'a'.repeat(33)}🚀tail` }, prd)
+    expect(atCut).toBe(`1-PRD-${'a'.repeat(33)}🚀…`)
   })
 
   it('strips newlines and terminal control characters', () => {
-    expect(ticketTabTitle({ number: 7, title: 'one\n two\u001b]0;pwn\u0007\tend' })).toBe('#7 one two ]0;pwn end')
+    expect(ticketTabTitle({ number: 7, title: 'one\n two\u001b]0;pwn\u0007\tend' }, prd)).toBe('7-PRD-one two ]0;pwn end')
+  })
+
+  it('dashes a multi-word lane name and keeps its case', () => {
+    expect(ticketTabTitle({ number: 5, title: 'Fix' }, { id: 'in-pr', name: 'Merge  Request' })).toBe('5-Merge-Request-Fix')
+  })
+
+  it('names the unassigned lane Unassigned whatever it is called', () => {
+    expect(ticketTabTitle({ number: 5, title: 'Fix' }, { id: UNASSIGNED_LANE_ID, name: 'No status' })).toBe('5-Unassigned-Fix')
+  })
+
+  it('has no trailing dash for an empty title', () => {
+    expect(ticketTabTitle({ number: 5, title: ' \n ' }, prd)).toBe('5-PRD')
+  })
+
+  it('drops the title when the prefix fills the budget', () => {
+    expect(ticketTabTitle({ number: 5, title: 'Fix' }, { id: 'x', name: 'L'.repeat(40) })).toBe(`5-${'L'.repeat(40)}`)
+  })
+})
+
+describe('laneTitleToken', () => {
+  it('sanitizes control characters and tabs in a lane name', () => {
+    expect(laneTitleToken({ id: 'dev', name: '\tIn\u001b Dev\n' })).toBe('In-Dev')
+  })
+
+  it('falls back to the lane id for an empty name', () => {
+    expect(laneTitleToken({ id: 'dev', name: ' \u0007 ' })).toBe('dev')
+  })
+})
+
+describe('ticketSessionName', () => {
+  it('is the ticket number and lane', () => {
+    expect(ticketSessionName({ number: 99 }, { id: 'prd', name: 'PRD' })).toBe('99-PRD')
+  })
+})
+
+describe('currentLaneOf', () => {
+  it('treats a lane id naming no lane as unassigned', () => {
+    const board = { lanes: [{ id: 'prd', name: 'PRD' }], tickets: [] } as unknown as ProjectBoard
+    expect(currentLaneOf(board, { laneId: 'prd' }).name).toBe('PRD')
+    expect(currentLaneOf(board, { laneId: 'gone' }).id).toBe(UNASSIGNED_LANE_ID)
   })
 })
 
@@ -1248,7 +1293,7 @@ describe('full auto', () => {
     expect(launch.branchName).toBe('t7-existing')
     expect(launch.command).toContain('Branch: t7-existing')
     expect(launch.command).not.toContain('Worktree:')
-    expect(launch.title).toBe('#7 Add the thing')
+    expect(launch.title).toBe('7-DEV-Add the thing')
 
     const inPlace = buildAutoRunLaunch(placedTicket, lane('dev'), DEFAULT_AGENT, {}, false)
     expect(inPlace.launch.command).toContain('Worktree: /code/.worktrees/t7')
@@ -1413,7 +1458,7 @@ describe('Auto Run orchestrator', () => {
     it('fills known tokens with launch data and leaves unknown ones', () => {
       const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
       const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
-      expect(filled).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
+      expect(filled).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
       expect(filled).toContain('IN (12, 13)')
       expect(filled).toContain('- done — Done — agent work: no')
       expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
@@ -1445,8 +1490,8 @@ describe('Auto Run orchestrator', () => {
     const prompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
 
     it('lists every ticket with its title, tab title and branch', () => {
-      expect(prompt).toContain('- #12 First thing — tab "#12 First thing" — branch t12-first-thing')
-      expect(prompt).toContain('- #13 Second thing — tab "#13 Second thing" — branch t13-second-thing')
+      expect(prompt).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
+      expect(prompt).toContain('- #13 Second thing — tab "13-In-Development-Second thing" — branch t13-second-thing')
     })
 
     it('gives a read-only DB query scoped to the project, and forbids writes', () => {

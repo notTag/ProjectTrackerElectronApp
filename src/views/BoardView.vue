@@ -1278,7 +1278,7 @@ const confirmAutoRunLane = () => {
 
 const openTicketInShell = (ticket: Ticket) => {
   const command = ticketCommand(ticket)
-  const tabTitle = ticketTabTitle(ticket)
+  const tabTitle = ticketTabTitle(ticket, laneOfTicket(ticket))
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 

@@ -482,8 +482,9 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
 - Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
-- Tab titles are `#N <title>` (`ticketTabTitle`), the same for ⌁ Run in. The orchestrator tab matches tickets by that `#N ` prefix.
-- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name 'Ticket #N'` (`ticketSessionName`).
+- Tab titles are `<N>-<Lane>-<title>` (`ticketTabTitle`), e.g. `99-Merge-Request-Fix the thing`, the same for ⌁ Run in, Open in shell and Resume. The lane is the display name, dashed (`laneTitleToken`); No status reads `Unassigned`. Only the title part is cut, to 40 code points + `…`.
+- Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given.
+- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
 - How each terminal does it:
   - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
