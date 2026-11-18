@@ -4,3 +4,5 @@ import { ref } from 'vue'
 // switches, and the chosen width should survive that.
 // ponytail: app-session only; move to settings if it must survive restart.
 export const ticketModalExpanded = ref(false)
+// Separate from the ticket modal so expanding one modal type never resizes the other.
+export const laneModalExpanded = ref(false)
