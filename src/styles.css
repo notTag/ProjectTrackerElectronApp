@@ -2098,3 +2098,9 @@ span.ticket-image-thumb {
 .orchestrator-poll-row .checkbox-label {
   min-height: 40px;
 }
+
+/* Outranks `.ticket-modal label`, which stacks label contents in a column. */
+.ticket-modal .filter-popover label {
+  flex-direction: row;
+  font-size: 0.9rem;
+}
