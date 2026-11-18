@@ -1091,6 +1091,52 @@ describe('full auto', () => {
       expect(sameLane.board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: false })
     })
 
+    describe('in a lane that waits for PR merge', () => {
+      const waitingMovesBetween = (before: Ticket, after: Ticket, alsoCompletedIds: string[] = []) =>
+        completionMoves(
+          boardWith([before], { waitsForPullRequestMerge: true }),
+          boardWith([after], { waitsForPullRequestMerge: true }),
+          alsoCompletedIds
+        )
+
+      it('holds a completed ticket armed while its PR is open', () => {
+        const open = { pullRequestState: 'open' as const }
+        const { board, moves } = waitingMovesBetween(armed(open), completed(open), ['ticket-1'])
+        expect(moves).toEqual([])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: true })
+      })
+
+      it('moves and disarms once the PR merges, whatever the checklist says', () => {
+        const before = armed({ pullRequestState: 'open' })
+        const { board, moves } = waitingMovesBetween(before, armed({ pullRequestState: 'merged' }))
+        expect(moves.map((move) => move.toLane.id)).toEqual(['dev'])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'dev', moveOnComplete: false })
+      })
+
+      it('holds a ticket with no PR yet', () => {
+        const { board, moves } = waitingMovesBetween(armed(), completed())
+        expect(moves).toEqual([])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: true })
+      })
+
+      it('moves at once when the PR was already merged and the checklist completes', () => {
+        const merged = { pullRequestState: 'merged' as const }
+        expect(waitingMovesBetween(armed(merged), completed(merged)).moves).toHaveLength(1)
+      })
+
+      it('leaves an unarmed ticket alone when its PR merges', () => {
+        const before = armed({ moveOnComplete: false, pullRequestState: 'open' })
+        const after = armed({ moveOnComplete: false, pullRequestState: 'merged' })
+        expect(waitingMovesBetween(before, after).moves).toEqual([])
+      })
+
+      it('ignores PR state in a lane without the flag', () => {
+        const open = { pullRequestState: 'open' as const }
+        expect(movesBetween(armed(open), completed(open)).moves).toHaveLength(1)
+        expect(movesBetween(armed(open), armed({ pullRequestState: 'merged' })).moves).toEqual([])
+      })
+    })
+
     it('returns the next board itself when nothing completed', () => {
       const after = boardWith([armed({ title: 'Renamed' })])
       expect(completionMoves(boardWith([armed()]), after).board).toBe(after)

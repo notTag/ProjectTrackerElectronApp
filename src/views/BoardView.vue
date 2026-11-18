@@ -2247,6 +2247,15 @@ const runTicketAgent = (ticket: Ticket) => {
           />
           Counts as closed: tickets entering this lane count as closed in Metrics
         </label>
+        <label class="checkbox-label">
+          <input
+            type="checkbox"
+            :checked="Boolean(openLane.waitsForPullRequestMerge)"
+            @change="editLane(openLane, { waitsForPullRequestMerge: ($event.target as HTMLInputElement).checked })"
+          />
+          Wait for PR merge before moving on
+        </label>
+        <span class="field-hint">Armed tickets here move to the Next Lane when their PR merges, not when their checklist completes.</span>
         <span class="field-hint">
           The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it
           waits until focus leaves it.
