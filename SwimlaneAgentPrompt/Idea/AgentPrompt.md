@@ -1,4 +1,5 @@
+- When this agent starts, send a message to the orchestrator agent that you have begun your work on ticket N. 
 - Fill out the missing details for the ticket in the project tracker. 
 - If there are no open questions move the ticket, update the ticket status to 'PRD'. 
 - If a branch/worktree has been made, make sure that is noted in the ticket. 
-- As soon as you are done, send a message to the Orchestrator agent letting them know that you have completed your work. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell them questions are open, leave the tab open, and stop with the open questions as the last thing on screen. 
+- When this agent ends, send a message to the Orchestrator agent letting them know that you have completed your work. Send your ticket number, current ticket status and next ticket status. Say your session and tab can be closed only if your final footer shows `Open Questions: 0`; otherwise tell the orchestrator agent the questions that are open, leave the tab open, and stop with the open questions as the last thing on screen. 
