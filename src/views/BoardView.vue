@@ -1041,6 +1041,12 @@ watch(openLaneId, () => {
   flushMarkdownSaves()
   commitTypedPrompts()
   laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
+  // The source watches only fire on a changed value, so two lanes storing the
+  // same prompt would otherwise hand one lane's typed text to the next.
+  for (const kind of ['agent', 'orchestrator'] as const) {
+    const source = laneMarkdownSources[kind]
+    laneMarkdownDraft.value[kind] = { prompt: source.prompt(), filePath: source.filePath() }
+  }
 })
 onBeforeUnmount(() => {
   flushMarkdownSaves()
@@ -1072,8 +1078,8 @@ const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind, prompt: 
 // show another lane.
 const scheduleLaneMarkdownSave = (lane: SwimLane, kind: LaneMarkdownKind) => {
   const savedKey = `${lane.id}:${kind}`
-  // Before the first save the file should hold the stored prompt, which the box
-  // still shows until blur commits the new text.
+  // Before the first save the file should hold the stored prompt: the lane
+  // keeps it until blur commits the new text.
   if (!lastSavedMarkdown.has(savedKey)) lastSavedMarkdown.set(savedKey, laneMarkdownSources[kind].prompt())
   const { prompt, filePath } = laneMarkdownDraft.value[kind]
   const run = () => {
