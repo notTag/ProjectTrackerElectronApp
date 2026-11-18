@@ -585,6 +585,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+- `bun run set-version <version> <ticket>...` (`scripts/set-ticket-version.mjs`) stamps one SemVer on many tickets in the tracker DB. Tickets as `12 #14 15,16`. Project defaults to the main checkout of the cwd repo (works from worktrees); `--project` / `--db` override. All-or-nothing: any number missing for that project → error, nothing written. Prints `#N title: from → to` per ticket. The app picks the change up live.
 - CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`
