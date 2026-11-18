@@ -368,6 +368,14 @@ export interface Ticket {
   // move lands, so the ticket then inherits; moveOnComplete is what arms it.
   moveToLaneId?: string
   moveOnComplete?: boolean
+  // Free text, one rule per line or bullet, confirmed by a person or an agent.
+  // With rules, the ticket completes only once they pass AND the checklist does.
+  moveRules?: string
+  // The lane the rules were confirmed in. They pass only while the ticket still
+  // sits there, so any move resets them without clearing code (like agentRunBadge).
+  moveRulesPassedLaneId?: string
+  // The lane where the ticket completed but nothing moved it (it was unarmed).
+  readyLaneId?: string
   // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
   version?: string
 }
@@ -635,6 +643,22 @@ const versionInstruction = (ticket: Ticket, context: TicketPromptContext): strin
   return [`${sentence} To set or change it:`, command].join('\n')
 }
 
+const moveRulesInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
+  const rules = moveRulesList(ticket)
+  if (rules.length === 0) return ''
+  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+  const confirmSql =
+    "UPDATE tickets SET move_rules_passed_lane_id = lane_id, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
+    `WHERE id = ${sqlStringLiteral(ticket.id)};`
+  const confirmCommand = `sqlite3 ${quotedDatabasePath} ${shellQuote(confirmSql)}`
+  return [
+    'Move rules: move this ticket only when every rule below and every checklist item pass.',
+    rulesToPrompt(rules),
+    'Once every rule passes, confirm it:',
+    confirmCommand
+  ].join('\n')
+}
+
 // The lane prompt comes first because it is the standing instruction for every
 // ticket in that column; the ticket is the specific work it applies to, and the
 // output location closes it out as the last thing the agent reads.
@@ -650,7 +674,17 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const output = outputTarget ? outputInstruction(outputTarget) : ''
   const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
+  const moveRules = moveRulesInstruction(ticket, context)
+  const sections = [
+    lanePrompt,
+    laneFileReference,
+    ticketMetadata,
+    ticketDescription,
+    moveRules,
+    versionSection,
+    fullAuto,
+    output
+  ]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
@@ -1218,9 +1252,32 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
   return handoffs
 }
 
-const isChecklistComplete = (ticket: Ticket | undefined): boolean => {
-  const checklist = ticket?.checklist ?? []
-  return checklist.length > 0 && checklist.every((item) => item.done)
+export const moveRulesList = (ticket: Pick<Ticket, 'moveRules'>): string[] => promptRules(ticket.moveRules ?? '')
+
+// Checklist AND rules. An empty checklist passes only alongside rules, so a
+// bare ticket keeps completing the old way: only a successful ▶ Run does it.
+export const moveGatePasses = (ticket: Ticket | undefined): boolean => {
+  if (!ticket) return false
+  const hasRules = moveRulesList(ticket).length > 0
+  const checklist = ticket.checklist ?? []
+  const allItemsDone = checklist.every((item) => item.done)
+  const checklistPasses = allItemsDone && (checklist.length > 0 || hasRules)
+  const rulesPass = !hasRules || ticket.moveRulesPassedLaneId === ticket.laneId
+  return checklistPasses && rulesPass
+}
+
+// The lane a ticket is ready to move to, for the card label. With rules the gate
+// is read live: the pass is lane-scoped so it can't go stale, and an agent's
+// sqlite3 confirm shows after the poll. Without rules the checklist alone stays
+// all-done after a move, so only a completion stamped in this lane counts.
+export const isReadyToMove = (ticket: Ticket, board: ProjectBoard): string | undefined => {
+  const currentLane = boardLaneById(board, ticket.laneId)
+  const targetLaneId = effectiveNextLaneId(ticket, currentLane)
+  if (!targetLaneId || targetLaneId === ticket.laneId) return undefined
+  if (!boardLaneById(board, targetLaneId)) return undefined
+  const hasRules = moveRulesList(ticket).length > 0
+  const ready = hasRules ? moveGatePasses(ticket) : ticket.readyLaneId === ticket.laneId
+  return ready ? targetLaneId : undefined
 }
 
 export interface CompletionMove {
@@ -1228,11 +1285,14 @@ export interface CompletionMove {
   toLane: SwimLane
 }
 
-// Completed = the checklist just went all-done, or the caller saw it finish
-// another way (a successful ▶ Run, passed in alsoCompletedIds). A transition,
-// not a state: a ticket already all-done in previousBoard stays put. Every
-// completed ticket with Next Lane armed is disarmed, even when it is already in
-// its target lane or that lane is gone, so a later re-completion never moves it.
+// Completed = the move gate (checklist + rules) just started passing, or the
+// caller saw it finish another way (a successful ▶ Run, passed in
+// alsoCompletedIds; with rules, only while they pass). A transition, not a
+// state: a ticket already passing in previousBoard stays put. An unarmed
+// completion is stamped as readyLaneId for the card label instead, and cleared
+// once the gate stops passing. Every completed ticket with Next Lane armed is
+// disarmed, even when it is already in its target lane or that lane is gone,
+// so a later re-completion never moves it.
 export const completionMoves = (
   previousBoard: ProjectBoard,
   nextBoard: ProjectBoard,
@@ -1241,14 +1301,24 @@ export const completionMoves = (
 ): { board: ProjectBoard; moves: CompletionMove[] } => {
   const previousTicketById = new Map(previousBoard.tickets.map((ticket) => [ticket.id, ticket]))
   const isJustCompleted = (ticket: Ticket) => {
-    const checklistJustCompleted =
-      isChecklistComplete(ticket) && !isChecklistComplete(previousTicketById.get(ticket.id))
-    return checklistJustCompleted || alsoCompletedIds.includes(ticket.id)
+    const gatePassedBefore = moveGatePasses(previousTicketById.get(ticket.id))
+    const gatePassesNow = moveGatePasses(ticket)
+    const gateJustPassed = gatePassesNow && !gatePassedBefore
+    const hasRules = moveRulesList(ticket).length > 0
+    const runCompleted = alsoCompletedIds.includes(ticket.id) && (!hasRules || gatePassesNow)
+    return gateJustPassed || runCompleted
   }
+  const gateJustFailed = (ticket: Ticket) =>
+    !moveGatePasses(ticket) && moveGatePasses(previousTicketById.get(ticket.id))
 
   const moves: CompletionMove[] = []
   const tickets = nextBoard.tickets.map((ticket) => {
-    if (!ticket.moveOnComplete || !isJustCompleted(ticket)) return ticket
+    if (ticket.readyLaneId && gateJustFailed(ticket)) return { ...ticket, readyLaneId: undefined, updatedAt: at }
+    if (!isJustCompleted(ticket)) return ticket
+    if (!ticket.moveOnComplete) {
+      if (ticket.readyLaneId === ticket.laneId) return ticket
+      return { ...ticket, readyLaneId: ticket.laneId, updatedAt: at }
+    }
     const currentLane = boardLaneById(nextBoard, ticket.laneId)
     const toLaneId = effectiveNextLaneId(ticket, currentLane)
     const toLane = toLaneId ? boardLaneById(nextBoard, toLaneId) : undefined
@@ -1257,12 +1327,18 @@ export const completionMoves = (
     if (!movesLane) return disarmed
     // The override is spent once it lands: from here the ticket inherits its new
     // lane's Next Lane instead of pointing at the lane it already sits in.
-    const moved = { ...disarmed, laneId: toLane.id, moveToLaneId: undefined }
+    const moved = {
+      ...disarmed,
+      laneId: toLane.id,
+      moveToLaneId: undefined,
+      moveRulesPassedLaneId: undefined,
+      readyLaneId: undefined
+    }
     moves.push({ ticket: moved, toLane })
     return moved
   })
-  const anyDisarmed = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
-  return { board: anyDisarmed ? { ...nextBoard, tickets } : nextBoard, moves }
+  const anyChanged = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
+  return { board: anyChanged ? { ...nextBoard, tickets } : nextBoard, moves }
 }
 
 export interface GithubIssue {

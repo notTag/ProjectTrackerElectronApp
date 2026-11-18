@@ -204,6 +204,25 @@ describe('StateRepository', () => {
     expect(reopenedTicket.pullRequestMergedAt).toBeUndefined()
   })
 
+  it('adds the move rules columns to a database created before they existed, and round-trips them', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_rules')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN move_rules_passed_lane_id')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN ready_lane_id')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const migratedTicket = state.boards![projectPath].tickets[0]
+    expect(migratedTicket).toMatchObject({ moveRules: undefined, moveRulesPassedLaneId: undefined, readyLaneId: undefined })
+    const moveFields = { moveRules: '- PR merged', moveRulesPassedLaneId: 'prd', readyLaneId: 'prd' }
+    Object.assign(migratedTicket, moveFields)
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0]).toMatchObject(moveFields)
+  })
+
   it('adds the version columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))

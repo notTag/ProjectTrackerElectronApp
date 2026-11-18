@@ -53,6 +53,8 @@ import {
   getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
+  isReadyToMove,
+  moveRulesList,
   boardLaneById,
   hasUnseenAgentResult,
   ticketAgentPrompt,
@@ -850,6 +852,11 @@ const laneName = (laneId: string) => {
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 
+const readyToMoveLaneName = (ticket: Ticket): string | undefined => {
+  const targetLaneId = isReadyToMove(ticket, board.value)
+  return targetLaneId ? laneName(targetLaneId) : undefined
+}
+
 const openTicketNextLaneId = computed(() => {
   const ticket = openTicket.value
   if (!ticket) return undefined
@@ -1428,6 +1435,11 @@ const runTicketAgent = (ticket: Ticket) => {
                 class="full-auto-badge"
                 title="Full auto: the next lane's agent starts when this one moves the ticket on"
               >auto</span>
+              <span
+                v-if="readyToMoveLaneName(ticket)"
+                class="full-auto-badge ready-badge"
+                :title="`Move rules and checklist pass; ready to move to ${readyToMoveLaneName(ticket)}`"
+              >ready → {{ readyToMoveLaneName(ticket) }}</span>
             </h3>
             <p v-if="showsField('description') && ticket.description" class="ticket-preview">
               {{ ticket.description }}
@@ -1931,6 +1943,28 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="editTicket(openTicket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
         />
         Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
+      </label>
+
+      <label v-if="openTicketNextLaneId">
+        Move rules
+        <textarea
+          :value="openTicket.moveRules ?? ''"
+          placeholder="One rule per line, e.g. PR merged; no open questions"
+          @change="editTicket(openTicket, { moveRules: ($event.target as HTMLTextAreaElement).value })"
+        />
+      </label>
+
+      <label v-if="openTicketNextLaneId && moveRulesList(openTicket).length" class="checkbox-label">
+        <input
+          type="checkbox"
+          :checked="openTicket.moveRulesPassedLaneId === openTicket.laneId"
+          @change="
+            editTicket(openTicket, {
+              moveRulesPassedLaneId: ($event.target as HTMLInputElement).checked ? openTicket.laneId : undefined
+            })
+          "
+        />
+        Move rules pass
       </label>
 
       <div class="modal-actions">
