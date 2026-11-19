@@ -400,7 +400,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
-- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it.
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus; first Esc hides the tip, second closes the modal (#102).
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
@@ -441,7 +441,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
 - **Lane name** input, for renaming.
-- **Agent prompt** textarea: standing instructions for every ticket in this lane.
+- **Agent prompt** textarea: standing instructions for every ticket in this lane. An ⓘ icon beside it shows a tooltip on hover or keyboard focus (#102).
 - **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before. The box is bound to the typed draft, so autosave status, a first-save path update or an outside DB refresh never puts old text back mid-typing (#92). Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.
   - File field empty: writes `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. A path the app generated (an old `agent-context/*-AgentContext.md`, or a lane folder under the lane's old name) is re-derived on the next save, so a lane's prompts always share one folder; the old file is left in place. Any other path you typed is kept.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project. Changing the path saves the current prompt there, unless the prompt is empty.
@@ -450,7 +450,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Agent markdown file**: the file the prompt autosaves to. Ticket agents get the prompt once: the typed prompt when there is one, else "Follow the guidance in <path>." (a hand-written guide with no prompt).
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
 - Placeholders are lane-neutral (`docs/agent-prompt.md`, "a new folder inside the project directory"): the modal is shared by every lane, so example text never names one lane's artifact (#103).
-- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable.
+- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable. Has the same ⓘ tooltip icon (#102).
   - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
   - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
   - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
@@ -469,7 +469,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
-- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on.
+- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on. An ⓘ icon beside it shows a tooltip on hover or keyboard focus (#102).
 - **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
 - **Wait for PR merge before moving on** checkbox. When on, an armed ticket here moves to its Next Lane when its PR turns merged, not when its checklist completes or a ▶ Run succeeds. A ticket with no PR, or an open one, stays put and stays armed. A ticket whose PR is already merged moves on completion as usual. On for In PR (`in-pr`) on new boards and, once, on existing boards (`swim_lanes.waits_for_pull_request_merge`, `completionMoves` in `projectTypes.ts`). The move happens when the app learns of the merge: the board-open PR sync, or an outside write to `pull_request_state`.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
