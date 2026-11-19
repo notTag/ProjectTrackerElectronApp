@@ -526,7 +526,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
-- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time. Reloading or closing the window that started the scan aborts it too (`electron/pageGone.ts`), so a hung scan can't block the next window from scanning.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`

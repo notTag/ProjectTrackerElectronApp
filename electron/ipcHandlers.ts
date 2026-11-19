@@ -449,7 +449,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const sendProgress = (progress: ScanProgress) => {
         if (activeScan === scan) onScanProgress(progress)
       }
-      // A reload drops the renderer's scanning state and its Cancel button, so a hung
+      // A reload or window close drops the renderer's scanning state and its Cancel button, so a hung
       // scan would otherwise block every later scan until restart.
       const stopWatchingPage = onPageGone(() => scan.abort())
       try {
