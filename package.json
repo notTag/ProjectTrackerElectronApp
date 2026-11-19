@@ -1,6 +1,6 @@
 {
   "name": "project-tracker",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Native macOS Project Tracker desktop app",
   "author": "Project Tracker",
   "type": "module",
@@ -13,6 +13,7 @@
     "eval": "vitest run --config evals/vitest.config.ts",
     "dist": "node scripts/check-release-env.mjs --notarize-only && bun run build && electron-builder --mac",
     "release": "node scripts/check-release-env.mjs && bun run build && electron-builder --mac --publish always",
+    "set-version": "node --disable-warning=ExperimentalWarning scripts/set-ticket-version.mjs",
     "start:prod": "node scripts/open-packaged-app.mjs",
     "start:dev": "electron .",
     "web": "vite build --mode web && tsc -p tsconfig.electron.json && node out/main/electron/web/server.js"
