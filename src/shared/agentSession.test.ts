@@ -159,4 +159,9 @@ describe('runsToInterrupt', () => {
     expect(interrupts({ mode: 'headless', startedAt: BEFORE_APP, status: 'succeeded' })).toBe(false)
     expect(interrupts({ mode: 'headless', startedAt: BEFORE_APP, laneId: 'prd' })).toBe(false)
   })
+
+  // #106: the orchestrator closes a finished agent's tab after the ticket moved on.
+  it('never interrupts a terminal run whose ticket left its lane, even with the tab gone and stale', () => {
+    expect(interrupts({ mode: 'terminal', startedAt: BEFORE_APP, laneId: 'prd' }, 'gone', stale)).toBe(false)
+  })
 })

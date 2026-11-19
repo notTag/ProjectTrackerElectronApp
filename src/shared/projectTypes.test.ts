@@ -1099,8 +1099,21 @@ describe('full auto', () => {
     const onPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), outputLane)
     const fullAutoSection = onPrompt.split('\n\n').at(-2)
     expect(fullAutoSection).toMatch(
-      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\.$/
+      /Exit only when nothing waits on the user \(your final footer shows `Open Questions: 0`\); otherwise stop with the open questions as the last thing on screen and leave the session open\./
     )
+  })
+
+  // #106: a done message sent before the move lets the orchestrator close the
+  // tab while the ticket is still in this lane, which marks the run interrupted.
+  it('makes messaging the orchestrator the last step, after the move and the footer', () => {
+    const fullAutoSection = ticketAgentPrompt(ticket({ fullAuto: true }), lane('prd')).split('\n\n').at(-1) ?? ''
+    const moveAt = fullAutoSection.indexOf('Finish in this order: move the ticket')
+    const footerAt = fullAutoSection.indexOf('print your final footer', moveAt)
+    const messageAt = fullAutoSection.indexOf('then message the orchestrator as your very last action', footerAt)
+    expect(moveAt).toBeGreaterThan(-1)
+    expect(footerAt).toBeGreaterThan(moveAt)
+    expect(messageAt).toBeGreaterThan(footerAt)
+    expect(fullAutoSection).toMatch(/Nothing comes after that message\.$/)
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
@@ -1674,6 +1687,32 @@ describe('Auto Run orchestrator', () => {
       expect(terminal).toContain('custom title of t is "<TAB>"')
     })
 
+    // #106: closing on the done message alone races the agent's lane move.
+    it('closes a tab only once its ticket left the lane, and never on an ambiguous title', () => {
+      const steered = { ...inDev, orchestratorPrompt: 'Close the tab when the agent says it is done.' }
+      for (const generatedPrompt of [prompt, orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))]) {
+        expect(generatedPrompt).toContain('Close a tab only after the ticket query shows the ticket has left the in-dev lane')
+        expect(generatedPrompt).toContain('Never close when more than one open tab matches the title.')
+      }
+    })
+
+    it('guards the close recipe in an override that keeps the terminal token', () => {
+      const overridden = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      const filled = orchestratorPrompt(overridden, entries, context('ghostty', 'Ghostty'))
+      expect(filled).toContain('only once the ticket has left this lane; skip any title more than one open tab matches')
+    })
+
+    it('gives each lane of one ticket its own tab title, and lists only later lanes as handoff tabs', () => {
+      const sameTicket = { number: 14, title: 'Third thing' }
+      expect(ticketTabTitle(sameTicket, inDev)).not.toBe(ticketTabTitle(sameTicket, boardLanes[1]))
+      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
+      const handoffLine = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
+        .split('\n')
+        .find((line) => line.includes('handoff tabs')) ?? ''
+      const handoffTitles = handoffLine.slice(handoffLine.indexOf('handoff tabs'))
+      expect(handoffTitles).not.toContain('14-In-Development-Third thing')
+    })
+
     it('tells the user to close Warp tabs by hand', () => {
       const warp = orchestratorPrompt(inDev, entries, context('warp', 'Warp'))
       expect(warp).toContain('Warp cannot be queried')
@@ -1686,7 +1725,7 @@ describe('Auto Run orchestrator', () => {
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
       const expectedSection = [
         'Lane instructions',
-        'These override the Loop above (e.g. closing tabs), but never the report-only rule.',
+        'These override the Loop above (e.g. which tabs to close), but never the report-only rule or the rule to close a tab only after its ticket has left this lane.',
         'Poll every 2 minutes.'
       ].join('\n')
       expect(withInstructions).toBe(`${prompt}\n\n${expectedSection}`)
