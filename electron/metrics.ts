@@ -74,39 +74,56 @@ export const prCounts = async (
 // agents with other binaries aren't counted.
 export const AGENT_PROCESS_NAMES = ['claude', 'codex', 'hermes']
 
-// `ps -o comm` reports argv[0], which stays `claude` for the native installer
-// even though the kernel name lsof's -c matches is the version (`2.1.322`).
-export const parseAgentPids = (psOutput: string, processNames: string[]): string[] => {
-  const pids: string[] = []
+// ponytail: mirrors ticketSessionName (src/shared/projectTypes.ts). The test
+// builds its fixture from that function, so a rename fails the test instead of
+// silently zeroing the count. The lookahead keeps `#10` from matching `#104`.
+// Any `--name` matches, not the first: the terminal wrapper prepends its own.
+const TICKET_SESSION_PATTERN = /--name Ticket #(\d+)(?=\s|$)/
+
+// Only sessions the app launched for a ticket count. Orchestrators carry a
+// different name; daemons (`codex app-server`), manual sessions, child agents
+// and headless runs carry none. argv[0] stays `claude` for the native
+// installer even though the kernel name is the version (`2.1.322`).
+export const parseTicketAgentPids = (psOutput: string): Map<string, number> => {
+  const ticketNumberByPid = new Map<string, number>()
   for (const line of psOutput.split('\n')) {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-    if (!match) continue
-    const [, pid, command] = match
-    const executableName = command.trim().split('/').pop() ?? ''
-    if (processNames.includes(executableName)) pids.push(pid)
+    const lineMatch = /^\s*(\d+)\s+(\S+)(.*)$/.exec(line)
+    if (!lineMatch) continue
+    const [, pid, executablePath, argsAfterExecutable] = lineMatch
+    const executableName = executablePath.split('/').pop() ?? ''
+    if (!AGENT_PROCESS_NAMES.includes(executableName)) continue
+    const sessionMatch = TICKET_SESSION_PATTERN.exec(argsAfterExecutable)
+    if (sessionMatch) ticketNumberByPid.set(pid, Number(sessionMatch[1]))
   }
-  return pids
+  return ticketNumberByPid
 }
 
 // `lsof -Fpn` prints a `p<pid>` line, then `f<fd>` and `n<path>` lines for it.
-export const parseLsofCwds = (lsofOutput: string): string[] => {
-  const cwds: string[] = []
+export const parseLsofCwds = (lsofOutput: string): { pid: string; cwd: string }[] => {
+  const cwds: { pid: string; cwd: string }[] = []
+  let currentPid = ''
   for (const line of lsofOutput.split('\n')) {
-    if (line.startsWith('n')) cwds.push(line.slice(1))
+    if (line.startsWith('p')) currentPid = line.slice(1)
+    if (line.startsWith('n')) cwds.push({ pid: currentPid, cwd: line.slice(1) })
   }
   return cwds
 }
 
-// The longest matching path wins, so a project nested in another project's
-// folder gets its own agents. Worktrees under <project>/.worktrees match too.
-export const countAgentsByProject = (cwds: string[], projectPaths: string[]): Record<string, number> => {
-  const counts = Object.fromEntries(projectPaths.map((projectPath) => [projectPath, 0]))
+// Counts distinct tickets, not processes: one ticket often has sessions left
+// open from earlier lanes. The longest matching path wins, so a project nested
+// in another project's folder gets its own agents. Worktrees under
+// <project>/.worktrees match too.
+export const countAgentsByProject = (
+  agents: { cwd: string; ticketNumber: number }[],
+  projectPaths: string[]
+): Record<string, number> => {
+  const ticketsByProject = new Map(projectPaths.map((projectPath) => [projectPath, new Set<number>()]))
   const longestFirst = [...projectPaths].sort((a, b) => b.length - a.length)
-  for (const cwd of cwds) {
+  for (const { cwd, ticketNumber } of agents) {
     const owner = longestFirst.find((projectPath) => cwd === projectPath || cwd.startsWith(`${projectPath}/`))
-    if (owner) counts[owner] += 1
+    if (owner) ticketsByProject.get(owner)?.add(ticketNumber)
   }
-  return counts
+  return Object.fromEntries(projectPaths.map((projectPath) => [projectPath, ticketsByProject.get(projectPath)?.size ?? 0]))
 }
 
 const runForOutput = (command: string, args: string[]) =>
@@ -121,9 +138,15 @@ const runForOutput = (command: string, args: string[]) =>
   })
 
 export const runningAgentsByProject = async (projectPaths: string[]): Promise<Record<string, number>> => {
-  const psOutput = await runForOutput('/bin/ps', ['-axo', 'pid=,comm='])
-  const agentPids = parseAgentPids(psOutput, AGENT_PROCESS_NAMES)
-  if (agentPids.length === 0) return countAgentsByProject([], projectPaths)
-  const lsofOutput = await runForOutput('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-p', agentPids.join(','), '-Fpn'])
-  return countAgentsByProject(parseLsofCwds(lsofOutput), projectPaths)
+  // -ww: never truncate args, or a long prompt could cut off the session name.
+  const psOutput = await runForOutput('/bin/ps', ['-axo', 'pid=,args=', '-ww'])
+  const ticketNumberByPid = parseTicketAgentPids(psOutput)
+  if (ticketNumberByPid.size === 0) return countAgentsByProject([], projectPaths)
+  const agentPids = [...ticketNumberByPid.keys()].join(',')
+  const lsofOutput = await runForOutput('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-p', agentPids, '-Fpn'])
+  const agents = parseLsofCwds(lsofOutput).flatMap(({ pid, cwd }) => {
+    const ticketNumber = ticketNumberByPid.get(pid)
+    return ticketNumber === undefined ? [] : [{ cwd, ticketNumber }]
+  })
+  return countAgentsByProject(agents, projectPaths)
 }
