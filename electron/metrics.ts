@@ -76,22 +76,27 @@ export const AGENT_PROCESS_NAMES = ['claude', 'codex', 'hermes']
 
 // ponytail: mirrors ticketSessionName (src/shared/projectTypes.ts). The test
 // builds its fixture from that function, so a rename fails the test instead of
-// silently zeroing the count. The lookahead keeps `#10` from matching `#104`.
-// Any `--name` matches, not the first: the terminal wrapper prepends its own.
-const TICKET_SESSION_PATTERN = /--name Ticket #(\d+)(?=\s|$)/
+// silently zeroing the count. Names read `<N>-<Lane>` (`104-Merge-Request`);
+// the lane token is one dash-joined word. Any `--name` matches, not the first:
+// the terminal wrapper prepends its own (`t104`).
+const TICKET_SESSION_PATTERN = /--name (\d+)-\S/
 
 // Only sessions the app launched for a ticket count. Orchestrators carry a
 // different name; daemons (`codex app-server`), manual sessions, child agents
 // and headless runs carry none. argv[0] stays `claude` for the native
 // installer even though the kernel name is the version (`2.1.322`).
+// The install directory is matched lazily and may hold spaces
+// (`~/Library/Application Support/...`), so argv[0] can't be split on spaces.
+const AGENT_COMMAND_LINE_PATTERN = new RegExp(
+  `^\\s*(\\d+)\\s+(?:\\S.*?/)??(?:${AGENT_PROCESS_NAMES.join('|')})(?=\\s|$)(.*)$`
+)
+
 export const parseTicketAgentPids = (psOutput: string): Map<string, number> => {
   const ticketNumberByPid = new Map<string, number>()
   for (const line of psOutput.split('\n')) {
-    const lineMatch = /^\s*(\d+)\s+(\S+)(.*)$/.exec(line)
+    const lineMatch = AGENT_COMMAND_LINE_PATTERN.exec(line)
     if (!lineMatch) continue
-    const [, pid, executablePath, argsAfterExecutable] = lineMatch
-    const executableName = executablePath.split('/').pop() ?? ''
-    if (!AGENT_PROCESS_NAMES.includes(executableName)) continue
+    const [, pid, argsAfterExecutable] = lineMatch
     const sessionMatch = TICKET_SESSION_PATTERN.exec(argsAfterExecutable)
     if (sessionMatch) ticketNumberByPid.set(pid, Number(sessionMatch[1]))
   }
@@ -100,13 +105,13 @@ export const parseTicketAgentPids = (psOutput: string): Map<string, number> => {
 
 // `lsof -Fpn` prints a `p<pid>` line, then `f<fd>` and `n<path>` lines for it.
 export const parseLsofCwds = (lsofOutput: string): { pid: string; cwd: string }[] => {
-  const cwds: { pid: string; cwd: string }[] = []
+  const processCwds: { pid: string; cwd: string }[] = []
   let currentPid = ''
   for (const line of lsofOutput.split('\n')) {
     if (line.startsWith('p')) currentPid = line.slice(1)
-    if (line.startsWith('n')) cwds.push({ pid: currentPid, cwd: line.slice(1) })
+    if (line.startsWith('n')) processCwds.push({ pid: currentPid, cwd: line.slice(1) })
   }
-  return cwds
+  return processCwds
 }
 
 // Counts distinct tickets, not processes: one ticket often has sessions left
@@ -118,12 +123,13 @@ export const countAgentsByProject = (
   projectPaths: string[]
 ): Record<string, number> => {
   const ticketsByProject = new Map(projectPaths.map((projectPath) => [projectPath, new Set<number>()]))
-  const longestFirst = [...projectPaths].sort((a, b) => b.length - a.length)
+  const longestFirst = [...projectPaths].sort((first, second) => second.length - first.length)
   for (const { cwd, ticketNumber } of agents) {
     const owner = longestFirst.find((projectPath) => cwd === projectPath || cwd.startsWith(`${projectPath}/`))
     if (owner) ticketsByProject.get(owner)?.add(ticketNumber)
   }
-  return Object.fromEntries(projectPaths.map((projectPath) => [projectPath, ticketsByProject.get(projectPath)?.size ?? 0]))
+  const ticketCountEntries = [...ticketsByProject].map(([projectPath, tickets]) => [projectPath, tickets.size])
+  return Object.fromEntries(ticketCountEntries)
 }
 
 const runForOutput = (command: string, args: string[]) =>

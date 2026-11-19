@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ticketSessionName, type Ticket } from '../src/shared/projectTypes.js'
+import { ticketSessionName } from '../src/shared/projectTypes.js'
 import { countAgentsByProject, metricWindows, parseLsofCwds, parseTicketAgentPids, prCounts } from './metrics.js'
 
 describe('metricWindows', () => {
@@ -21,27 +21,29 @@ describe('metricWindows', () => {
 })
 
 describe('agent process discovery', () => {
-  const sessionName = (number: number) => ticketSessionName({ number } as Ticket)
+  const sessionName = (number: number) => ticketSessionName({ number }, { id: 'in-pr', name: 'Merge Request' })
 
   it('picks only processes the app launched for a ticket, keyed to that ticket number', () => {
     const psOutput = [
       `  101 claude --name t104 --name ${sessionName(104)} --session-id abc Instructions: do it`,
       `  102 /Users/me/.local/bin/claude --name ${sessionName(7)}`,
       `  103 claude --name ${sessionName(10)} --model opus`,
+      `  104 /Users/me/Library/Application Support/Claude/claude-code/2.1/claude --name ${sessionName(3)}`,
       '  201 claude --model opus --name AUTORUN-ORCHESTRATOR-IDEA',
       '  202 /Applications/Codex.app/Contents/Resources/codex app-server daemon',
       '  203 codex app-server --listen stdio',
       '  204 claude',
       '  205 claude -p fix the bug',
       `  206 zsh -c claude --name ${sessionName(5)}`,
-      `  207 claude --name ${sessionName(12)}abc`, // number must end the name
+      '  207 claude --name t12', // the wrapper's name alone isn't a ticket session
       ''
     ].join('\n')
     expect(parseTicketAgentPids(psOutput)).toEqual(
       new Map([
         ['101', 104],
         ['102', 7],
-        ['103', 10]
+        ['103', 10],
+        ['104', 3]
       ])
     )
   })
