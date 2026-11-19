@@ -1106,14 +1106,15 @@ describe('full auto', () => {
   // #106: a done message sent before the move lets the orchestrator close the
   // tab while the ticket is still in this lane, which marks the run interrupted.
   it('makes messaging the orchestrator the last step, after the move and the footer', () => {
-    const fullAutoSection = ticketAgentPrompt(ticket({ fullAuto: true }), lane('prd')).split('\n\n').at(-1) ?? ''
+    const agentPrompt = ticketAgentPrompt(ticket({ fullAuto: true }), lane('prd'))
+    const fullAutoSection = agentPrompt.split('\n\n').at(-1) ?? ''
     const moveAt = fullAutoSection.indexOf('Finish in this order: move the ticket')
     const footerAt = fullAutoSection.indexOf('print your final footer', moveAt)
-    const messageAt = fullAutoSection.indexOf('then message the orchestrator as your very last action', footerAt)
+    const messageAt = fullAutoSection.indexOf('then message the orchestrator, if one is watching this lane, as your very last action', footerAt)
     expect(moveAt).toBeGreaterThan(-1)
     expect(footerAt).toBeGreaterThan(moveAt)
     expect(messageAt).toBeGreaterThan(footerAt)
-    expect(fullAutoSection).toMatch(/Nothing comes after that message\.$/)
+    expect(fullAutoSection).toMatch(/Nothing but exiting comes after that message\.$/)
   })
 
   const boardWith = (tickets: Ticket[], prdOverrides: Partial<SwimLane> = {}): ProjectBoard => ({
@@ -1691,7 +1692,7 @@ describe('Auto Run orchestrator', () => {
     it('closes a tab only once its ticket left the lane, and never on an ambiguous title', () => {
       const steered = { ...inDev, orchestratorPrompt: 'Close the tab when the agent says it is done.' }
       for (const generatedPrompt of [prompt, orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))]) {
-        expect(generatedPrompt).toContain('Close a tab only after the ticket query shows the ticket has left the in-dev lane')
+        expect(generatedPrompt).toContain('Close this lane\'s tab only after the ticket query shows the ticket has left the in-dev lane')
         expect(generatedPrompt).toContain('Never close when more than one open tab matches the title.')
       }
     })
@@ -1699,16 +1700,17 @@ describe('Auto Run orchestrator', () => {
     it('guards the close recipe in an override that keeps the terminal token', () => {
       const overridden = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
       const filled = orchestratorPrompt(overridden, entries, context('ghostty', 'Ghostty'))
-      expect(filled).toContain('only once the ticket has left this lane; skip any title more than one open tab matches')
+      expect(filled).toContain('and its handoff tabs only once the ticket is done; skip any title more than one open tab matches')
     })
 
     it('gives each lane of one ticket its own tab title, and lists only later lanes as handoff tabs', () => {
       const sameTicket = { number: 14, title: 'Third thing' }
       expect(ticketTabTitle(sameTicket, inDev)).not.toBe(ticketTabTitle(sameTicket, boardLanes[1]))
       const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
-      const handoffLine = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
-        .split('\n')
-        .find((line) => line.includes('handoff tabs')) ?? ''
+      const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
+      const promptLines = fullAutoPrompt.split('\n')
+      const handoffLine = promptLines.find((line) => line.includes('— handoff tabs')) ?? ''
+      expect(handoffLine).toContain('14-')
       const handoffTitles = handoffLine.slice(handoffLine.indexOf('handoff tabs'))
       expect(handoffTitles).not.toContain('14-In-Development-Third thing')
     })

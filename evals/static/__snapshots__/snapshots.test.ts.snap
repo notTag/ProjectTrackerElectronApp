@@ -44,7 +44,7 @@ Status: Github Value Determination
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: idea > bare 1`] = `
@@ -60,7 +60,7 @@ Status: Idea
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message.
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message.
 
 Output: The ticket being run against with completed meta data.
 Put your work there. Paths are relative to the project directory unless absolute. If that location already exists, use it as-is without asking; otherwise create it."
@@ -81,7 +81,7 @@ Worktree: /eval/repo/.worktrees/t7
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message.
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message.
 
 Output: The ticket being run against with completed meta data.
 Put your work there. Paths are relative to the project directory unless absolute. If that location already exists, use it as-is without asking; otherwise create it."
@@ -103,7 +103,7 @@ Checklist:
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message.
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message.
 
 Output: The ticket being run against with completed meta data.
 Put your work there. Paths are relative to the project directory unless absolute. If that location already exists, use it as-is without asking; otherwise create it."
@@ -122,7 +122,7 @@ Status: Idea
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message.
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message.
 
 Output: The ticket being run against with completed meta data.
 Put your work there. Paths are relative to the project directory unless absolute. If that location already exists, use it as-is without asking; otherwise create it."
@@ -184,7 +184,7 @@ Status: In Dev Env
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-development > bare 1`] = `
@@ -200,7 +200,7 @@ Status: In Development
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-development > branch + worktree 1`] = `
@@ -218,7 +218,7 @@ Worktree: /eval/repo/.worktrees/t7
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-development > checklist 1`] = `
@@ -237,7 +237,7 @@ Checklist:
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-development > full auto 1`] = `
@@ -253,7 +253,7 @@ Status: In Development
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-pr > bare 1`] = `
@@ -400,7 +400,7 @@ Status: Merge Request
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: in-production > bare 1`] = `
@@ -451,7 +451,7 @@ Status: In Prod Env
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message."
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 `;
 
 exports[`assembled prompt: prd > bare 1`] = `
@@ -527,7 +527,7 @@ Status: PRD
 
 Make it work.
 
-Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator as your very last action. Nothing comes after that message.
+Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows \`Open Questions: 0\`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message.
 
 Output: A PRD document.
 Put your work there. Paths are relative to the project directory unless absolute. If that location already exists, use it as-is without asking; otherwise create it."
