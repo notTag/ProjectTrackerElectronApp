@@ -7,6 +7,7 @@ import { createSeedState, type ProjectTrackerState } from '@/shared/projectTypes
 
 const api = vi.hoisted(() => ({
   getProjectState: vi.fn(),
+  refreshProjectState: vi.fn(),
   saveProjectState: vi.fn(async (state: unknown) => state),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
   terminalTabsAlive: vi.fn(async () => ({}))
@@ -91,5 +92,52 @@ describe('useThemePersistence', () => {
     await projects.load()
     await settle()
     expect(theme.confirmedThemeId).toBe(DEFAULT_THEME_ID)
+    expect(api.saveProjectState).not.toHaveBeenCalled()
+  })
+
+  it('does not migrate an unknown cached theme id', async () => {
+    cache.set('project-tracker-theme', 'removed-theme')
+    const { projects } = await boot({})
+    await projects.load()
+    await settle()
+    expect(api.saveProjectState).not.toHaveBeenCalled()
+  })
+
+  it('saves a pick into an empty DB even when localStorage cannot be written', async () => {
+    const { projects, theme } = await boot({})
+    await projects.load()
+    const setItemSpy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded')
+    })
+    theme.setTheme(OTHER_THEME_ID)
+    await settle()
+    setItemSpy.mockRestore()
+    expect(savedThemeIds()).toEqual([OTHER_THEME_ID])
+  })
+
+  it('keeps the latest pick when an older save lands after it', async () => {
+    const { projects, theme } = await boot({ themeId: DEFAULT_THEME_ID })
+    await projects.load()
+    const appliedThemeIds: string[] = []
+    theme.$subscribe(() => appliedThemeIds.push(theme.confirmedThemeId))
+    const [firstPick, secondPick] = themeList.map((entry) => entry.id).filter((id) => id !== DEFAULT_THEME_ID)
+    theme.setTheme(firstPick)
+    await nextTick()
+    theme.setTheme(secondPick)
+    await settle()
+    await settle()
+    expect(savedThemeIds()).toEqual([firstPick, secondPick])
+    expect(theme.confirmedThemeId).toBe(secondPick)
+    expect(appliedThemeIds.lastIndexOf(firstPick)).toBeLessThan(appliedThemeIds.indexOf(secondPick))
+  })
+
+  it('starts syncing once a refresh delivers state after a failed first load', async () => {
+    api.getProjectState.mockRejectedValueOnce(new Error('database is locked'))
+    const { projects, theme } = await boot({ themeId: OTHER_THEME_ID })
+    await projects.load()
+    api.refreshProjectState.mockResolvedValueOnce({ ...createSeedState(), themeId: OTHER_THEME_ID })
+    await projects.refresh()
+    await settle()
+    expect(theme.confirmedThemeId).toBe(OTHER_THEME_ID)
   })
 })

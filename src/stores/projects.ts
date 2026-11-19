@@ -599,6 +599,7 @@ export const useProjectsStore = defineStore('projects', {
           // failed completion-move write must not leave this window behind.
           handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
+          this.loaded = true
           if (settledState === freshState) return
           // ticket:update carries the disarmed Move to along with the new lane.
           this.state = settledState
