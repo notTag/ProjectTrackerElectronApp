@@ -304,5 +304,6 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Dev quits on last-window close so concurrently can stop vite and free its port.
+  if (devServerUrl || process.platform !== 'darwin') app.quit()
 })

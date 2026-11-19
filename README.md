@@ -41,7 +41,15 @@ Start the Vite dev server and Electron together with hot reload:
 bun run dev
 ```
 
-Vite runs on `http://127.0.0.1:5173`, and Electron opens once the server is ready. You don't need to set any environment variables.
+The launcher prints the dev server URL, then Electron opens once the server is ready. You don't need to set any environment variables.
+
+Each checkout gets its own port, the same one every run, so two worktrees can run `bun run dev` side by side:
+
+- Main checkout: `5173`
+- Linked worktree: a port from `5200` to `5899`, picked from a hash of the worktree path
+- Override: `PROJECT_TRACKER_DEV_PORT=5199 bun run dev`
+
+If the port is taken, `bun run dev` stops with an error instead of moving to another port. Quitting the app (Cmd+Q or closing the last window) or pressing Ctrl+C stops both Vite and Electron and frees the port.
 
 ## Production build
 
@@ -228,7 +236,7 @@ flowchart LR
     P -- "invoke('projects:scan')" --> M
     M -- "reply" --> P
     M -- "send('project-state:external-change')" --> P
-    VITE["Vite :5173 (dev)"] -. loadURL .-> R
+    VITE["Vite dev server"] -. loadURL .-> R
     HTML["out/renderer/index.html (prod)"] -. loadFile .-> R
 ```
 
@@ -300,7 +308,7 @@ There are two exceptions to the normalized schema, documented in `electron/stora
 
 **Dev server won't start**
 
-Check that nothing else is using port `5173`. The dev script runs Vite at `127.0.0.1:5173`.
+`Port <port> is taken` means another process holds this checkout's dev port. Find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`, or pick another port with `PROJECT_TRACKER_DEV_PORT=<port> bun run dev`.
 
 **`bun run start:dev` shows a blank window**
 
