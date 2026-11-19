@@ -945,6 +945,17 @@ export const orchestratorPollMinutes = (lane: SwimLane): number => {
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
+// Off (shown as ∞) sits below 1: stepping down from 1 turns the orchestrator off
+// and leaves the stored minutes alone; stepping up from off lands on 1.
+export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<SwimLane> | undefined => {
+  if (!orchestratorPollActive(lane)) {
+    return step === 1 ? { orchestratorPollActive: true, orchestratorPollMinutes: 1 } : undefined
+  }
+  const steppedMinutes = orchestratorPollMinutes(lane) + step
+  if (steppedMinutes < 1) return { orchestratorPollActive: false }
+  return { orchestratorPollMinutes: steppedMinutes }
+}
+
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
 

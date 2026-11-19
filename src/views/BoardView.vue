@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ticketModalExpanded } from '@/ticketModalWidth'
+import { laneModalExpanded, ticketModalExpanded } from '@/modalWidth'
 
+import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
@@ -50,6 +51,7 @@ import {
   removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
+  steppedOrchestratorPoll,
   getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
@@ -67,6 +69,7 @@ import {
   TICKET_MODAL_FIELDS,
   type TicketModalField,
   toggleHiddenLane,
+  updateLaneInBoard,
   worktreeFolderName,
   type Agent,
   type LaneMarkdownKind,
@@ -930,6 +933,16 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
   editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
+// Steps inside the queued mutate, not from the view's lane: the view only sees
+// a click's result once its write lands, so fast clicks would repeat a step.
+const stepOrchestratorPoll = (laneId: string, step: -1 | 1) => {
+  void store.updateBoard(projectPath.value, (board) => {
+    const currentLane = boardLaneById(board, laneId)
+    const patch = currentLane && steppedOrchestratorPoll(currentLane, step)
+    return patch ? updateLaneInBoard(board, laneId, patch) : board
+  })
+}
+
 const orchestratorPollTooltip = (lane: SwimLane): string => {
   if (!orchestratorPollActive(lane)) return 'Off: Auto Run launches no Orchestrator agent for this lane.'
   const pollInterval = plural(orchestratorPollMinutes(lane), 'minute')
@@ -1711,21 +1724,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
-        <button
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-model="ticketModalExpanded" />
       </div>
       <input
         v-model="ticketDraft.title"
@@ -1813,22 +1812,7 @@ const runTicketAgent = (ticket: Ticket) => {
           #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
           <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
         </p>
-        <button
-          v-if="boardView !== 'graph'"
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
         <div ref="modalFieldsMenuRef" class="filter-menu">
           <button
             type="button"
@@ -2232,8 +2216,11 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="openLane" class="modal-backdrop" @click.self="openLaneId = null">
-    <section class="modal lane-modal">
-      <p class="eyebrow">Swim lane</p>
+    <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
+      <div class="ticket-modal-header">
+        <p class="eyebrow">Swim lane</p>
+        <ExpandToggle v-model="laneModalExpanded" />
+      </div>
       <input
         class="ticket-title-input"
         :value="openLane.name"
@@ -2326,26 +2313,46 @@ const runTicketAgent = (ticket: Ticket) => {
         </span>
       </label>
 
+      <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+           clicking a wrapping caption would fire − and switch the lane off. -->
       <div class="orchestrator-poll-row">
-        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
-          <input
-            type="checkbox"
-            aria-label="Orchestrator poll active"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-        </label>
-        <label>
-          Orchestrator poll (minutes)
-          <input
-            type="number"
-            min="1"
-            step="1"
-            :value="orchestratorPollMinutes(openLane)"
-            :disabled="!orchestratorPollActive(openLane)"
-            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
-          />
-        </label>
+        <label
+          id="orchestrator-poll-caption"
+          :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
+        >Orchestrator poll (minutes)</label>
+        <div
+          class="poll-stepper"
+          role="group"
+          aria-labelledby="orchestrator-poll-caption"
+          :title="orchestratorPollTooltip(openLane)"
+        >
+          <button
+            type="button"
+            aria-label="Decrease orchestrator poll"
+            :aria-disabled="!orchestratorPollActive(openLane)"
+            @click="stepOrchestratorPoll(openLane.id, -1)"
+          >−</button>
+          <span class="poll-stepper-value">
+            <input
+              v-if="orchestratorPollActive(openLane)"
+              id="orchestrator-poll-minutes"
+              type="number"
+              min="1"
+              step="1"
+              :value="orchestratorPollMinutes(openLane)"
+              @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+            />
+            <span v-else role="img" aria-label="Orchestrator off">∞</span>
+          </span>
+          <span class="poll-stepper-status" aria-live="polite">{{
+            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Orchestrator off'
+          }}</span>
+          <button
+            type="button"
+            aria-label="Increase orchestrator poll"
+            @click="stepOrchestratorPoll(openLane.id, 1)"
+          >+</button>
+        </div>
       </div>
 
       <section class="ticket-agent">

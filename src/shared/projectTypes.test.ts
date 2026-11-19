@@ -85,6 +85,7 @@ import {
   pullRequestStatusLabel,
   toPullRequestStatus,
   worktreeFolderName,
+  steppedOrchestratorPoll,
   type BoardPreferences,
   type ProjectTrackerState,
   type GithubIssue,
@@ -1574,6 +1575,33 @@ describe('Auto Run orchestrator', () => {
       expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
       expect(launch.command).toContain("it'\\''s-mine")
+    })
+  })
+
+  describe('steppedOrchestratorPoll', () => {
+    const off = { ...inDev, orchestratorPollActive: false, orchestratorPollMinutes: 7 }
+
+    it('turns an off lane on at 1 minute, and cannot step below off', () => {
+      expect(steppedOrchestratorPoll(off, 1)).toEqual({ orchestratorPollActive: true, orchestratorPollMinutes: 1 })
+      expect(steppedOrchestratorPoll(off, -1)).toBeUndefined()
+    })
+
+    it('turns the lane off when stepping down from 1, leaving minutes alone', () => {
+      const oneMinute = { ...inDev, orchestratorPollActive: true, orchestratorPollMinutes: 1 }
+      expect(steppedOrchestratorPoll(oneMinute, -1)).toEqual({ orchestratorPollActive: false })
+    })
+
+    it('steps whole minutes by one', () => {
+      const fiveMinutes = { ...inDev, orchestratorPollMinutes: 5 }
+      expect(steppedOrchestratorPoll(fiveMinutes, -1)).toEqual({ orchestratorPollMinutes: 4 })
+      expect(steppedOrchestratorPoll(fiveMinutes, 1)).toEqual({ orchestratorPollMinutes: 6 })
+    })
+
+    it('steps a corrupted stored value from the default', () => {
+      for (const badMinutes of [0, 1.5]) {
+        const corrupted = { ...inDev, orchestratorPollMinutes: badMinutes }
+        expect(steppedOrchestratorPoll(corrupted, 1)).toEqual({ orchestratorPollMinutes: 3 })
+      }
     })
   })
 })
