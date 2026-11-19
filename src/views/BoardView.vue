@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ticketModalExpanded } from '@/ticketModalWidth'
+import { laneModalExpanded, ticketModalExpanded } from '@/modalWidth'
 
+import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
@@ -50,15 +51,19 @@ import {
   removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
+  steppedOrchestratorPoll,
   getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
+  isReadyToMove,
+  moveRulesList,
   boardLaneById,
   hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
   ticketShellCommand,
   ticketTabTitle,
+  currentLaneOf,
   ticketIdsToMove,
   carriedTicketIds,
   ticketsToRun,
@@ -67,6 +72,7 @@ import {
   TICKET_MODAL_FIELDS,
   type TicketModalField,
   toggleHiddenLane,
+  updateLaneInBoard,
   worktreeFolderName,
   type Agent,
   type LaneMarkdownKind,
@@ -103,7 +109,9 @@ const boardView = ref<'lanes' | 'graph'>('lanes')
 const filterQuery = ref('')
 const filterQueryInput = ref<HTMLInputElement | null>(null)
 const showOnlyMine = ref(false)
-const filterLaneId = ref('')
+// Empty = every lane. Read through activeFilterLaneIds, never directly.
+const filterLaneIds = ref<string[]>([])
+const laneFilterMenuOpen = ref(false)
 
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
@@ -150,7 +158,8 @@ const anyModalOpen = computed(
         ticketDraft.value ||
         laneDraftName.value !== null ||
         autoRunConfirmLaneId.value ||
-        ticketPendingDeletion.value
+        ticketPendingDeletion.value ||
+        lanePendingDeletion.value
     ) || boardSettingsOpen.value
 )
 
@@ -198,9 +207,61 @@ const toggleableLanes = computed(() =>
   [unassignedLane.value, githubImportLane.value].filter((lane): lane is SwimLane => Boolean(lane))
 )
 
+// Lanes the Display toggles hide are not offered: picking only those would
+// leave the board with no columns.
+const shownLanes = computed(() => laneColumns.value.filter((lane) => !laneIsHidden(lane.id)))
+
+// A deleted or hidden lane leaves its id behind; dropping it here keeps a
+// stale pick from blanking the board.
+const activeFilterLaneIds = computed(() =>
+  filterLaneIds.value.filter((laneId) => shownLanes.value.some((lane) => lane.id === laneId))
+)
+
+// Every lane picked shows the whole board, so it counts as no filter.
+const laneFilterNarrows = computed(() => {
+  const pickedCount = activeFilterLaneIds.value.length
+  return pickedCount > 0 && pickedCount < shownLanes.value.length
+})
+
+const laneFilterLabel = computed(() => {
+  const pickedIds = activeFilterLaneIds.value
+  if (!laneFilterNarrows.value) return 'All swim lanes'
+  if (pickedIds.length > 1) return `${pickedIds.length} lanes`
+  return shownLanes.value.find((lane) => lane.id === pickedIds[0])?.name
+})
+
+const toggleLaneFilter = (laneId: string) => {
+  const pickedIds = activeFilterLaneIds.value
+  filterLaneIds.value = pickedIds.includes(laneId)
+    ? pickedIds.filter((pickedId) => pickedId !== laneId)
+    : [...pickedIds, laneId]
+}
+
+// The view stays mounted across boards and seeded lane ids repeat between
+// projects, so a pick would otherwise carry over to the next board.
+watch(projectPath, () => {
+  filterLaneIds.value = []
+  laneFilterMenuOpen.value = false
+})
+
+const laneFilterMenuRef = ref<HTMLElement | null>(null)
+const closeLaneFilterMenuOnOutsideClick = (event: PointerEvent) => {
+  if (laneFilterMenuRef.value?.contains(event.target as Node)) return
+  laneFilterMenuOpen.value = false
+}
+// Tabbing away closes it. A null target (mousedown on a label's text, window
+// blur) is left to the pointerdown handler, or it would close mid-click.
+const closeLaneFilterMenuOnFocusOut = (event: FocusEvent) => {
+  const focusTarget = event.relatedTarget as Node | null
+  if (!focusTarget || laneFilterMenuRef.value?.contains(focusTarget)) return
+  laneFilterMenuOpen.value = false
+}
+
+// Board order, not pick order.
 const visibleLanes = computed(() => {
-  const shownLanes = laneColumns.value.filter((lane) => !laneIsHidden(lane.id))
-  return filterLaneId.value ? shownLanes.filter((lane) => lane.id === filterLaneId.value) : shownLanes
+  if (!laneFilterNarrows.value) return shownLanes.value
+  const pickedIds = activeFilterLaneIds.value
+  return shownLanes.value.filter((lane) => pickedIds.includes(lane.id))
 })
 
 // Held as one object so a drag reads its own start point rather than a set of
@@ -240,9 +301,10 @@ const endLaneResize = async () => {
 // helper's id anchoring keeps hidden lanes where they were.
 const boardElement = ref<HTMLElement | null>(null)
 
-// A filtered board shows one lane, so there is nothing to order it against —
-// and a drop "before nothing" would send it to the end.
-const laneCanMove = (laneId: string) => laneId !== UNASSIGNED_LANE_ID && !filterLaneId.value
+// A filtered board shows a subset of lanes, so a drop position among them is
+// ambiguous against the full order — and with one lane, "before nothing" would
+// send it to the end.
+const laneCanMove = (laneId: string) => laneId !== UNASSIGNED_LANE_ID && !laneFilterNarrows.value
 
 const movableVisibleLanes = computed(() => visibleLanes.value.filter((lane) => lane.id !== UNASSIGNED_LANE_ID))
 
@@ -416,11 +478,13 @@ const visibleTicketCount = computed(() =>
   visibleLanes.value.reduce((total, lane) => total + ticketsInLane(lane.id).length, 0)
 )
 
-const filtersActive = computed(() => Boolean(filterQuery.value.trim() || filterLaneId.value || showOnlyMine.value))
+const filtersActive = computed(() =>
+  Boolean(filterQuery.value.trim() || laneFilterNarrows.value || showOnlyMine.value)
+)
 
 const clearFilters = () => {
   filterQuery.value = ''
-  filterLaneId.value = ''
+  filterLaneIds.value = []
   showOnlyMine.value = false
 }
 
@@ -557,6 +621,7 @@ const closeModals = () => {
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
+  lanePendingDeletionId.value = null
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
@@ -598,8 +663,18 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
+  if (lanePendingDeletion.value) {
+    lanePendingDeletionId.value = null
+    event.preventDefault()
+    return
+  }
   if (anyModalOpen.value) {
     closeModals()
+    event.preventDefault()
+    return
+  }
+  if (laneFilterMenuOpen.value) {
+    laneFilterMenuOpen.value = false
     event.preventDefault()
     return
   }
@@ -618,6 +693,7 @@ onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
   window.addEventListener('keydown', handleBoardKeydown)
   window.addEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
+  window.addEventListener('pointerdown', closeLaneFilterMenuOnOutsideClick)
 })
 
 // Trailing "+" zone: shown on hover, lingers after the pointer leaves so it
@@ -644,6 +720,7 @@ const hideAddZoneLater = () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
   window.removeEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
+  window.removeEventListener('pointerdown', closeLaneFilterMenuOnOutsideClick)
   clearTimeout(addZoneHideTimer)
   ticketDraft.value?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
@@ -730,6 +807,33 @@ const saveLaneDraft = async () => {
 const deleteLane = async (lane: SwimLane) => {
   openLaneId.value = null
   await store.removeLane(projectPath.value, lane.id)
+}
+
+// Stored by id and looked up live, so a rename shows in the question and a lane
+// removed underneath (poll, other window) drops the confirm by itself.
+const lanePendingDeletionId = ref<string | null>(null)
+const lanePendingDeletion = computed(
+  () => laneColumns.value.find((lane) => lane.id === lanePendingDeletionId.value) ?? null
+)
+const laneDeleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
+
+const pendingLaneTicketCount = computed(() => {
+  const pendingLane = lanePendingDeletion.value
+  if (!pendingLane) return 0
+  return board.value.tickets.filter((ticket) => ticket.laneId === pendingLane.id).length
+})
+
+// Focus lands on Cancel so a stray Enter can't delete the lane.
+const askToDeleteLane = async (lane: SwimLane) => {
+  lanePendingDeletionId.value = lane.id
+  await nextTick()
+  laneDeleteConfirmCancelButton.value?.focus()
+}
+
+const confirmDeleteLane = async () => {
+  const lane = lanePendingDeletion.value
+  lanePendingDeletionId.value = null
+  if (lane) await deleteLane(lane)
 }
 
 const deleteTicket = async (ticket: Ticket) => {
@@ -896,6 +1000,16 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
   editLane(lane, { orchestratorPollMinutes: minutes })
 }
 
+// Steps inside the queued mutate, not from the view's lane: the view only sees
+// a click's result once its write lands, so fast clicks would repeat a step.
+const stepOrchestratorPoll = (laneId: string, step: -1 | 1) => {
+  void store.updateBoard(projectPath.value, (board) => {
+    const currentLane = boardLaneById(board, laneId)
+    const patch = currentLane && steppedOrchestratorPoll(currentLane, step)
+    return patch ? updateLaneInBoard(board, laneId, patch) : board
+  })
+}
+
 const orchestratorPollTooltip = (lane: SwimLane): string => {
   if (!orchestratorPollActive(lane)) return 'Off: Auto Run launches no Orchestrator agent for this lane.'
   const pollInterval = plural(orchestratorPollMinutes(lane), 'minute')
@@ -975,6 +1089,15 @@ const laneName = (laneId: string) => {
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 
+const readyLaneNameByTicketId = computed(() => {
+  const names = new Map<string, string>()
+  for (const ticket of board.value.tickets) {
+    const targetLaneId = isReadyToMove(ticket, board.value)
+    if (targetLaneId) names.set(ticket.id, laneName(targetLaneId))
+  }
+  return names
+})
+
 const openTicketNextLaneId = computed(() => {
   const ticket = openTicket.value
   if (!ticket) return undefined
@@ -1015,8 +1138,7 @@ const setMoveToLane = (ticket: Ticket, laneId: string) => {
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
 // different instruction once it moves column.
-const laneOfTicket = (ticket: Ticket) =>
-  laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
+const laneOfTicket = (ticket: Ticket) => currentLaneOf(board.value, ticket)
 
 const promptContext = (ticket: Ticket) => ({
   assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined,
@@ -1302,7 +1424,7 @@ const confirmAutoRunLane = () => {
 
 const openTicketInShell = (ticket: Ticket) => {
   const command = ticketCommand(ticket)
-  const tabTitle = ticketTabTitle(ticket)
+  const tabTitle = ticketTabTitle(ticket, laneOfTicket(ticket))
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 
@@ -1408,10 +1530,28 @@ const runTicketAgent = (ticket: Ticket) => {
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
-      <select v-model="filterLaneId" :class="{ active: filterLaneId }">
-        <option value="">All swim lanes</option>
-        <option v-for="lane in laneColumns" :key="lane.id" :value="lane.id">{{ lane.name }}</option>
-      </select>
+      <div ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
+        <button
+          type="button"
+          class="filter-trigger"
+          :class="{ active: laneFilterNarrows }"
+          aria-haspopup="true"
+          :aria-expanded="laneFilterMenuOpen"
+          @click="laneFilterMenuOpen = !laneFilterMenuOpen"
+        >
+          {{ laneFilterLabel }}
+        </button>
+        <div v-if="laneFilterMenuOpen" class="filter-popover" role="group" aria-label="Swim lanes shown">
+          <label v-for="lane in shownLanes" :key="lane.id">
+            <input
+              type="checkbox"
+              :checked="activeFilterLaneIds.includes(lane.id)"
+              @change="toggleLaneFilter(lane.id)"
+            />
+            <span>{{ lane.name }}</span>
+          </label>
+        </div>
+      </div>
       <button
         class="secondary"
         :class="{ active: showOnlyMine }"
@@ -1554,6 +1694,11 @@ const runTicketAgent = (ticket: Ticket) => {
                 class="full-auto-badge"
                 title="Full auto: the next lane's agent starts when this one moves the ticket on"
               >auto</span>
+              <span
+                v-if="readyLaneNameByTicketId.has(ticket.id)"
+                class="full-auto-badge ready-badge"
+                :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
+              >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
             </h3>
             <p v-if="showsField('description') && ticket.description" class="ticket-preview">
               {{ ticket.description }}
@@ -1624,7 +1769,7 @@ const runTicketAgent = (ticket: Ticket) => {
            every lane under "safe center" the moment the drag starts.
            Unmounting under the pointer fires no mouseleave → reset on unmount. -->
       <div
-        v-if="!filterLaneId"
+        v-if="!laneFilterNarrows"
         class="lane-add-zone"
         :class="{ shown: addZoneShown }"
         :inert="laneDrag?.active"
@@ -1677,21 +1822,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
-        <button
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-model="ticketModalExpanded" />
       </div>
       <input
         v-model="ticketDraft.title"
@@ -1779,22 +1910,7 @@ const runTicketAgent = (ticket: Ticket) => {
           #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
           <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
         </p>
-        <button
-          v-if="boardView !== 'graph'"
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
         <div ref="modalFieldsMenuRef" class="filter-menu">
           <button
             type="button"
@@ -2110,6 +2226,28 @@ const runTicketAgent = (ticket: Ticket) => {
         Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
       </label>
 
+      <label v-if="openTicketNextLaneId || openTicket.moveRules">
+        Move rules
+        <textarea
+          :value="openTicket.moveRules ?? ''"
+          placeholder="One rule per line, e.g. PR merged; no open questions"
+          @change="editTicket(openTicket, { moveRules: ($event.target as HTMLTextAreaElement).value })"
+        />
+      </label>
+
+      <label v-if="moveRulesList(openTicket).length" class="checkbox-label">
+        <input
+          type="checkbox"
+          :checked="openTicket.moveRulesPassedLaneId === openTicket.laneId"
+          @change="
+            editTicket(openTicket, {
+              moveRulesPassedLaneId: ($event.target as HTMLInputElement).checked ? openTicket.laneId : undefined
+            })
+          "
+        />
+        Move rules pass
+      </label>
+
       <div class="modal-actions">
         <button
           class="secondary danger ticket-delete"
@@ -2198,8 +2336,11 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="openLane" class="modal-backdrop" @click.self="openLaneId = null">
-    <section class="modal lane-modal">
-      <p class="eyebrow">Swim lane</p>
+    <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
+      <div class="ticket-modal-header">
+        <p class="eyebrow">Swim lane</p>
+        <ExpandToggle v-model="laneModalExpanded" />
+      </div>
       <input
         class="ticket-title-input"
         :value="openLane.name"
@@ -2292,26 +2433,46 @@ const runTicketAgent = (ticket: Ticket) => {
         </span>
       </label>
 
+      <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+           clicking a wrapping caption would fire − and switch the lane off. -->
       <div class="orchestrator-poll-row">
-        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
-          <input
-            type="checkbox"
-            aria-label="Orchestrator poll active"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-        </label>
-        <label>
-          Orchestrator poll (minutes)
-          <input
-            type="number"
-            min="1"
-            step="1"
-            :value="orchestratorPollMinutes(openLane)"
-            :disabled="!orchestratorPollActive(openLane)"
-            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
-          />
-        </label>
+        <label
+          id="orchestrator-poll-caption"
+          :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
+        >Orchestrator poll (minutes)</label>
+        <div
+          class="poll-stepper"
+          role="group"
+          aria-labelledby="orchestrator-poll-caption"
+          :title="orchestratorPollTooltip(openLane)"
+        >
+          <button
+            type="button"
+            aria-label="Decrease orchestrator poll"
+            :aria-disabled="!orchestratorPollActive(openLane)"
+            @click="stepOrchestratorPoll(openLane.id, -1)"
+          >−</button>
+          <span class="poll-stepper-value">
+            <input
+              v-if="orchestratorPollActive(openLane)"
+              id="orchestrator-poll-minutes"
+              type="number"
+              min="1"
+              step="1"
+              :value="orchestratorPollMinutes(openLane)"
+              @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+            />
+            <span v-else role="img" aria-label="Orchestrator off">∞</span>
+          </span>
+          <span class="poll-stepper-status" aria-live="polite">{{
+            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Orchestrator off'
+          }}</span>
+          <button
+            type="button"
+            aria-label="Increase orchestrator poll"
+            @click="stepOrchestratorPoll(openLane.id, 1)"
+          >+</button>
+        </div>
       </div>
 
       <section class="ticket-agent">
@@ -2449,12 +2610,27 @@ const runTicketAgent = (ticket: Ticket) => {
           v-if="openLane.id !== UNASSIGNED_LANE_ID"
           class="secondary danger"
           :title="`Delete ${openLane.name} — its tickets move to ${UNASSIGNED_LANE_NAME}`"
-          @click="deleteLane(openLane)"
+          @click="askToDeleteLane(openLane)"
         >
           Delete lane
         </button>
         <span v-else class="field-hint">This column always exists — it holds tickets with no status.</span>
         <button @click="openLaneId = null">Done</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="lanePendingDeletion" class="modal-backdrop" @click.self="lanePendingDeletionId = null">
+    <section class="modal" role="alertdialog" aria-labelledby="delete-lane-question">
+      <p class="eyebrow">Delete lane</p>
+      <p id="delete-lane-question">Are you sure you want to delete the {{ lanePendingDeletion.name }} lane?</p>
+      <p v-if="pendingLaneTicketCount" class="field-hint">
+        Its {{ pendingLaneTicketCount }} {{ pendingLaneTicketCount === 1 ? 'ticket' : 'tickets' }} will move to
+        {{ UNASSIGNED_LANE_NAME }}.
+      </p>
+      <div class="modal-actions">
+        <button ref="laneDeleteConfirmCancelButton" class="secondary" @click="lanePendingDeletionId = null">Cancel</button>
+        <button class="secondary danger" @click="confirmDeleteLane">Delete</button>
       </div>
     </section>
   </div>

@@ -231,7 +231,7 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
   externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
-  images: true
+  images: true, moveRules: true, moveRulesPassedLaneId: true, readyLaneId: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
@@ -449,7 +449,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const sendProgress = (progress: ScanProgress) => {
         if (activeScan === scan) onScanProgress(progress)
       }
-      // A reload drops the renderer's scanning state and its Cancel button, so a hung
+      // A reload or window close drops the renderer's scanning state and its Cancel button, so a hung
       // scan would otherwise block every later scan until restart.
       const stopWatchingPage = onPageGone(() => scan.abort())
       try {
