@@ -207,6 +207,7 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
 - `src/components/CardMetrics.vue`, loaded each time the card expands.
 - Bar charts for **Tickets closed** and **PRs merged** per time window (plain CSS bars). Without a closing lane it says "No lane counts as closed — set one in lane settings"; without a repo or on a failed fetch it says why.
 - Tiles for **PRs open** and **Agents running** ("—" when processes can't be listed), and an "Updated <time>" line.
+- **Agents running** (here and in the 📊 panel) = distinct tickets with a live app-launched agent, i.e. a `claude`/`codex`/`hermes` process whose args carry the ticket session name `--name <N>-<Lane>`, attributed to the project (worktrees included) by cwd (`electron/metrics.ts`). Orchestrators, `codex app-server` daemons, manual and headless sessions don't count; agents without `--name` support (Codex, Hermes) aren't counted either.
 
 #### Empty state
 
