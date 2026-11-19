@@ -61,7 +61,7 @@
 - Outside click: popover lives in a `v-for`, so no single template ref. Close when `event.target` isn't inside `.lane-fields-menu` (`closest`). Register alongside the existing modal-fields outside-click listener.
 - Escape: close lane fields menu first, next to the `modalFieldsMenuOpen` branch `:654`.
 - Close menu when a lane drag starts or the lane is deleted (stale id harmless otherwise — popover just doesn't render).
-- Markup: after the ✎ button, wrapper `div.filter-menu.lane-fields-menu` with `@pointerdown.stop` + `@dblclick.stop` (header owns drag + draft). Button: `aria-haspopup="true"`, `:aria-expanded`, `:aria-label="`Card fields in ${lane.name}`"`, `title="Card fields shown in this lane"`. Popover `role="group"`, `aria-label="Card fields shown in this lane"`.
+- Markup: after the ✎ button, wrapper `div.filter-menu.lane-fields-menu` with `@dblclick.stop` (header owns draft); `startLaneDrag` ignores presses inside `.lane-fields-menu` so outside-click handlers for other menus still see them. Button: `aria-haspopup="true"`, `:aria-expanded`, `:aria-label="`Card fields in ${lane.name}`"`, `title="Card fields shown in this lane"`. Popover `role="group"`, `aria-label="Card fields shown in this lane"`.
 - Popover anchored right (`right: 0`) so it doesn't overflow narrow lanes; check against `MIN_LANE_WIDTH`.
 
 ### Not touched

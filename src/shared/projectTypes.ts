@@ -1958,10 +1958,9 @@ export const toggleLaneCardField = (
   field: TicketCardField
 ): BoardPreferences => {
   const hiddenInLane = preferences.hiddenLaneCardFields[laneId] ?? []
-  return {
-    ...preferences,
-    hiddenLaneCardFields: { ...preferences.hiddenLaneCardFields, [laneId]: toggleInList(hiddenInLane, field) }
-  }
+  const nextHiddenInLane = toggleInList(hiddenInLane, field)
+  const hiddenLaneCardFields = { ...preferences.hiddenLaneCardFields, [laneId]: nextHiddenInLane }
+  return { ...preferences, hiddenLaneCardFields }
 }
 
 export const setLaneWidth = (

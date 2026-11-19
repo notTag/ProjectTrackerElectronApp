@@ -351,7 +351,7 @@ const startTicketDraftFromHeading = (laneId: string) => {
 }
 
 const startLaneDrag = (lane: SwimLane, event: PointerEvent) => {
-  const pressedHeaderButton = (event.target as HTMLElement).closest('button')
+  const pressedHeaderButton = (event.target as HTMLElement).closest('button, .lane-fields-menu')
   if (event.button !== 0 || pressedHeaderButton || !laneCanMove(lane.id)) return
   laneDrag.value = { laneId: lane.id, startX: event.clientX, offsetX: 0, active: false, beforeLaneId: null, indicatorLeft: null }
   // Captured straight away (as the resize handle does) so a fast flick that
@@ -449,7 +449,7 @@ const focusLaneHeading = (laneId: string) => {
 const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   const isLeft = event.key === 'ArrowLeft'
   const isRight = event.key === 'ArrowRight'
-  // Keys bubbling up from the ▶ / ⚙ buttons inside the header aren't a lane move.
+  // Keys bubbling up from the ▶ / ✎ / ⚙ buttons inside the header aren't a lane move.
   const fromHeadingItself = event.target === event.currentTarget
   if (!fromHeadingItself || !event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
   event.preventDefault()
@@ -678,6 +678,9 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     return
   }
   if (laneFieldsMenuLaneId.value) {
+    // The focused checkbox unmounts with the popover; hand focus back to its cog.
+    const openMenu = document.activeElement?.closest('.lane-fields-menu')
+    openMenu?.querySelector<HTMLElement>('button')?.focus()
     laneFieldsMenuLaneId.value = null
     event.preventDefault()
     return
@@ -1685,7 +1688,7 @@ const runTicketAgent = (ticket: Ticket) => {
           >
             ✎
           </button>
-          <div class="filter-menu lane-fields-menu" @pointerdown.stop @dblclick.stop>
+          <div class="filter-menu lane-fields-menu" @dblclick.stop>
             <button
               type="button"
               class="icon-button"

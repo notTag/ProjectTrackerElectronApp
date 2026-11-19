@@ -284,7 +284,7 @@ From left to right:
 
 - **Header**: lane name, count of matching tickets, and two buttons:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
-  - **⚙** opens the Lane settings modal (3.9).
+  - **✎** (Edit lane) opens the Lane settings modal (3.9); **⚙** opens the lane's card-field popover (3.5).
   - Narrow lanes: the buttons and badges keep their size and stay inside the lane. The name gives up space first: it stays on one line and truncates with an ellipsis, with the full name on hover (`.lane-heading` in `styles.css`).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
@@ -438,7 +438,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Cancel** undoes the edits made since the modal opened, then closes it.
 - **Done** closes the modal and keeps edits. So do clicking the backdrop and Escape.
 
-### 3.9 Lane settings modal (⚙ on a lane)
+### 3.9 Lane settings modal (✎ on a lane)
 
 - **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
 - **Lane name** input, for renaming.
