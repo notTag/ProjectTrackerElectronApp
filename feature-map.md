@@ -593,7 +593,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 ### 4.6 Build and release — `package.json`
 
-- `bun run dev` runs the Vite dev server and Electron together with hot reload.
+- `bun run dev` (`scripts/dev.mjs`) runs the Vite dev server and Electron together with hot reload. Each checkout gets its own fixed port: main checkout 5173, a linked worktree 5200–5899 hashed from its path; `PROJECT_TRACKER_DEV_PORT` overrides. A taken port fails loudly (`--strictPort`) instead of drifting. Cmd+Q, closing the last window (dev only) or Ctrl+C stops both and frees the port.
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
