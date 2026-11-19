@@ -722,11 +722,15 @@ describe('ticketShellCommand', () => {
       createDefaultBoardPreferences()
     )
     expect(everyFieldHidden.hiddenLaneModalFields).toHaveLength(LANE_MODAL_FIELDS.length)
+    expect(everyFieldHidden.hiddenLaneModalFieldsByLane[promptLane.id]).toHaveLength(LANE_MODAL_FIELDS.length)
 
     const promptAfter = ticketAgentPrompt(ticket(), promptLane)
     expect(promptAfter).toBe(promptBefore)
     expect(promptAfter).toContain('Ship it.')
-    expect(ticketAgentPrompt(ticket(), lane({ agentPrompt: '' }))).not.toContain('Instructions')
+
+    const promptlessLane = lane({ agentPrompt: '' })
+    const promptWithoutInstructions = ticketAgentPrompt(ticket(), promptlessLane)
+    expect(promptWithoutInstructions).not.toContain('Instructions')
   })
 
   it('lists external links only when the ticket has some', () => {
