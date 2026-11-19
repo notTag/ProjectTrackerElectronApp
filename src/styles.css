@@ -1596,7 +1596,8 @@ code {
 }
 
 /* InfoTip (#102): inline ⓘ beside a field label, same bare-glyph treatment as
-   the ⚙ .icon-button. CSS shows the bubble on hover/focus; .dismissed is set
+   the ⚙ .icon-button. CSS shows the bubble on hover or keyboard focus
+   (:focus-visible, so a mouse click leaves no sticky tip); .dismissed is set
    by the first Escape. ponytail: left-anchored, no flip; add a right-anchored
    variant if a call site sits near a modal's right edge. */
 .label-with-tip {
@@ -1648,13 +1649,9 @@ code {
   white-space: normal;
 }
 
-.info-tip:hover .info-tip-bubble,
-.info-tip:focus-within .info-tip-bubble {
+.info-tip:not(.dismissed):hover .info-tip-bubble,
+.info-tip:not(.dismissed):has(.info-tip-button:focus-visible) .info-tip-bubble {
   display: block;
-}
-
-.info-tip.dismissed .info-tip-bubble {
-  display: none;
 }
 
 .field-hint.field-error {

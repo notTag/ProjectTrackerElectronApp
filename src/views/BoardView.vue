@@ -2349,12 +2349,13 @@ const runTicketAgent = (ticket: Ticket) => {
         @change="editLane(openLane, { name: ($event.target as HTMLInputElement).value })"
       />
 
-      <label>
+      <label for="lane-agent-prompt">
         <span class="label-with-tip">
           Agent prompt
-          <InfoTip text="Instructions sent to the agent when a ticket enters this lane. Autosaves to SwimlaneAgentPrompt/<lane>/ as markdown." />
+          <InfoTip text="Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/)." />
         </span>
         <textarea
+          id="lane-agent-prompt"
           class="agent-prompt"
           :value="laneMarkdownDraft.agent.prompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
@@ -2391,12 +2392,13 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
-      <label>
+      <label for="lane-orchestrator-prompt">
         <span class="label-with-tip">
           Orchestrator prompt
           <InfoTip text="Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." />
         </span>
         <textarea
+          id="lane-orchestrator-prompt"
           class="agent-prompt orchestrator-prompt"
           :value="laneMarkdownDraft.orchestrator.prompt"
           spellcheck="false"

@@ -17,14 +17,14 @@
   - `<span :id="tipId" role="tooltip" class="info-tip-bubble">{{ text }}</span>`
   - `tipId` from Vue 3.5 `useId()` (vue `^3.5.16` installed). No hand-rolled counter.
 - Glyph treatment follows the `⚙` in `.icon-button`: unicode glyph, `currentColor`, no SVG/icon lib. Sized for inline use (~1em, not the 40px header box), color `--color-text-muted`, hover `--color-text`. No border/background, focus ring via `:focus-visible`.
-- Show/hide: CSS `.info-tip:hover .info-tip-bubble, .info-tip:focus-within .info-tip-bubble { display: block }`. Blur hides it for free.
+- Show/hide: CSS `.info-tip:hover` or `.info-tip:has(.info-tip-button:focus-visible)` shows the bubble. `:focus-visible`, not `:focus-within`: a mouse click focuses the button in Chromium, and `:focus-within` would leave the tip stuck open over the textarea.
 - Esc: one bit of state, `dismissed`.
-  - `@keydown.esc` on the button: if tip is showing and not dismissed → set `dismissed = true`, `stopPropagation()` (modal stays open). If already dismissed → let it bubble so a second Esc closes the modal as usual.
-  - Reset `dismissed` on `blur` / `mouseleave`.
-  - `.info-tip.dismissed .info-tip-bubble { display: none }` wins over hover/focus.
+  - Window `keydown` listener in the capture phase: if the tip is showing (wrapper `:hover` or button `:focus-visible`) and not dismissed → set `dismissed = true`, `stopPropagation()` (modal stays open). Capture phase, so a hover-shown tip hides on Esc too, not only a focused one. Otherwise it passes through and Esc closes the modal as usual.
+  - Reset `dismissed` once neither shows it: on `mouseleave` when not keyboard-focused, on `blur` when not hovered.
+  - Show rules carry `:not(.dismissed)`. A separate `.dismissed { display: none }` rule loses to the `:has()` show rule on specificity.
   - Works because the button's keydown bubbles up before the `window` listener runs.
-- Click: `@click.prevent` on the button. Inside a `<label>`, a click would otherwise toggle the checkbox / focus the textarea.
-  - `<button>` is interactive content, so the label shouldn't activate anyway. Keep `.prevent` regardless: cheap, and explicit about intent.
+- Click: `@click.prevent` on the wrapper. A click on the button never activates the label (interactive content), but a click on the bubble text would toggle the Full auto checkbox.
+  - Prompt labels get `for` + textarea `id`: otherwise the label's first labelable descendant is the ⓘ button, and clicking the label text no longer focuses the textarea.
 - Bubble styling: `--color-surface-raised` background, `--color-text` text, `--color-border` border, existing radius/shadow look. `font-size: 0.75rem` (matches `.field-hint`), `font-weight: normal`, `white-space: normal`. So light + dark themes come from tokens, no per-theme CSS.
 - Positioning (no flip logic, per out-of-scope):
   - `top: calc(100% + 4px); left: 0; width: max-content; max-width: min(280px, 70vw); z-index` above modal content.
