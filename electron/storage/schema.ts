@@ -250,3 +250,4 @@ export const SETTING_UPDATED_AT = 'updated_at'
 // columns on swim_lanes: they are per-user and purely presentational, so they
 // never need to be queried, joined, or migrated alongside the shared board.
 export const SETTING_BOARD_PREFERENCES = 'board_preferences'
+export const SETTING_THEME = 'theme'
