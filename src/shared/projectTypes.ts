@@ -768,11 +768,30 @@ export const ticketShellCommand = (
   sessionId?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket), sessionId })
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket, lane), sessionId })
 }
 
-// Number only: a title can be edited later, and the number is what people search for.
-export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
+// Control characters become spaces: a title fed through a terminal escape could
+// otherwise end the sequence early (ESC, BEL) and inject its own.
+const singleLineText = (text: string): string => {
+  const withoutControlCharacters = text.replace(/\p{Cc}/gu, ' ')
+  const collapsedWhitespace = withoutControlCharacters.replace(/\s+/g, ' ')
+  return collapsedWhitespace.trim()
+}
+
+const dashedWord = (text: string): string => singleLineText(text).split(' ').join('-')
+
+// The lane as one dash-joined word, so parallel runs of one ticket in different
+// lanes are told apart. Unassigned reads "Unassigned" whatever that column is
+// called; a name that sanitizes to nothing falls back to the lane id.
+export const laneTitleToken = (lane: Pick<SwimLane, 'id' | 'name'>): string => {
+  if (lane.id === UNASSIGNED_LANE_ID) return 'Unassigned'
+  return dashedWord(lane.name) || dashedWord(lane.id)
+}
+
+// Number and lane only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Pick<Ticket, 'number'>, lane: Pick<SwimLane, 'id' | 'name'>): string =>
+  `${ticket.number}-${laneTitleToken(lane)}`
 
 // A model starting with "-" would read as another flag, so it counts as empty.
 // `quote` lets the terminal path shell-quote the model; argv needs no quoting.
@@ -914,15 +933,21 @@ export const ticketBranchName = (ticket: Ticket): string => {
 // which is why the number leads.
 const TAB_TITLE_MAX_CODE_POINTS = 40
 
-// Control characters become spaces: a title fed through a terminal escape could
-// otherwise end the sequence early (ESC, BEL) and inject its own. Counting code
-// points rather than UTF-16 units keeps an emoji's surrogate pair whole at the cut.
-export const ticketTabTitle = (ticket: Pick<Ticket, 'number' | 'title'>): string => {
-  const singleLineTitle = ticket.title.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
-  const codePoints = Array.from(`#${ticket.number} ${singleLineTitle}`.trim())
-  if (codePoints.length <= TAB_TITLE_MAX_CODE_POINTS) return codePoints.join('')
-  const keptText = codePoints.slice(0, TAB_TITLE_MAX_CODE_POINTS).join('').trimEnd()
-  return `${keptText}…`
+// Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
+// whole at the cut. Only the ticket title is cut: the number-lane prefix is what
+// tells tabs apart.
+export const ticketTabTitle = (
+  ticket: Pick<Ticket, 'number' | 'title'>,
+  lane: Pick<SwimLane, 'id' | 'name'>
+): string => {
+  const prefix = ticketSessionName(ticket, lane)
+  const titleCodePoints = Array.from(singleLineText(ticket.title))
+  if (titleCodePoints.length === 0) return prefix
+  const titleBudget = TAB_TITLE_MAX_CODE_POINTS - Array.from(prefix).length - 1
+  if (titleCodePoints.length <= titleBudget) return `${prefix}-${titleCodePoints.join('')}`
+  const keptTitleCodePoints = titleCodePoints.slice(0, Math.max(titleBudget, 0))
+  const keptTitle = keptTitleCodePoints.join('').trimEnd()
+  return keptTitle ? `${prefix}-${keptTitle}…` : prefix
 }
 
 // One tab of a terminal launch. No title leaves the terminal's own.
@@ -964,7 +989,7 @@ export const buildAutoRunLaunch = (
   // Fresh per launch: the CLI refuses a session id that is already in use.
   const sessionId = newAgentSessionId(agent)
   const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
-  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) }
+  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket, lane) }
   return { ticket, launch, agentId: agent.id, sessionId }
 }
 
@@ -1073,9 +1098,9 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     `Open tab titles in ${context.terminalLabel}:`,
     recipes.listTabs,
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
-    'open new tabs for later lanes under the same title. Match the whole title: other projects reuse ticket numbers.',
+    'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
     '',
-    'Close a done ticket\'s tab (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
+    'Close a done ticket\'s tab and each of its handoff tabs (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
   ].join('\n')
 }
@@ -1152,9 +1177,20 @@ const orchestratorPromptParts = (
   entries: AutoRunLaunchEntry[],
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
+  const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
   const ticketLines = entries.map(({ ticket, launch }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
+    if (!handsOff) return line
+    // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
+    const handoffTitles = context.lanes
+      .filter(laneHasAgentWork)
+      .map((boardLane) => ticketTabTitle(ticket, boardLane))
+      .filter((title) => title !== tabTitle)
+    if (handoffTitles.length === 0) return line
+    const quotedHandoffTitles = handoffTitles.map((title) => `"${title}"`).join(', ')
+    return `${line} — handoff tabs ${quotedHandoffTitles}`
   })
   const laneLines = context.lanes.map(
     (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
@@ -1240,6 +1276,10 @@ export interface FullAutoHandoff {
 
 export const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
   laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
+
+// A laneId naming no lane shows in the unassigned column, so it is that lane.
+export const currentLaneOf = (board: ProjectBoard, ticket: Pick<Ticket, 'laneId'>): SwimLane =>
+  boardLaneById(board, ticket.laneId) ?? getUnassignedLane(board)
 
 // A ticket's own Next Lane wins; without one it inherits its lane's. The modal
 // and completionMoves both resolve through here so what is shown is what moves.
