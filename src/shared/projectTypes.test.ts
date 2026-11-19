@@ -1774,18 +1774,37 @@ describe('Auto Run orchestrator', () => {
   describe('buildOrchestratorLaunch', () => {
     it('sends an orchestrator for a one-ticket run', () => {
       const oneTicket = entries.slice(0, 1)
-      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))!
+      const launch = buildOrchestratorLaunch(inDev, oneTicket, DEFAULT_AGENT, context('ghostty'))
       expect(launch.command).toContain('#12 First thing')
       expect(launch.command).not.toContain('#13 Second thing')
     })
 
-    it('sends no orchestrator when the lane turned its orchestrator off', () => {
-      const inactive = { ...inDev, orchestratorPollActive: false }
-      expect(buildOrchestratorLaunch(inactive, entries, DEFAULT_AGENT, context('ghostty'))).toBeUndefined()
+    it('sends a waiting orchestrator when the lane never polls', () => {
+      const neverPolls = { ...inDev, orchestratorPollActive: false, orchestratorPollMinutes: 1 }
+      const launch = buildOrchestratorLaunch(neverPolls, entries, DEFAULT_AGENT, context('ghostty'))
+      expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+      expect(launch.command).toContain('do not poll, sleep, loop or schedule wake-ups')
+      expect(launch.command).toContain('only when a message from a ticket agent arrives')
+      expect(launch.command).not.toContain('sleep 60')
+      expect(launch.command).not.toContain('every 1 minutes')
+    })
+
+    it('keeps the poll step for a polling lane', () => {
+      const polling = { ...inDev, orchestratorPollActive: true, orchestratorPollMinutes: 3 }
+      const launch = buildOrchestratorLaunch(polling, entries, DEFAULT_AGENT, context('ghostty'))
+      expect(launch.command).toContain('every 3 minutes (sleep 180)')
+      expect(launch.command).not.toContain('do not poll')
+    })
+
+    it('previews the waiting step in the template for a lane that never polls', () => {
+      const neverPolls = { ...inDev, orchestratorPollActive: false }
+      const template = orchestratorPromptTemplate(neverPolls, context('ghostty'))
+      expect(template).toContain('gather the state above once')
+      expect(template).not.toContain('(sleep ')
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
-      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))!
+      const launch = buildOrchestratorLaunch(inDev, entries, DEFAULT_AGENT, context('ghostty'))
       expect(launch.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
       expect(launch.command.startsWith("claude --name 'AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT' '")).toBe(true)
       expect(launch.command).toContain("it'\\''s-mine")
