@@ -317,6 +317,7 @@ From left to right:
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
+- **Per-lane card fields** (⚙ at the top right of each lane header, incl. No status): the same checkboxes for that lane only, saved per user in `BoardPreferences.hiddenLaneCardFields`. Board setting is the default; a lane can only hide further, so a board-hidden field shows disabled with "Hidden for the whole board". Display-only: the agent prompt is unchanged. The lane settings button beside it is ✎ "Edit lane".
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.

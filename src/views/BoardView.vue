@@ -68,6 +68,7 @@ import {
   carriedTicketIds,
   ticketsToRun,
   toggleCardField,
+  toggleLaneCardField,
   toggleModalField,
   TICKET_MODAL_FIELDS,
   type TicketModalField,
@@ -180,8 +181,26 @@ const hiddenLaneIds = computed(() => new Set(preferences.value.hiddenLaneIds))
 const laneIsHidden = (laneId: string) => hiddenLaneIds.value.has(laneId)
 const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLane(preferences.value, laneId))
 
-const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
+// The board setting is every lane's default; a lane's cog can only hide further.
+const shownOnBoard = (field: TicketCardField) => preferences.value.cardFields.includes(field)
+const hiddenInLane = (field: TicketCardField, laneId: string) =>
+  preferences.value.hiddenLaneCardFields[laneId]?.includes(field) ?? false
+const showsField = (field: TicketCardField, laneId: string) => shownOnBoard(field) && !hiddenInLane(field, laneId)
 const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(preferences.value, field))
+const toggleLaneField = (laneId: string, field: TicketCardField) =>
+  savePreferences(toggleLaneCardField(preferences.value, laneId, field))
+
+// One popover at a time. It renders inside the lane v-for, so outside clicks
+// are detected by class rather than a single template ref.
+const laneFieldsMenuLaneId = ref<string | null>(null)
+const toggleLaneFieldsMenu = (laneId: string) => {
+  laneFieldsMenuLaneId.value = laneFieldsMenuLaneId.value === laneId ? null : laneId
+}
+const closeLaneFieldsMenuOnOutsideClick = (event: PointerEvent) => {
+  const target = event.target as Element | null
+  if (target?.closest('.lane-fields-menu')) return
+  laneFieldsMenuLaneId.value = null
+}
 
 // Display-only: ticketAgentPrompt never reads preferences, so hidden fields still reach the agent.
 const hidesModalField = (field: TicketModalField) => preferences.value.hiddenModalFields.includes(field)
@@ -657,6 +676,11 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
+  if (laneFieldsMenuLaneId.value) {
+    laneFieldsMenuLaneId.value = null
+    event.preventDefault()
+    return
+  }
   // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
   if (ticketPendingDeletion.value) {
     ticketPendingDeletion.value = null
@@ -693,6 +717,7 @@ onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
   window.addEventListener('keydown', handleBoardKeydown)
   window.addEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
+  window.addEventListener('pointerdown', closeLaneFieldsMenuOnOutsideClick)
   window.addEventListener('pointerdown', closeLaneFilterMenuOnOutsideClick)
 })
 
@@ -720,6 +745,7 @@ const hideAddZoneLater = () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
   window.removeEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
+  window.removeEventListener('pointerdown', closeLaneFieldsMenuOnOutsideClick)
   window.removeEventListener('pointerdown', closeLaneFilterMenuOnOutsideClick)
   clearTimeout(addZoneHideTimer)
   ticketDraft.value?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
@@ -1651,12 +1677,52 @@ const runTicketAgent = (ticket: Ticket) => {
           </button>
           <button
             class="icon-button"
-            title="How you want to build it"
+            title="Edit lane"
+            aria-label="Edit lane"
             @click="openLaneId = lane.id"
             @dblclick.stop
           >
-            ⚙
+            ✎
           </button>
+          <div class="filter-menu lane-fields-menu" @pointerdown.stop @dblclick.stop>
+            <button
+              type="button"
+              class="icon-button"
+              title="Card fields shown in this lane"
+              :aria-label="`Card fields in ${lane.name}`"
+              aria-haspopup="true"
+              :aria-expanded="laneFieldsMenuLaneId === lane.id"
+              @click="toggleLaneFieldsMenu(lane.id)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+            <div
+              v-if="laneFieldsMenuLaneId === lane.id"
+              class="filter-popover"
+              role="group"
+              aria-label="Card fields shown in this lane"
+            >
+              <label
+                v-for="field in TICKET_CARD_FIELDS"
+                :key="field.id"
+                :title="shownOnBoard(field.id) ? undefined : 'Hidden for the whole board'"
+              >
+                <input
+                  type="checkbox"
+                  :checked="showsField(field.id, lane.id)"
+                  :disabled="!shownOnBoard(field.id)"
+                  @change="toggleLaneField(lane.id, field.id)"
+                />
+                <span>
+                  {{ field.label }}
+                  <small v-if="!shownOnBoard(field.id)" class="field-hint">Hidden for the whole board</small>
+                </span>
+              </label>
+            </div>
+          </div>
         </header>
 
         <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
@@ -1687,7 +1753,7 @@ const runTicketAgent = (ticket: Ticket) => {
                 :aria-label="cardAgentBadge(ticket)?.label"
                 :title="cardAgentBadge(ticket)?.label"
               >{{ cardAgentBadge(ticket)?.glyph }}</span>
-              <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
+              <span v-if="showsField('number', lane.id)" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span
                 v-if="isFullAuto(ticket, laneOfTicket(ticket))"
@@ -1700,42 +1766,42 @@ const runTicketAgent = (ticket: Ticket) => {
                 :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
               >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
             </h3>
-            <p v-if="showsField('description') && ticket.description" class="ticket-preview">
+            <p v-if="showsField('description', lane.id) && ticket.description" class="ticket-preview">
               {{ ticket.description }}
             </p>
-            <p v-if="showsField('assignee') && ticket.assigneeId" class="ticket-assignee">
+            <p v-if="showsField('assignee', lane.id) && ticket.assigneeId" class="ticket-assignee">
               {{ assigneeName(ticket.assigneeId) }}
             </p>
-            <ul v-if="showsField('labels') && ticket.labels?.length" class="ticket-labels">
+            <ul v-if="showsField('labels', lane.id) && ticket.labels?.length" class="ticket-labels">
               <li v-for="label in ticket.labels" :key="label">{{ label }}</li>
             </ul>
             <p
               v-if="
-                (showsField('checklist') && ticket.checklist?.length) ||
-                (showsField('branch') && ticket.branchName) ||
-                (showsField('worktree') && ticket.worktreePath) ||
-                (showsField('version') && ticket.version) ||
-                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
+                (showsField('checklist', lane.id) && ticket.checklist?.length) ||
+                (showsField('branch', lane.id) && ticket.branchName) ||
+                (showsField('worktree', lane.id) && ticket.worktreePath) ||
+                (showsField('version', lane.id) && ticket.version) ||
+                (showsField('pullRequest', lane.id) && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
             >
-              <span v-if="showsField('checklist') && ticket.checklist?.length">
+              <span v-if="showsField('checklist', lane.id) && ticket.checklist?.length">
                 ☑ {{ checklistProgress(ticket.checklist).done }}/{{ checklistProgress(ticket.checklist).total }}
               </span>
-              <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
+              <span v-if="showsField('branch', lane.id) && ticket.branchName" class="ticket-branch">
                 ⑂ {{ ticket.branchName }}
               </span>
               <span
-                v-if="showsField('worktree') && ticket.worktreePath"
+                v-if="showsField('worktree', lane.id) && ticket.worktreePath"
                 class="ticket-branch"
                 :title="ticket.worktreePath"
               >
                 ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
               </span>
-              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
+              <span v-if="showsField('version', lane.id) && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
               <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
               <a
-                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
+                v-if="showsField('pullRequest', lane.id) && isWebUrl(ticket.pullRequestUrl)"
                 :href="ticket.pullRequestUrl"
                 target="_blank"
                 draggable="false"
@@ -1792,7 +1858,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <ul class="card-field-list">
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
-            <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
+            <input type="checkbox" :checked="shownOnBoard(field.id)" @change="toggleField(field.id)" />
             {{ field.label }}
           </label>
         </li>

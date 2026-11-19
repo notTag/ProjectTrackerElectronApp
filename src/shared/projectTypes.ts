@@ -1887,6 +1887,9 @@ export interface BoardPreferences {
   knownCardFields?: TicketCardField[]
   // The hidden list, not the shown one, so modal fields added later show by default.
   hiddenModalFields: TicketModalField[]
+  // laneId → card fields hidden in that lane only, on top of cardFields. Hidden
+  // list for the same reason as hiddenModalFields.
+  hiddenLaneCardFields: Record<string, TicketCardField[]>
 }
 
 const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
@@ -1906,7 +1909,8 @@ export const createDefaultBoardPreferences = (): BoardPreferences => ({
   hiddenLaneIds: [],
   cardFields: [...ALL_CARD_FIELDS],
   knownCardFields: [...ALL_CARD_FIELDS],
-  hiddenModalFields: []
+  hiddenModalFields: [],
+  hiddenLaneCardFields: {}
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
@@ -1945,6 +1949,18 @@ export const toggleModalField = (preferences: BoardPreferences, field: TicketMod
   ...preferences,
   hiddenModalFields: toggleInList(preferences.hiddenModalFields, field)
 })
+
+export const toggleLaneCardField = (
+  preferences: BoardPreferences,
+  laneId: string,
+  field: TicketCardField
+): BoardPreferences => {
+  const hiddenInLane = preferences.hiddenLaneCardFields[laneId] ?? []
+  return {
+    ...preferences,
+    hiddenLaneCardFields: { ...preferences.hiddenLaneCardFields, [laneId]: toggleInList(hiddenInLane, field) }
+  }
+}
 
 export const setLaneWidth = (
   preferences: BoardPreferences,
