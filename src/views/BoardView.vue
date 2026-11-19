@@ -1021,7 +1021,7 @@ const stepOrchestratorPoll = (laneId: string, step: -1 | 1) => {
 }
 
 const orchestratorPollTooltip = (lane: SwimLane): string => {
-  if (!orchestratorPollActive(lane)) return 'Off: Auto Run launches no Orchestrator agent for this lane.'
+  if (!orchestratorPollActive(lane)) return 'The Orchestrator agent never polls: it waits for messages from the ticket agents.'
   const pollInterval = plural(orchestratorPollMinutes(lane), 'minute')
   return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
@@ -2303,7 +2303,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         for {{ autoRunTickets(autoRunConfirmLane).length }} tickets?
       </p>
-      <section v-if="orchestratorPollActive(autoRunConfirmLane)" class="auto-run-orchestrator">
+      <section class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
         <div class="auto-run-orchestrator-fields">
           <label>
@@ -2415,7 +2415,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="storeTypedPrompts"
         />
         <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run while the poll checkbox is on). {{tickets}}, {{ticket_numbers}},
+          Sent to the Auto Run orchestrator (runs on every Auto Run). {{tickets}}, {{ticket_numbers}},
           {{lanes}}, {{terminal}} are filled in at launch.
         </span>
         <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
@@ -2424,7 +2424,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
       <button
         v-if="openLaneOrchestratorOverride"
-        class="secondary save-agent-markdown"
+        class="secondary lane-prompt-reset"
         type="button"
         @click="editLane(openLane, { orchestratorPromptOverride: '' })"
       >
@@ -2481,10 +2481,10 @@ const runTicketAgent = (ticket: Ticket) => {
               :value="orchestratorPollMinutes(openLane)"
               @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
             />
-            <span v-else role="img" aria-label="Orchestrator off">∞</span>
+            <span v-else role="img" aria-label="Orchestrator never polls">∞</span>
           </span>
           <span class="poll-stepper-status" aria-live="polite">{{
-            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Orchestrator off'
+            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Never polls'
           }}</span>
           <button
             type="button"

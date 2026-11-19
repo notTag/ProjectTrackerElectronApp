@@ -620,7 +620,7 @@ const guardAgainstOptionParsing = (prompt: string): string =>
 export const isFullAuto = (ticket: Ticket, lane: SwimLane): boolean => Boolean(lane.fullAuto || ticket.fullAuto)
 
 const FULL_AUTO_INSTRUCTION =
-  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows `Open Questions: 0`); otherwise stop with the open questions as the last thing on screen and leave the session open."
+  "Full auto is on. Work without stopping to ask for confirmation. Leave the ticket in this lane while you work, even if other instructions say to move it when work starts: any move starts the next lane's agent. Move it once, when this lane's work is done, to the next lane as instructed above. Not stopping to ask does not mean dropping questions: anything only the user can answer goes in your open questions. Exit only when nothing waits on the user (your final footer shows `Open Questions: 0`); otherwise stop with the open questions as the last thing on screen and leave the session open. Finish in this order: move the ticket (when allowed), print your final footer, then message the orchestrator, if one is watching this lane, as your very last action. Nothing but exiting comes after that message."
 
 // The official SemVer 2.0 pattern (semver.org), unchanged.
 const SEMANTIC_VERSION_PATTERN =
@@ -1012,7 +1012,7 @@ export const orchestratorPollMinutes = (lane: SwimLane): number => {
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
-// Off (shown as ∞) sits below 1: stepping down from 1 turns the orchestrator off
+// Never polls (shown as ∞) sits below 1: stepping down from 1 stops polling
 // and leaves the stored minutes alone; stepping up from off lands on 1.
 export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<SwimLane> | undefined => {
   if (!orchestratorPollActive(lane)) {
@@ -1102,15 +1102,16 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
     'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
     '',
-    'Close a done ticket\'s tab and each of its handoff tabs (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
+    'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any title more than one open tab matches (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
   ].join('\n')
 }
 
 // User text may tune the Loop (which tabs to close) but the
-// report-only rule guards a DB shared with the app, so it always wins.
+// report-only rule guards a DB shared with the app, and closing a tab
+// before its ticket leaves the lane strands a running run (#106), so both win.
 const LANE_INSTRUCTIONS_PRECEDENCE =
-  'These override the Loop above (e.g. closing tabs), but never the report-only rule.'
+  'These override the Loop above (e.g. which tabs to close), but never the report-only rule or the rule to close a tab only after its ticket has left this lane.'
 
 const laneInstructionsSection = (lane: SwimLane): string => {
   const laneInstructions = lane.orchestratorPrompt?.trim() ?? ''
@@ -1166,6 +1167,12 @@ const renderOrchestratorPrompt = (
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
   const pollSeconds = pollMinutes * 60
+  const gatherStep = orchestratorPollActive(lane)
+    ? `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`
+    : [
+        '1. On start, gather the state above once. Then do not poll, sleep, loop or schedule wake-ups: end your turn and wait.',
+        '   Gather the state again only when a message from a ticket agent arrives.'
+      ].join('\n')
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
@@ -1183,12 +1190,15 @@ const renderOrchestratorPrompt = (
     parts.terminal,
     [
       'Loop:',
-      `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
+      gatherStep,
       '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
       '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
       '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
       `   or its tab is gone while it is still in the ${lane.id} lane.`,
       '4. Done = it is in a lane with agent work: no, or its PR is merged. When a ticket becomes done, close its tab and say so.',
+      `   Close this lane's tab only after the ticket query shows the ticket has left the ${lane.id} lane, never on a done message alone:`,
+      '   re-run the ticket query first. Close handoff tabs only once the ticket is done: they are the next lane\'s running agents.',
+      '   A merged ticket still in this lane keeps its tab: report it instead. Never close when more than one open tab matches the title.',
       '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
     ].join('\n'),
     laneInstructionsSection(lane)
@@ -1265,8 +1275,7 @@ export const buildOrchestratorLaunch = (
   agent: Agent,
   context: OrchestratorPromptContext,
   model?: string
-): TerminalTab | undefined => {
-  if (!orchestratorPollActive(lane)) return undefined
+): TerminalTab => {
   const prompt = orchestratorPrompt(lane, entries, context)
   const title = orchestratorTabTitle(lane)
   return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
