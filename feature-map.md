@@ -55,7 +55,7 @@ Shown in the Dashboard title strip.
 - Themes come from `@nick_tag_tech/themes` and are grouped under **light** and **dark** headings, each with an accent-color swatch.
 - Hovering a theme previews it. Moving off the menu, clicking outside it, or closing it reverts the preview.
 - Clicking a theme applies it. A ✓ marks the current theme.
-- The choice is stored in `localStorage` under `project-tracker-theme`.
+- Only a clicked choice is saved, never a hover preview. It goes to SQLite `user_settings` key `theme` (per user), so it survives restarts, dev-server port changes and dev ↔ packaged builds. `localStorage` key `project-tracker-theme` is kept only as a first-paint cache; on boot the DB theme wins, and an existing localStorage theme is adopted into an empty DB once. Unknown ids fall back to the default. (`useThemePersistence` in `src/stores/theme.ts`)
 - macOS draws the window buttons light or dark to match the theme type, so they stay readable on dark themes.
 
 ### 1.6 Open In picker — `src/components/OpenInPicker.vue`, `src/shared/openInTargets.ts`
@@ -207,6 +207,7 @@ The list is a grid of cards. When a card in the right-hand column is expanded, i
 - `src/components/CardMetrics.vue`, loaded each time the card expands.
 - Bar charts for **Tickets closed** and **PRs merged** per time window (plain CSS bars). Without a closing lane it says "No lane counts as closed — set one in lane settings"; without a repo or on a failed fetch it says why.
 - Tiles for **PRs open** and **Agents running** ("—" when processes can't be listed), and an "Updated <time>" line.
+- **Agents running** (here and in the 📊 panel) = distinct tickets with a live app-launched agent, i.e. a `claude`/`codex`/`hermes` process whose args carry the ticket session name `--name <N>-<Lane>`, attributed to the project (worktrees included) by cwd (`electron/metrics.ts`). Orchestrators, `codex app-server` daemons, manual and headless sessions don't count; agents without `--name` support (Codex, Hermes) aren't counted either.
 
 #### Empty state
 
@@ -284,6 +285,7 @@ From left to right:
 - **Header**: lane name, count of matching tickets, and two buttons:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
+  - Narrow lanes: the buttons and badges keep their size and stay inside the lane. The name gives up space first: it stays on one line and truncates with an ellipsis, with the full name on hover (`.lane-heading` in `styles.css`).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
@@ -447,6 +449,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - Field hint: "Saved to <path>" on success, the error on failure (lane left unchanged). Works on **No status** too.
 - **Agent markdown file**: the file the prompt autosaves to. Ticket agents get the prompt once: the typed prompt when there is one, else "Follow the guidance in <path>." (a hand-written guide with no prompt).
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
+- Placeholders are lane-neutral (`docs/agent-prompt.md`, "a new folder inside the project directory"): the modal is shared by every lane, so example text never names one lane's artifact (#103).
 - **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable. Has the same ⓘ tooltip icon (#102).
   - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
   - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
@@ -583,7 +586,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`, `electron/ipcHandlers.ts`
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
-- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development. The web server's equivalent is its request guard (4.8).
+- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, the dev server URL (`VITE_DEV_SERVER_URL`, port picked per checkout) in development. The web server's equivalent is its request guard (4.8).
 - Payloads are type-checked, and paths are normalized to POSIX absolute paths.
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
@@ -593,7 +596,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 ### 4.6 Build and release — `package.json`
 
-- `bun run dev` runs the Vite dev server and Electron together with hot reload.
+- `bun run dev` (`scripts/dev.mjs`) runs the Vite dev server and Electron together with hot reload. Each checkout gets its own fixed port: main checkout 5173, a linked worktree 5200–5899 hashed from its path; `PROJECT_TRACKER_DEV_PORT` overrides. A taken port fails loudly (`--strictPort`) instead of drifting. Cmd+Q, closing the last window (dev only) or Ctrl+C stops both and frees the port.
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
