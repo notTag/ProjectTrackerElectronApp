@@ -1818,6 +1818,30 @@ export const TICKET_MODAL_FIELDS = [
 
 export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
 
+// Display-only, like TICKET_MODAL_FIELDS: a hidden lane setting keeps its value
+// and the agent still gets it. The lane name always shows.
+export const LANE_MODAL_FIELDS = [
+  { id: 'agentPrompt', label: 'Agent prompt' },
+  { id: 'agentFile', label: 'Agent markdown file' },
+  { id: 'output', label: 'Output' },
+  { id: 'orchestratorPrompt', label: 'Orchestrator prompt' },
+  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file' },
+  { id: 'orchestratorPoll', label: 'Orchestrator poll' },
+  { id: 'autoRunAgent', label: 'Agent' },
+  { id: 'autoRunShell', label: 'Shell' },
+  { id: 'autoRunModel', label: 'Model' },
+  { id: 'orchestratorAgent', label: 'Orchestrator agent' },
+  { id: 'orchestratorModel', label: 'Orchestrator model' },
+  { id: 'worktrees', label: 'Worktree and branch per ticket' },
+  { id: 'fullAuto', label: 'Full auto' },
+  { id: 'nextLane', label: 'Next Lane' },
+  { id: 'waitsForPullRequestMerge', label: 'Wait for PR merge' },
+  { id: 'agentSetsVersion', label: 'Agent sets semantic version' },
+  { id: 'closesTicket', label: 'Counts as closed' }
+] as const
+
+export type LaneModalField = (typeof LANE_MODAL_FIELDS)[number]['id']
+
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
 export const worktreeFolderName = (worktreePath: string) => {
@@ -1920,9 +1944,12 @@ export interface BoardPreferences {
   knownCardFields?: TicketCardField[]
   // The hidden list, not the shown one, so modal fields added later show by default.
   hiddenModalFields: TicketModalField[]
-  // laneId → card fields hidden in that lane only, on top of cardFields. Hidden
-  // list for the same reason as hiddenModalFields.
-  hiddenLaneCardFields: Record<string, TicketCardField[]>
+  // Lane settings modal fields hidden in every lane (Display modal). Hidden list
+  // for the same reason as hiddenModalFields.
+  hiddenLaneModalFields: LaneModalField[]
+  // laneId → lane settings fields hidden in that lane only, on top of
+  // hiddenLaneModalFields (the eye button in that lane's settings).
+  hiddenLaneModalFieldsByLane: Record<string, LaneModalField[]>
 }
 
 const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
@@ -1943,7 +1970,8 @@ export const createDefaultBoardPreferences = (): BoardPreferences => ({
   cardFields: [...ALL_CARD_FIELDS],
   knownCardFields: [...ALL_CARD_FIELDS],
   hiddenModalFields: [],
-  hiddenLaneCardFields: {}
+  hiddenLaneModalFields: [],
+  hiddenLaneModalFieldsByLane: {}
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
@@ -1983,15 +2011,20 @@ export const toggleModalField = (preferences: BoardPreferences, field: TicketMod
   hiddenModalFields: toggleInList(preferences.hiddenModalFields, field)
 })
 
-export const toggleLaneCardField = (
+export const toggleLaneModalField = (preferences: BoardPreferences, field: LaneModalField): BoardPreferences => ({
+  ...preferences,
+  hiddenLaneModalFields: toggleInList(preferences.hiddenLaneModalFields, field)
+})
+
+export const toggleLaneModalFieldInLane = (
   preferences: BoardPreferences,
   laneId: string,
-  field: TicketCardField
+  field: LaneModalField
 ): BoardPreferences => {
-  const hiddenInLane = preferences.hiddenLaneCardFields[laneId] ?? []
+  const hiddenInLane = preferences.hiddenLaneModalFieldsByLane[laneId] ?? []
   const nextHiddenInLane = toggleInList(hiddenInLane, field)
-  const hiddenLaneCardFields = { ...preferences.hiddenLaneCardFields, [laneId]: nextHiddenInLane }
-  return { ...preferences, hiddenLaneCardFields }
+  const hiddenLaneModalFieldsByLane = { ...preferences.hiddenLaneModalFieldsByLane, [laneId]: nextHiddenInLane }
+  return { ...preferences, hiddenLaneModalFieldsByLane }
 }
 
 export const setLaneWidth = (

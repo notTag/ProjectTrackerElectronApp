@@ -1,5 +1,8 @@
 # PRD — #115 Per-lane card field settings cog
 
+> **Revised in PR #152:** per-lane card fields were dropped. The lane header ⚙ opens Lane settings; a closed-eye button (left of Expand) in that modal hides the modal's own fields for that lane, and Display → "Swim lane settings fields" hides them in every lane. See `LANE_MODAL_FIELDS`, `hiddenLaneModalFields`, `hiddenLaneModalFieldsByLane`.
+
+
 ## Why a PRD
 - New preference layer (board → lane) on top of `cardFields`. Gets the precedence rule, the back-compat read, and the header event plumbing (lane drag + dblclick draft both live on the header) wrong → cog starts a drag, or a lane hides fields in every lane.
 - Popover must join the existing Escape / outside-click handling like the T93 modal-fields menu.
