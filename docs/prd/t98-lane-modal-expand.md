@@ -17,12 +17,12 @@ The lane ⚙ modal holds long monospace content (Agent prompt, Orchestrator prom
 - `defineModel` is already used in `src/components/ProjectToolbar.vue` (Vue 3.5)
 
 ## Decisions
-- State: add `export const laneModalExpanded = ref(false)` to `src/ticketModalWidth.ts`. Separate ref, so expanding one modal type never resizes the other. Session-only, same as the ticket modal
+- State: add `export const laneModalExpanded = ref(false)` to `src/modalWidth.ts (renamed from `ticketModalWidth.ts`)`. Separate ref, so expanding one modal type never resizes the other. Session-only, same as the ticket modal
 - Button: extract `src/components/ExpandToggle.vue` (`const expanded = defineModel<boolean>({ required: true })`, renders the existing button + both SVGs unchanged). Use it in all three headers (`v-model="ticketModalExpanded"` ×2, `v-model="laneModalExpanded"` ×1). The third copy would be ~15 duplicated lines; the component is about the same size and removes two copies. If the extraction causes any trouble, copying the markup is an acceptable fallback
 - Lane modal markup at `:2150`:
 	- `<section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">`
 	- `<div class="ticket-modal-header"><p class="eyebrow">Swim lane</p><ExpandToggle v-model="laneModalExpanded" /></div>`
-- CSS: change the selector to `.ticket-modal.expanded, .lane-modal.expanded { width: min(85vw, 100%); }`. Nothing else. The `.ticket-modal-header` rules already cover the lane modal's header
+- CSS: generalise the width rule to `.modal.expanded { width: min(85vw, 100%); }`. Only the ticket and lane modals bind `expanded`. The `.ticket-modal-header` rules already cover the lane modal's header
 - No graph-view gate: the lane modal never renders inside `.graph-ticket-panel`
 
 ## Acceptance criteria
@@ -50,10 +50,10 @@ The lane ⚙ modal holds long monospace content (Agent prompt, Orchestrator prom
 - Graph-view side panel
 
 ## Files
-- `src/ticketModalWidth.ts` — `laneModalExpanded`
+- `src/modalWidth.ts` — `laneModalExpanded`
 - `src/components/ExpandToggle.vue` — new, button + SVGs
 - `src/views/BoardView.vue` — three headers use `ExpandToggle`; lane section gets the `expanded` class
-- `src/styles.css` — `.lane-modal.expanded` joins the width rule
+- `src/styles.css` — `.ticket-modal.expanded` → `.modal.expanded`
 
 ## Work location
 - Branch: `t98-create-a-full`

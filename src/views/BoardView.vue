@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { laneModalExpanded, ticketModalExpanded } from '@/ticketModalWidth'
+import { laneModalExpanded, ticketModalExpanded } from '@/modalWidth'
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
