@@ -6,7 +6,7 @@ import { onBeforeUnmount, watch } from 'vue'
 import PageFind from '@/components/PageFind.vue'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { useProjectsStore } from '@/stores/projects'
-import { useThemeStore } from '@/stores/theme'
+import { useThemePersistence, useThemeStore } from '@/stores/theme'
 
 // Electron only. The web build leaves find out and the browser's own ⌘F works.
 const hasPageFind = Boolean(window.projectTracker?.findInPage)
@@ -60,6 +60,7 @@ onBeforeUnmount(() => {
 // reapplying whenever the selection (or live preview) changes.
 const { currentTheme } = storeToRefs(useThemeStore())
 useThemeEffect(currentTheme)
+useThemePersistence()
 
 // Keep the macOS traffic-light glyphs legible by matching their light/dark
 // rendering to the active theme. The strip color itself comes from CSS.
