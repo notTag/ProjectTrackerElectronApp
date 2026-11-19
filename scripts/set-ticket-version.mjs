@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
@@ -26,7 +26,8 @@ export const normalizeVersion = (input) => {
 
 const parseTicketNumber = (token) => {
   const digits = token.replace(/^#/, '')
-  if (!/^[1-9]\d*$/.test(digits)) throw new Error(`Not a ticket number: "${token}"\n${USAGE}`)
+  const isTicketNumber = /^[1-9]\d*$/.test(digits) && Number.isSafeInteger(Number(digits))
+  if (!isTicketNumber) throw new Error(`Not a ticket number: "${token}"\n${USAGE}`)
   return Number(digits)
 }
 
@@ -83,8 +84,14 @@ const mainCheckoutPath = () => {
 
 const main = (argv) => {
   const { version, ticketNumbers, projectPath, dbPath } = parseArgs(argv)
-  const resolvedProjectPath = projectPath ?? mainCheckoutPath()
-  const db = new DatabaseSync(dbPath ?? DEFAULT_DATABASE_PATH)
+  // The app stores project_path via path.resolve. `bun run` moves cwd to the
+  // package root, so resolve a relative --project against where it was typed.
+  const invocationDirectory = process.env.INIT_CWD ?? process.cwd()
+  const resolvedProjectPath = projectPath ? resolve(invocationDirectory, projectPath) : mainCheckoutPath()
+  const databasePath = dbPath ? resolve(invocationDirectory, dbPath) : DEFAULT_DATABASE_PATH
+  // DatabaseSync creates missing files; an empty DB at the app's path would confuse its first launch.
+  if (!existsSync(databasePath)) throw new Error(`No tracker database at ${databasePath}`)
+  const db = new DatabaseSync(databasePath)
   try {
     // Same wait as the app, so a write while it's open queues instead of failing.
     db.exec('PRAGMA busy_timeout = 5000')
