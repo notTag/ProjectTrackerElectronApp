@@ -1156,9 +1156,10 @@ export const useProjectsStore = defineStore('projects', {
       for (const [terminalId, tickets] of ticketsByTerminal) {
         // The title the tab opened with: a ticket renamed since would match nothing.
         const titles = tickets.map((ticket) => {
-          const storedTitle = ticket.agentRun?.tabTitle
-          if (storedTitle) return storedTitle
-          const runLane = currentLaneOf(board, ticket)
+          const run = ticket.agentRun
+          if (run?.tabTitle) return run.tabTitle
+          // The lane the run launched for, not where the ticket sits now.
+          const runLane = currentLaneOf(board, run ?? ticket)
           return ticketTabTitle(ticket, runLane)
         })
         const liveness = await projectTrackerApi

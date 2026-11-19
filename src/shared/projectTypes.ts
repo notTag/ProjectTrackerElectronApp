@@ -731,18 +731,23 @@ export const ticketShellCommand = (
   return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket, lane), sessionId })
 }
 
+// Control characters become spaces: a title fed through a terminal escape could
+// otherwise end the sequence early (ESC, BEL) and inject its own.
+const singleLineText = (text: string): string => {
+  const withoutControlCharacters = text.replace(/\p{Cc}/gu, ' ')
+  const collapsedWhitespace = withoutControlCharacters.replace(/\s+/g, ' ')
+  return collapsedWhitespace.trim()
+}
+
+const dashedWord = (text: string): string => singleLineText(text).split(' ').join('-')
+
 // The lane as one dash-joined word, so parallel runs of one ticket in different
 // lanes are told apart. Unassigned reads "Unassigned" whatever that column is
 // called; a name that sanitizes to nothing falls back to the lane id.
 export const laneTitleToken = (lane: Pick<SwimLane, 'id' | 'name'>): string => {
   if (lane.id === UNASSIGNED_LANE_ID) return 'Unassigned'
-  const dashedName = singleLineText(lane.name).split(' ').join('-')
-  return dashedName || lane.id
+  return dashedWord(lane.name) || dashedWord(lane.id)
 }
-
-// Control characters become spaces: a title fed through a terminal escape could
-// otherwise end the sequence early (ESC, BEL) and inject its own.
-const singleLineText = (text: string): string => text.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
 
 // Number and lane only: a title can be edited later, and the number is what people search for.
 export const ticketSessionName = (ticket: Pick<Ticket, 'number'>, lane: Pick<SwimLane, 'id' | 'name'>): string =>
@@ -1044,7 +1049,7 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
     'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
     '',
-    'Close a done ticket\'s tab (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
+    'Close a done ticket\'s tab and each of its handoff tabs (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
   ].join('\n')
 }
@@ -1121,9 +1126,20 @@ const orchestratorPromptParts = (
   entries: AutoRunLaunchEntry[],
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
+  const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
   const ticketLines = entries.map(({ ticket, launch }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
+    if (!handsOff) return line
+    // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
+    const handoffTitles = context.lanes
+      .filter(laneHasAgentWork)
+      .map((boardLane) => ticketTabTitle(ticket, boardLane))
+      .filter((title) => title !== tabTitle)
+    if (handoffTitles.length === 0) return line
+    const quotedHandoffTitles = handoffTitles.map((title) => `"${title}"`).join(', ')
+    return `${line} — handoff tabs ${quotedHandoffTitles}`
   })
   const laneLines = context.lanes.map(
     (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`

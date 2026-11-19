@@ -1516,6 +1516,14 @@ describe('Auto Run orchestrator', () => {
     it('lists every ticket with its title, tab title and branch', () => {
       expect(prompt).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
       expect(prompt).toContain('- #13 Second thing — tab "13-In-Development-Second thing" — branch t13-second-thing')
+      expect(prompt).not.toContain('handoff tabs "')
+    })
+
+    it('lists the tabs a full auto ticket opens in later lanes, so they get closed too', () => {
+      const fullAutoTicket = { ...ticket(14, 'Third thing'), fullAuto: true }
+      const fullAutoEntries = [buildAutoRunLaunch(fullAutoTicket, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
+      expect(fullAutoPrompt).toContain('tab "14-In-Development-Third thing" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"')
     })
 
     it('gives a read-only DB query scoped to the project, and forbids writes', () => {
