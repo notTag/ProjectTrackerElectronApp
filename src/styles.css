@@ -1302,11 +1302,14 @@ code {
   cursor: grabbing;
 }
 
-/* In a narrow lane the name wraps instead of pushing the buttons out. */
+/* In a narrow lane the name truncates (full name on hover) instead of
+   pushing the buttons out; one line keeps every lane's tickets aligned. */
 .lane-heading h2 {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   margin: 0;
   font-size: 0.95rem;
 }
