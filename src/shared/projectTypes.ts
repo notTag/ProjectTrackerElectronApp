@@ -371,6 +371,14 @@ export interface Ticket {
   // move lands, so the ticket then inherits; moveOnComplete is what arms it.
   moveToLaneId?: string
   moveOnComplete?: boolean
+  // Free text, one rule per line or bullet, confirmed by a person or an agent.
+  // With rules, the ticket completes only once they pass AND the checklist does.
+  moveRules?: string
+  // The lane the rules were confirmed in. They pass only while the ticket still
+  // sits there, so any move resets them without clearing code (like agentRunBadge).
+  moveRulesPassedLaneId?: string
+  // The lane where the ticket completed but nothing moved it (it was unarmed).
+  readyLaneId?: string
   // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
   version?: string
 }
@@ -625,17 +633,39 @@ export const normalizeSemanticVersion = (input: string): string | undefined | nu
   return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
 }
 
+// The default keeps double quotes so $HOME expands; an injected path is literal.
+const quotedTrackerDatabasePath = (context: TicketPromptContext): string =>
+  context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+
 const versionInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
   const sentence =
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
   if (!context.projectPath) return sentence
-  // The default keeps double quotes so $HOME expands; an injected path is literal.
-  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+  const quotedDatabasePath = quotedTrackerDatabasePath(context)
   const updateSql =
     "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
   const command = `sqlite3 ${quotedDatabasePath} ${shellQuote(updateSql)}`
   return [`${sentence} To set or change it:`, command].join('\n')
+}
+
+const moveRulesInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
+  const rules = moveRulesList(ticket)
+  if (rules.length === 0) return ''
+  const quotedDatabasePath = quotedTrackerDatabasePath(context)
+  // The prompt's lane, not the row's: a ticket moved mid-run must not get its
+  // rules confirmed for a lane the agent never checked them in.
+  const promptLaneId = sqlStringLiteral(ticket.laneId)
+  const confirmSql =
+    `UPDATE tickets SET move_rules_passed_lane_id = ${promptLaneId}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ` +
+    `WHERE id = ${sqlStringLiteral(ticket.id)} AND lane_id = ${promptLaneId};`
+  const confirmCommand = `sqlite3 ${quotedDatabasePath} ${shellQuote(confirmSql)}`
+  return [
+    'Move rules: move this ticket only when every rule below and every checklist item pass.',
+    rulesToPrompt(rules),
+    'Once every rule passes, confirm it:',
+    confirmCommand
+  ].join('\n')
 }
 
 // The lane prompt comes first because it is the standing instruction for every
@@ -653,7 +683,17 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const output = outputTarget ? outputInstruction(outputTarget) : ''
   const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
-  const sections = [lanePrompt, laneFileReference, ticketMetadata, ticketDescription, versionSection, fullAuto, output]
+  const moveRules = moveRulesInstruction(ticket, context)
+  const sections = [
+    lanePrompt,
+    laneFileReference,
+    ticketMetadata,
+    ticketDescription,
+    moveRules,
+    versionSection,
+    fullAuto,
+    output
+  ]
   const prompt = sections.filter(Boolean).join('\n\n')
   return guardAgainstOptionParsing(prompt)
 }
@@ -728,11 +768,30 @@ export const ticketShellCommand = (
   sessionId?: string
 ): string => {
   const prompt = ticketAgentPrompt(ticket, lane, context)
-  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket), sessionId })
+  return agentShellCommand(agent, prompt, { model, sessionName: ticketSessionName(ticket, lane), sessionId })
 }
 
-// Number only: a title can be edited later, and the number is what people search for.
-export const ticketSessionName = (ticket: Ticket): string => `Ticket #${ticket.number}`
+// Control characters become spaces: a title fed through a terminal escape could
+// otherwise end the sequence early (ESC, BEL) and inject its own.
+const singleLineText = (text: string): string => {
+  const withoutControlCharacters = text.replace(/\p{Cc}/gu, ' ')
+  const collapsedWhitespace = withoutControlCharacters.replace(/\s+/g, ' ')
+  return collapsedWhitespace.trim()
+}
+
+const dashedWord = (text: string): string => singleLineText(text).split(' ').join('-')
+
+// The lane as one dash-joined word, so parallel runs of one ticket in different
+// lanes are told apart. Unassigned reads "Unassigned" whatever that column is
+// called; a name that sanitizes to nothing falls back to the lane id.
+export const laneTitleToken = (lane: Pick<SwimLane, 'id' | 'name'>): string => {
+  if (lane.id === UNASSIGNED_LANE_ID) return 'Unassigned'
+  return dashedWord(lane.name) || dashedWord(lane.id)
+}
+
+// Number and lane only: a title can be edited later, and the number is what people search for.
+export const ticketSessionName = (ticket: Pick<Ticket, 'number'>, lane: Pick<SwimLane, 'id' | 'name'>): string =>
+  `${ticket.number}-${laneTitleToken(lane)}`
 
 // A model starting with "-" would read as another flag, so it counts as empty.
 // `quote` lets the terminal path shell-quote the model; argv needs no quoting.
@@ -874,15 +933,21 @@ export const ticketBranchName = (ticket: Ticket): string => {
 // which is why the number leads.
 const TAB_TITLE_MAX_CODE_POINTS = 40
 
-// Control characters become spaces: a title fed through a terminal escape could
-// otherwise end the sequence early (ESC, BEL) and inject its own. Counting code
-// points rather than UTF-16 units keeps an emoji's surrogate pair whole at the cut.
-export const ticketTabTitle = (ticket: Pick<Ticket, 'number' | 'title'>): string => {
-  const singleLineTitle = ticket.title.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
-  const codePoints = Array.from(`#${ticket.number} ${singleLineTitle}`.trim())
-  if (codePoints.length <= TAB_TITLE_MAX_CODE_POINTS) return codePoints.join('')
-  const keptText = codePoints.slice(0, TAB_TITLE_MAX_CODE_POINTS).join('').trimEnd()
-  return `${keptText}…`
+// Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
+// whole at the cut. Only the ticket title is cut: the number-lane prefix is what
+// tells tabs apart.
+export const ticketTabTitle = (
+  ticket: Pick<Ticket, 'number' | 'title'>,
+  lane: Pick<SwimLane, 'id' | 'name'>
+): string => {
+  const prefix = ticketSessionName(ticket, lane)
+  const titleCodePoints = Array.from(singleLineText(ticket.title))
+  if (titleCodePoints.length === 0) return prefix
+  const titleBudget = TAB_TITLE_MAX_CODE_POINTS - Array.from(prefix).length - 1
+  if (titleCodePoints.length <= titleBudget) return `${prefix}-${titleCodePoints.join('')}`
+  const keptTitleCodePoints = titleCodePoints.slice(0, Math.max(titleBudget, 0))
+  const keptTitle = keptTitleCodePoints.join('').trimEnd()
+  return keptTitle ? `${prefix}-${keptTitle}…` : prefix
 }
 
 // One tab of a terminal launch. No title leaves the terminal's own.
@@ -924,7 +989,7 @@ export const buildAutoRunLaunch = (
   // Fresh per launch: the CLI refuses a session id that is already in use.
   const sessionId = newAgentSessionId(agent)
   const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
-  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket) }
+  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket, lane) }
   return { ticket, launch, agentId: agent.id, sessionId }
 }
 
@@ -944,6 +1009,17 @@ export const orchestratorPollMinutes = (lane: SwimLane): number => {
 }
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
+
+// Off (shown as ∞) sits below 1: stepping down from 1 turns the orchestrator off
+// and leaves the stored minutes alone; stepping up from off lands on 1.
+export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<SwimLane> | undefined => {
+  if (!orchestratorPollActive(lane)) {
+    return step === 1 ? { orchestratorPollActive: true, orchestratorPollMinutes: 1 } : undefined
+  }
+  const steppedMinutes = orchestratorPollMinutes(lane) + step
+  if (steppedMinutes < 1) return { orchestratorPollActive: false }
+  return { orchestratorPollMinutes: steppedMinutes }
+}
 
 export const laneHasAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
@@ -1022,9 +1098,9 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     `Open tab titles in ${context.terminalLabel}:`,
     recipes.listTabs,
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
-    'open new tabs for later lanes under the same title. Match the whole title: other projects reuse ticket numbers.',
+    'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
     '',
-    'Close a done ticket\'s tab (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
+    'Close a done ticket\'s tab and each of its handoff tabs (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
   ].join('\n')
 }
@@ -1101,9 +1177,20 @@ const orchestratorPromptParts = (
   entries: AutoRunLaunchEntry[],
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
+  const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
   const ticketLines = entries.map(({ ticket, launch }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    return `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
+    if (!handsOff) return line
+    // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
+    const handoffTitles = context.lanes
+      .filter(laneHasAgentWork)
+      .map((boardLane) => ticketTabTitle(ticket, boardLane))
+      .filter((title) => title !== tabTitle)
+    if (handoffTitles.length === 0) return line
+    const quotedHandoffTitles = handoffTitles.map((title) => `"${title}"`).join(', ')
+    return `${line} — handoff tabs ${quotedHandoffTitles}`
   })
   const laneLines = context.lanes.map(
     (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
@@ -1190,6 +1277,10 @@ export interface FullAutoHandoff {
 export const boardLaneById = (board: ProjectBoard, laneId: string): SwimLane | undefined =>
   laneId === UNASSIGNED_LANE_ID ? getUnassignedLane(board) : board.lanes.find((lane) => lane.id === laneId)
 
+// A laneId naming no lane shows in the unassigned column, so it is that lane.
+export const currentLaneOf = (board: ProjectBoard, ticket: Pick<Ticket, 'laneId'>): SwimLane =>
+  boardLaneById(board, ticket.laneId) ?? getUnassignedLane(board)
+
 // A ticket's own Next Lane wins; without one it inherits its lane's. The modal
 // and completionMoves both resolve through here so what is shown is what moves.
 // An override naming the ticket's own lane is stale (it was dragged there by
@@ -1221,9 +1312,55 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
   return handoffs
 }
 
-const isChecklistComplete = (ticket: Ticket | undefined): boolean => {
-  const checklist = ticket?.checklist ?? []
-  return checklist.length > 0 && checklist.every((item) => item.done)
+export const moveRulesList = (ticket: Pick<Ticket, 'moveRules'>): string[] => promptRules(ticket.moveRules ?? '')
+
+// Checklist AND rules. An empty checklist passes only alongside rules, so a
+// bare ticket keeps completing the old way: only a successful ▶ Run does it.
+export const moveGatePasses = (ticket: Ticket | undefined): boolean => {
+  if (!ticket) return false
+  const hasRules = moveRulesList(ticket).length > 0
+  const checklist = ticket.checklist ?? []
+  const allItemsDone = checklist.every((item) => item.done)
+  const checklistPasses = allItemsDone && (checklist.length > 0 || hasRules)
+  return checklistPasses && moveRulesPass(ticket)
+}
+
+const moveRulesPass = (ticket: Ticket): boolean => {
+  const hasRules = moveRulesList(ticket).length > 0
+  return !hasRules || ticket.moveRulesPassedLaneId === ticket.laneId
+}
+
+// The lane a ticket is ready to move to, for the card label. With rules the gate
+// is read live: the pass is lane-scoped so it can't go stale, and an agent's
+// sqlite3 confirm shows after the poll. Without rules the checklist alone stays
+// all-done after a move, so only a completion stamped in this lane counts.
+export const isReadyToMove = (ticket: Ticket, board: ProjectBoard): string | undefined => {
+  const currentLane = boardLaneById(board, ticket.laneId)
+  const targetLaneId = effectiveNextLaneId(ticket, currentLane)
+  if (!targetLaneId || targetLaneId === ticket.laneId) return undefined
+  if (!boardLaneById(board, targetLaneId)) return undefined
+  const heldForMerge = currentLane?.waitsForPullRequestMerge && !isPullRequestSettled(ticket.pullRequestState)
+  if (heldForMerge) return undefined
+  const hasRules = moveRulesList(ticket).length > 0
+  const rulesGate = currentLane?.waitsForPullRequestMerge ? moveRulesPass(ticket) : moveGatePasses(ticket)
+  const ready = hasRules ? rulesGate : ticket.readyLaneId === ticket.laneId
+  return ready ? targetLaneId : undefined
+}
+
+// A rules pass vouches for one lane and one set of rules, and a ready stamp for
+// one lane. Any lane change (drag, outside write) or rules edit voids them, so
+// dragging a ticket back can't revive a pass nobody re-checked.
+const withoutStaleConfirmations = (ticket: Ticket, previousTicket: Ticket | undefined): Ticket => {
+  if (!previousTicket) return ticket
+  const laneChanged = previousTicket.laneId !== ticket.laneId
+  const rulesChanged = (previousTicket.moveRules ?? '') !== (ticket.moveRules ?? '')
+  const clearsPass = (laneChanged || rulesChanged) && ticket.moveRulesPassedLaneId !== undefined
+  const clearsStamp = laneChanged && ticket.readyLaneId !== undefined
+  if (!clearsPass && !clearsStamp) return ticket
+  const cleared = { ...ticket }
+  if (clearsPass) cleared.moveRulesPassedLaneId = undefined
+  if (clearsStamp) cleared.readyLaneId = undefined
+  return cleared
 }
 
 export interface CompletionMove {
@@ -1231,15 +1368,19 @@ export interface CompletionMove {
   toLane: SwimLane
 }
 
-// Completed = the checklist just went all-done, or the caller saw it finish
-// another way (a successful ▶ Run, passed in alsoCompletedIds). A transition,
-// not a state: a ticket already all-done in previousBoard stays put. Every
-// completed ticket with Next Lane armed is disarmed, even when it is already in
-// its target lane or that lane is gone, so a later re-completion never moves it.
+// Completed = the move gate (checklist + rules) just started passing, or the
+// caller saw it finish another way (a successful ▶ Run, passed in
+// alsoCompletedIds; with rules, only while they pass). A transition, not a
+// state: a ticket already passing in previousBoard stays put. An unarmed
+// completion is stamped as readyLaneId for the card label instead, and cleared
+// once the gate stops passing. Every completed ticket with Next Lane armed is
+// disarmed, even when it is already in its target lane or that lane is gone,
+// so a later re-completion never moves it.
 //
 // In a lane that waits for PR merge, merging is what completes the ticket: an
-// unmerged PR (or none yet — its state may simply not have synced) holds it
-// armed in place, and the PR turning merged moves it whatever the checklist says.
+// unmerged PR (or none yet — its state may simply not have synced) holds it in
+// place, and once merged the ticket completes whatever the checklist says when
+// its rules pass too — whether the merge or the rules confirm lands last.
 export const completionMoves = (
   previousBoard: ProjectBoard,
   nextBoard: ProjectBoard,
@@ -1250,20 +1391,34 @@ export const completionMoves = (
   const isJustCompleted = (ticket: Ticket, currentLane: SwimLane | undefined) => {
     const previousTicket = previousTicketById.get(ticket.id)
     if (currentLane?.waitsForPullRequestMerge) {
-      const isMerged = isPullRequestSettled(ticket.pullRequestState)
-      if (!isMerged) return false
-      const pullRequestJustMerged = previousTicket !== undefined && !isPullRequestSettled(previousTicket.pullRequestState)
-      if (pullRequestJustMerged) return true
+      const mergeGatePasses = (candidate: Ticket) =>
+        isPullRequestSettled(candidate.pullRequestState) && moveRulesPass(candidate)
+      if (!isPullRequestSettled(ticket.pullRequestState)) return false
+      const mergeGateJustPassed =
+        previousTicket !== undefined && mergeGatePasses(ticket) && !mergeGatePasses(previousTicket)
+      if (mergeGateJustPassed) return true
     }
-    const checklistJustCompleted = isChecklistComplete(ticket) && !isChecklistComplete(previousTicket)
-    return checklistJustCompleted || alsoCompletedIds.includes(ticket.id)
+    const gatePassesNow = moveGatePasses(ticket)
+    const gateJustPassed = gatePassesNow && !moveGatePasses(previousTicket)
+    const hasRules = moveRulesList(ticket).length > 0
+    const runCompleted = alsoCompletedIds.includes(ticket.id) && (!hasRules || gatePassesNow)
+    return gateJustPassed || runCompleted
   }
+  const gateJustFailed = (ticket: Ticket) =>
+    !moveGatePasses(ticket) && moveGatePasses(previousTicketById.get(ticket.id))
 
   const moves: CompletionMove[] = []
-  const tickets = nextBoard.tickets.map((ticket) => {
-    if (!ticket.moveOnComplete) return ticket
+  const tickets = nextBoard.tickets.map((incomingTicket) => {
+    const previousTicket = previousTicketById.get(incomingTicket.id)
+    let ticket = withoutStaleConfirmations(incomingTicket, previousTicket)
+    if (ticket.readyLaneId && gateJustFailed(ticket)) ticket = { ...ticket, readyLaneId: undefined }
+    if (ticket !== incomingTicket) ticket = { ...ticket, updatedAt: at }
     const currentLane = boardLaneById(nextBoard, ticket.laneId)
     if (!isJustCompleted(ticket, currentLane)) return ticket
+    if (!ticket.moveOnComplete) {
+      if (ticket.readyLaneId === ticket.laneId) return ticket
+      return { ...ticket, readyLaneId: ticket.laneId, updatedAt: at }
+    }
     const toLaneId = effectiveNextLaneId(ticket, currentLane)
     const toLane = toLaneId ? boardLaneById(nextBoard, toLaneId) : undefined
     const movesLane = toLane !== undefined && toLane.id !== ticket.laneId
@@ -1271,12 +1426,18 @@ export const completionMoves = (
     if (!movesLane) return disarmed
     // The override is spent once it lands: from here the ticket inherits its new
     // lane's Next Lane instead of pointing at the lane it already sits in.
-    const moved = { ...disarmed, laneId: toLane.id, moveToLaneId: undefined }
+    const moved = {
+      ...disarmed,
+      laneId: toLane.id,
+      moveToLaneId: undefined,
+      moveRulesPassedLaneId: undefined,
+      readyLaneId: undefined
+    }
     moves.push({ ticket: moved, toLane })
     return moved
   })
-  const anyDisarmed = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
-  return { board: anyDisarmed ? { ...nextBoard, tickets } : nextBoard, moves }
+  const anyChanged = tickets.some((ticket, index) => ticket !== nextBoard.tickets[index])
+  return { board: anyChanged ? { ...nextBoard, tickets } : nextBoard, moves }
 }
 
 export interface GithubIssue {
@@ -1602,6 +1763,28 @@ export const TICKET_CARD_FIELDS = [
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
 
+// Display-only: hiding a field here never changes what the agent prompt sends.
+export const TICKET_MODAL_FIELDS = [
+  { id: 'status', label: 'Status' },
+  { id: 'assignee', label: 'Assignee' },
+  { id: 'description', label: 'Description' },
+  { id: 'labels', label: 'Labels' },
+  { id: 'branch', label: 'Branch' },
+  { id: 'worktree', label: 'Worktree' },
+  { id: 'version', label: 'Version' },
+  { id: 'pullRequest', label: 'Merge Request' },
+  { id: 'externalLinks', label: 'External Links' },
+  { id: 'images', label: 'Images' },
+  { id: 'checklist', label: 'Checklist' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'model', label: 'Model' },
+  { id: 'fullAuto', label: 'Full auto' },
+  { id: 'nextLane', label: 'Next Lane' },
+  { id: 'lastAgentRun', label: 'Last agent run' }
+] as const
+
+export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
+
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
 export const worktreeFolderName = (worktreePath: string) => {
@@ -1702,6 +1885,8 @@ export interface BoardPreferences {
   // missing from it shipped later, so it starts shown rather than looking
   // switched off.
   knownCardFields?: TicketCardField[]
+  // The hidden list, not the shown one, so modal fields added later show by default.
+  hiddenModalFields: TicketModalField[]
 }
 
 const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
@@ -1720,7 +1905,8 @@ export const createDefaultBoardPreferences = (): BoardPreferences => ({
   laneWidths: {},
   hiddenLaneIds: [],
   cardFields: [...ALL_CARD_FIELDS],
-  knownCardFields: [...ALL_CARD_FIELDS]
+  knownCardFields: [...ALL_CARD_FIELDS],
+  hiddenModalFields: []
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
@@ -1753,6 +1939,11 @@ export const toggleHiddenLane = (preferences: BoardPreferences, laneId: string):
 export const toggleCardField = (preferences: BoardPreferences, field: TicketCardField): BoardPreferences => ({
   ...preferences,
   cardFields: toggleInList(preferences.cardFields, field)
+})
+
+export const toggleModalField = (preferences: BoardPreferences, field: TicketModalField): BoardPreferences => ({
+  ...preferences,
+  hiddenModalFields: toggleInList(preferences.hiddenModalFields, field)
 })
 
 export const setLaneWidth = (

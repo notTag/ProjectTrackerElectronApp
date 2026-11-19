@@ -905,7 +905,7 @@ describe('mid-session failure recovery', () => {
 
     await store.reconcileAgentRuns()
 
-    expect(api.terminalTabsAlive).toHaveBeenCalledWith('ghostty', ['#7 Add the thing'])
+    expect(api.terminalTabsAlive).toHaveBeenCalledWith('ghostty', ['7-PRD-Add the thing'])
     expect(storedRun(store)).toMatchObject({ status: 'interrupted', succeeded: false, seenAt: undefined })
     expect(store.notice).toBe('Full auto paused on #7: agent interrupted')
     expect(api.autoRunLane).not.toHaveBeenCalled()
