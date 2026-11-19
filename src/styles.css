@@ -1233,10 +1233,17 @@ code {
   cursor: grabbing;
 }
 
+/* In a narrow lane the name wraps instead of pushing the buttons out. */
 .lane-heading h2 {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
   font-size: 0.95rem;
+}
+
+.lane-heading > :not(h2) {
+  flex-shrink: 0;
 }
 
 .lane-count {
