@@ -200,38 +200,61 @@ const toggleableLanes = computed(() =>
   [unassignedLane.value, githubImportLane.value].filter((lane): lane is SwimLane => Boolean(lane))
 )
 
-// A deleted lane, or a project switch with the view still mounted, leaves dead
-// ids behind; dropping them here keeps a stale pick from blanking the board.
+// Lanes the Display toggles hide are not offered: picking only those would
+// leave the board with no columns.
+const shownLanes = computed(() => laneColumns.value.filter((lane) => !laneIsHidden(lane.id)))
+
+// A deleted or hidden lane leaves its id behind; dropping it here keeps a
+// stale pick from blanking the board.
 const activeFilterLaneIds = computed(() =>
-  filterLaneIds.value.filter((laneId) => laneColumns.value.some((lane) => lane.id === laneId))
+  filterLaneIds.value.filter((laneId) => shownLanes.value.some((lane) => lane.id === laneId))
 )
+
+// Every lane picked shows the whole board, so it counts as no filter.
+const laneFilterNarrows = computed(() => {
+  const pickedCount = activeFilterLaneIds.value.length
+  return pickedCount > 0 && pickedCount < shownLanes.value.length
+})
 
 const laneFilterLabel = computed(() => {
   const pickedIds = activeFilterLaneIds.value
-  if (pickedIds.length === 0) return 'All swim lanes'
+  if (!laneFilterNarrows.value) return 'All swim lanes'
   if (pickedIds.length > 1) return `${pickedIds.length} lanes`
-  return laneColumns.value.find((lane) => lane.id === pickedIds[0])?.name
+  return shownLanes.value.find((lane) => lane.id === pickedIds[0])?.name
 })
 
 const toggleLaneFilter = (laneId: string) => {
-  const pickedIds = filterLaneIds.value
+  const pickedIds = activeFilterLaneIds.value
   filterLaneIds.value = pickedIds.includes(laneId)
     ? pickedIds.filter((pickedId) => pickedId !== laneId)
     : [...pickedIds, laneId]
 }
+
+// The view stays mounted across boards and seeded lane ids repeat between
+// projects, so a pick would otherwise carry over to the next board.
+watch(projectPath, () => {
+  filterLaneIds.value = []
+  laneFilterMenuOpen.value = false
+})
 
 const laneFilterMenuRef = ref<HTMLElement | null>(null)
 const closeLaneFilterMenuOnOutsideClick = (event: PointerEvent) => {
   if (laneFilterMenuRef.value?.contains(event.target as Node)) return
   laneFilterMenuOpen.value = false
 }
+// Tabbing away closes it. A null target (mousedown on a label's text, window
+// blur) is left to the pointerdown handler, or it would close mid-click.
+const closeLaneFilterMenuOnFocusOut = (event: FocusEvent) => {
+  const focusTarget = event.relatedTarget as Node | null
+  if (!focusTarget || laneFilterMenuRef.value?.contains(focusTarget)) return
+  laneFilterMenuOpen.value = false
+}
 
-// Board order, not pick order. The hidden-lane toggle wins over a pick.
+// Board order, not pick order.
 const visibleLanes = computed(() => {
-  const shownLanes = laneColumns.value.filter((lane) => !laneIsHidden(lane.id))
+  if (!laneFilterNarrows.value) return shownLanes.value
   const pickedIds = activeFilterLaneIds.value
-  if (pickedIds.length === 0) return shownLanes
-  return shownLanes.filter((lane) => pickedIds.includes(lane.id))
+  return shownLanes.value.filter((lane) => pickedIds.includes(lane.id))
 })
 
 // Held as one object so a drag reads its own start point rather than a set of
@@ -274,7 +297,7 @@ const boardElement = ref<HTMLElement | null>(null)
 // A filtered board shows a subset of lanes, so a drop position among them is
 // ambiguous against the full order — and with one lane, "before nothing" would
 // send it to the end.
-const laneCanMove = (laneId: string) => laneId !== UNASSIGNED_LANE_ID && activeFilterLaneIds.value.length === 0
+const laneCanMove = (laneId: string) => laneId !== UNASSIGNED_LANE_ID && !laneFilterNarrows.value
 
 const movableVisibleLanes = computed(() => visibleLanes.value.filter((lane) => lane.id !== UNASSIGNED_LANE_ID))
 
@@ -449,7 +472,7 @@ const visibleTicketCount = computed(() =>
 )
 
 const filtersActive = computed(() =>
-  Boolean(filterQuery.value.trim() || activeFilterLaneIds.value.length || showOnlyMine.value)
+  Boolean(filterQuery.value.trim() || laneFilterNarrows.value || showOnlyMine.value)
 )
 
 const clearFilters = () => {
@@ -626,11 +649,6 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
-  if (laneFilterMenuOpen.value) {
-    laneFilterMenuOpen.value = false
-    event.preventDefault()
-    return
-  }
   // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
   if (ticketPendingDeletion.value) {
     ticketPendingDeletion.value = null
@@ -639,6 +657,11 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   }
   if (anyModalOpen.value) {
     closeModals()
+    event.preventDefault()
+    return
+  }
+  if (laneFilterMenuOpen.value) {
+    laneFilterMenuOpen.value = false
     event.preventDefault()
     return
   }
@@ -1449,11 +1472,11 @@ const runTicketAgent = (ticket: Ticket) => {
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
-      <div ref="laneFilterMenuRef" class="filter-menu">
+      <div ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
         <button
           type="button"
           class="filter-trigger"
-          :class="{ active: activeFilterLaneIds.length }"
+          :class="{ active: laneFilterNarrows }"
           aria-haspopup="true"
           :aria-expanded="laneFilterMenuOpen"
           @click="laneFilterMenuOpen = !laneFilterMenuOpen"
@@ -1461,7 +1484,7 @@ const runTicketAgent = (ticket: Ticket) => {
           {{ laneFilterLabel }}
         </button>
         <div v-if="laneFilterMenuOpen" class="filter-popover" role="group" aria-label="Swim lanes shown">
-          <label v-for="lane in laneColumns" :key="lane.id">
+          <label v-for="lane in shownLanes" :key="lane.id">
             <input
               type="checkbox"
               :checked="activeFilterLaneIds.includes(lane.id)"
@@ -1683,7 +1706,7 @@ const runTicketAgent = (ticket: Ticket) => {
            every lane under "safe center" the moment the drag starts.
            Unmounting under the pointer fires no mouseleave → reset on unmount. -->
       <div
-        v-if="activeFilterLaneIds.length === 0"
+        v-if="!laneFilterNarrows"
         class="lane-add-zone"
         :class="{ shown: addZoneShown }"
         :inert="laneDrag?.active"

@@ -265,7 +265,7 @@ From left to right:
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
-- **Swim lane** multi-select popover ("All swim lanes", one lane's name, or "N lanes"): check any set of lanes to show only those columns, in board order. None checked shows every lane. A checked lane hidden by the Display toggles stays hidden. Closes on outside click or Escape. Ids of deleted lanes are ignored.
+- **Swim lane** multi-select popover ("All swim lanes", one lane's name, or "N lanes"): check any set of lanes to show only those columns, in board order. None checked, or all checked, shows every lane. Lanes hidden by the Display toggles aren't listed, and a pick is ignored while its lane is hidden. Closes on outside click, focus leaving it, or Escape. Ids of deleted lanes are ignored. Resets when switching to another project's board.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.

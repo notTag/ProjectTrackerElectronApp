@@ -1024,14 +1024,22 @@ code {
   flex: 0 1 320px;
 }
 
-/* The toolbar's compact trigger, grown to the height of its neighbours here. */
+/* The toolbar's compact trigger, grown to the height of its neighbours here.
+   width: auto undoes the narrow-window full-width rule — this row never wraps. */
 .board-filters .filter-menu {
   display: flex;
   align-self: stretch;
+  width: auto;
 }
 
 .board-filters .filter-trigger {
   height: auto;
+  width: auto;
+}
+
+.board-filters .filter-popover {
+  max-height: 60vh;
+  overflow: auto;
 }
 
 /* Mask = shape only; colour comes from the theme so the ✕ follows every theme. */
