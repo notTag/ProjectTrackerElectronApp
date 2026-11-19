@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  AGENT_PROCESS_NAMES,
-  countAgentsByProject,
-  metricWindows,
-  parseAgentPids,
-  parseLsofCwds,
-  prCounts
-} from './metrics.js'
+import { ticketSessionName } from '../src/shared/projectTypes.js'
+import { countAgentsByProject, metricWindows, parseLsofCwds, parseTicketAgentPids, prCounts } from './metrics.js'
 
 describe('metricWindows', () => {
   it('starts today, the month and the year at local midnight; the week is a rolling 7×24h', () => {
@@ -27,37 +21,56 @@ describe('metricWindows', () => {
 })
 
 describe('agent process discovery', () => {
-  it('picks agent pids by argv[0] basename, whatever the install path', () => {
+  const sessionName = (number: number) => ticketSessionName({ number }, { id: 'in-pr', name: 'Merge Request' })
+
+  it('picks only processes the app launched for a ticket, keyed to that ticket number', () => {
     const psOutput = [
-      '  101 claude',
-      '  102 /Users/me/.vscode/extensions/claude-code/native-binary/claude',
-      '  103 node',
-      '  104 /opt/homebrew/bin/codex',
-      '  105 claude-helper',
-      '  106 hermes',
+      `  101 claude --name t104 --name ${sessionName(104)} --session-id abc Instructions: do it`,
+      `  102 /Users/me/.local/bin/claude --name ${sessionName(7)}`,
+      `  103 claude --name ${sessionName(10)} --model opus`,
+      `  104 /Users/me/Library/Application Support/Claude/claude-code/2.1/claude --name ${sessionName(3)}`,
+      '  201 claude --model opus --name AUTORUN-ORCHESTRATOR-IDEA',
+      '  202 /Applications/Codex.app/Contents/Resources/codex app-server daemon',
+      '  203 codex app-server --listen stdio',
+      '  204 claude',
+      '  205 claude -p fix the bug',
+      `  206 zsh -c claude --name ${sessionName(5)}`,
+      '  207 claude --name t12', // the wrapper's name alone isn't a ticket session
       ''
     ].join('\n')
-    expect(parseAgentPids(psOutput, AGENT_PROCESS_NAMES)).toEqual(['101', '102', '104', '106'])
+    expect(parseTicketAgentPids(psOutput)).toEqual(
+      new Map([
+        ['101', 104],
+        ['102', 7],
+        ['103', 10],
+        ['104', 3]
+      ])
+    )
   })
 
-  it('reads cwd paths out of lsof -Fpn output, spaces included', () => {
+  it('reads pid and cwd pairs out of lsof -Fpn output, spaces included', () => {
     const lsofOutput = 'p101\nfcwd\nn/Users/me/Code/app\np102\nfcwd\nn/Users/me/My Projects/site\n'
-    expect(parseLsofCwds(lsofOutput)).toEqual(['/Users/me/Code/app', '/Users/me/My Projects/site'])
+    expect(parseLsofCwds(lsofOutput)).toEqual([
+      { pid: '101', cwd: '/Users/me/Code/app' },
+      { pid: '102', cwd: '/Users/me/My Projects/site' }
+    ])
   })
 
-  it('counts worktrees for their project and gives nested projects their own agents', () => {
+  it('counts distinct tickets per project, worktrees included, nested projects separately', () => {
     const projects = ['/code/app', '/code/app/packages/cli', '/code/other']
-    const cwds = [
-      '/code/app',
-      '/code/app/.worktrees/t27',
-      '/code/app/packages/cli/src',
-      '/code/application', // a sibling sharing the prefix, not a subfolder
-      '/Users/me'
+    const agents = [
+      { cwd: '/code/app', ticketNumber: 1 },
+      { cwd: '/code/app/.worktrees/t27', ticketNumber: 27 },
+      { cwd: '/code/app/.worktrees/t27', ticketNumber: 27 }, // a second session for the same ticket
+      { cwd: '/code/app/packages/cli/src', ticketNumber: 1 }, // same number, different project
+      { cwd: '/code/other', ticketNumber: 1 },
+      { cwd: '/code/application', ticketNumber: 9 }, // a sibling sharing the prefix, not a subfolder
+      { cwd: '/Users/me', ticketNumber: 9 }
     ]
-    expect(countAgentsByProject(cwds, projects)).toEqual({
+    expect(countAgentsByProject(agents, projects)).toEqual({
       '/code/app': 2,
       '/code/app/packages/cli': 1,
-      '/code/other': 0
+      '/code/other': 1
     })
   })
 })

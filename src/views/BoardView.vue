@@ -1655,7 +1655,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @lostpointercapture="cancelLaneDrag"
           @keydown="moveLaneByKeyboard(lane, $event)"
         >
-          <h2>{{ lane.name }}</h2>
+          <h2 :title="lane.name">{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <span
             v-if="unseenAgentResultCount(lane.id) > 0"
