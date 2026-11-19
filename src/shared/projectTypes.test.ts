@@ -1185,6 +1185,13 @@ describe('full auto', () => {
         expect(waitingMovesBetween(armed(rules), armed(mergedConfirmed)).moves).toHaveLength(1)
       })
 
+      it('moves when the rules are confirmed after the merge, whatever the checklist says', () => {
+        const mergedUnconfirmed = { moveRules: 'Deployed', pullRequestState: 'merged' as const }
+        const mergedConfirmed = { ...mergedUnconfirmed, moveRulesPassedLaneId: 'prd' }
+        const { moves } = waitingMovesBetween(armed(mergedUnconfirmed), armed(mergedConfirmed))
+        expect(moves).toHaveLength(1)
+      })
+
       it('shows no ready label while the PR is unmerged', () => {
         const rulesPassed = { moveRules: 'Deployed', moveRulesPassedLaneId: 'prd', moveOnComplete: false }
         const open = completed({ ...rulesPassed, pullRequestState: 'open' })
@@ -1272,6 +1279,21 @@ describe('full auto', () => {
           .toHaveLength(1)
       })
 
+      it('voids a rules pass when the ticket is dragged out and back', () => {
+        const draggedAway = completed({ ...rulesPassed, laneId: 'dev' })
+        const draggedBack = completed(rulesPassed)
+        const { board, moves } = movesBetween(draggedAway, draggedBack)
+        expect(moves).toEqual([])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveRulesPassedLaneId: undefined })
+      })
+
+      it('voids a rules pass when the rules text changes', () => {
+        const editedRules = completed({ ...rulesPassed, moveRules: '- PR merged\n- QA sign-off' })
+        const { board, moves } = movesBetween(armed(rulesPassed), editedRules)
+        expect(moves).toEqual([])
+        expect(board.tickets[0].moveRulesPassedLaneId).toBeUndefined()
+      })
+
       it('needs the rules for a reported ▶ Run completion too', () => {
         expect(movesBetween(armed(withRules), armed(withRules), ['ticket-1']).moves).toEqual([])
       })
@@ -1292,7 +1314,10 @@ describe('full auto', () => {
 
       it('clears the stamp once the gate stops passing', () => {
         const stamped = completed({ ...unarmed, readyLaneId: 'prd' })
-        const { board } = completionMoves(boardWith([stamped], nextLane), boardWith([armed({ ...unarmed, readyLaneId: 'prd' })], nextLane))
+        const reopened = armed({ ...unarmed, readyLaneId: 'prd' })
+        const previousBoard = boardWith([stamped], nextLane)
+        const nextBoard = boardWith([reopened], nextLane)
+        const { board } = completionMoves(previousBoard, nextBoard)
         expect(board.tickets[0].readyLaneId).toBeUndefined()
       })
 
@@ -1318,9 +1343,9 @@ describe('full auto', () => {
     const withRules = ticketAgentPrompt(ticket({ moveRules: '- PR merged' }), prdLane)
     expect(withRules).toContain('move this ticket only when every rule below and every checklist item pass')
     expect(withRules).toContain('- PR merged')
-    expect(withRules).toContain("SET move_rules_passed_lane_id = lane_id")
     // shellQuote escapes the SQL literal's quotes inside the single-quoted argument.
-    expect(withRules).toContain(`WHERE id = '\\''ticket-1'\\'';`)
+    expect(withRules).toContain(`SET move_rules_passed_lane_id = '\\''prd'\\''`)
+    expect(withRules).toContain(`WHERE id = '\\''ticket-1'\\'' AND lane_id = '\\''prd'\\'';`)
     expect(ticketAgentPrompt(ticket(), prdLane)).not.toContain('Move rules')
   })
 

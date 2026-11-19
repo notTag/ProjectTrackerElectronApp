@@ -633,12 +633,15 @@ export const normalizeSemanticVersion = (input: string): string | undefined | nu
   return SEMANTIC_VERSION_PATTERN.test(withoutPrefix) ? withoutPrefix : null
 }
 
+// The default keeps double quotes so $HOME expands; an injected path is literal.
+const quotedTrackerDatabasePath = (context: TicketPromptContext): string =>
+  context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+
 const versionInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
   const sentence =
     "Semantic version: you decide whether this ticket's work needs a version and what it is (MAJOR.MINOR.PATCH). Leave it unset if it doesn't apply yet."
   if (!context.projectPath) return sentence
-  // The default keeps double quotes so $HOME expands; an injected path is literal.
-  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+  const quotedDatabasePath = quotedTrackerDatabasePath(context)
   const updateSql =
     "UPDATE tickets SET version = '<X.Y.Z>', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number = ${ticket.number};`
@@ -649,10 +652,13 @@ const versionInstruction = (ticket: Ticket, context: TicketPromptContext): strin
 const moveRulesInstruction = (ticket: Ticket, context: TicketPromptContext): string => {
   const rules = moveRulesList(ticket)
   if (rules.length === 0) return ''
-  const quotedDatabasePath = context.databasePath ? shellQuote(context.databasePath) : `"${TRACKER_DATABASE_PATH}"`
+  const quotedDatabasePath = quotedTrackerDatabasePath(context)
+  // The prompt's lane, not the row's: a ticket moved mid-run must not get its
+  // rules confirmed for a lane the agent never checked them in.
+  const promptLaneId = sqlStringLiteral(ticket.laneId)
   const confirmSql =
-    "UPDATE tickets SET move_rules_passed_lane_id = lane_id, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
-    `WHERE id = ${sqlStringLiteral(ticket.id)};`
+    `UPDATE tickets SET move_rules_passed_lane_id = ${promptLaneId}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ` +
+    `WHERE id = ${sqlStringLiteral(ticket.id)} AND lane_id = ${promptLaneId};`
   const confirmCommand = `sqlite3 ${quotedDatabasePath} ${shellQuote(confirmSql)}`
   return [
     'Move rules: move this ticket only when every rule below and every checklist item pass.',
@@ -1285,8 +1291,25 @@ export const isReadyToMove = (ticket: Ticket, board: ProjectBoard): string | und
   const heldForMerge = currentLane?.waitsForPullRequestMerge && !isPullRequestSettled(ticket.pullRequestState)
   if (heldForMerge) return undefined
   const hasRules = moveRulesList(ticket).length > 0
-  const ready = hasRules ? moveGatePasses(ticket) : ticket.readyLaneId === ticket.laneId
+  const rulesGate = currentLane?.waitsForPullRequestMerge ? moveRulesPass(ticket) : moveGatePasses(ticket)
+  const ready = hasRules ? rulesGate : ticket.readyLaneId === ticket.laneId
   return ready ? targetLaneId : undefined
+}
+
+// A rules pass vouches for one lane and one set of rules, and a ready stamp for
+// one lane. Any lane change (drag, outside write) or rules edit voids them, so
+// dragging a ticket back can't revive a pass nobody re-checked.
+const withoutStaleConfirmations = (ticket: Ticket, previousTicket: Ticket | undefined): Ticket => {
+  if (!previousTicket) return ticket
+  const laneChanged = previousTicket.laneId !== ticket.laneId
+  const rulesChanged = (previousTicket.moveRules ?? '') !== (ticket.moveRules ?? '')
+  const clearsPass = (laneChanged || rulesChanged) && ticket.moveRulesPassedLaneId !== undefined
+  const clearsStamp = laneChanged && ticket.readyLaneId !== undefined
+  if (!clearsPass && !clearsStamp) return ticket
+  const cleared = { ...ticket }
+  if (clearsPass) cleared.moveRulesPassedLaneId = undefined
+  if (clearsStamp) cleared.readyLaneId = undefined
+  return cleared
 }
 
 export interface CompletionMove {
@@ -1305,8 +1328,8 @@ export interface CompletionMove {
 //
 // In a lane that waits for PR merge, merging is what completes the ticket: an
 // unmerged PR (or none yet — its state may simply not have synced) holds it in
-// place, and the PR turning merged completes it whatever the checklist says
-// (rules still have to pass).
+// place, and once merged the ticket completes whatever the checklist says when
+// its rules pass too — whether the merge or the rules confirm lands last.
 export const completionMoves = (
   previousBoard: ProjectBoard,
   nextBoard: ProjectBoard,
@@ -1317,10 +1340,12 @@ export const completionMoves = (
   const isJustCompleted = (ticket: Ticket, currentLane: SwimLane | undefined) => {
     const previousTicket = previousTicketById.get(ticket.id)
     if (currentLane?.waitsForPullRequestMerge) {
-      const isMerged = isPullRequestSettled(ticket.pullRequestState)
-      if (!isMerged) return false
-      const pullRequestJustMerged = previousTicket !== undefined && !isPullRequestSettled(previousTicket.pullRequestState)
-      if (pullRequestJustMerged) return moveRulesPass(ticket)
+      const mergeGatePasses = (candidate: Ticket) =>
+        isPullRequestSettled(candidate.pullRequestState) && moveRulesPass(candidate)
+      if (!isPullRequestSettled(ticket.pullRequestState)) return false
+      const mergeGateJustPassed =
+        previousTicket !== undefined && mergeGatePasses(ticket) && !mergeGatePasses(previousTicket)
+      if (mergeGateJustPassed) return true
     }
     const gatePassesNow = moveGatePasses(ticket)
     const gateJustPassed = gatePassesNow && !moveGatePasses(previousTicket)
@@ -1332,8 +1357,11 @@ export const completionMoves = (
     !moveGatePasses(ticket) && moveGatePasses(previousTicketById.get(ticket.id))
 
   const moves: CompletionMove[] = []
-  const tickets = nextBoard.tickets.map((ticket) => {
-    if (ticket.readyLaneId && gateJustFailed(ticket)) return { ...ticket, readyLaneId: undefined, updatedAt: at }
+  const tickets = nextBoard.tickets.map((incomingTicket) => {
+    const previousTicket = previousTicketById.get(incomingTicket.id)
+    let ticket = withoutStaleConfirmations(incomingTicket, previousTicket)
+    if (ticket.readyLaneId && gateJustFailed(ticket)) ticket = { ...ticket, readyLaneId: undefined }
+    if (ticket !== incomingTicket) ticket = { ...ticket, updatedAt: at }
     const currentLane = boardLaneById(nextBoard, ticket.laneId)
     if (!isJustCompleted(ticket, currentLane)) return ticket
     if (!ticket.moveOnComplete) {

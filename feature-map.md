@@ -404,7 +404,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
   - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
   - **Move rules** textarea under the footer checkbox (shown with it): one rule per line or bullet, saved on change. With rules, the ticket completes only when the rules pass AND every checklist item is done; an empty checklist then passes.
-  - **Move rules pass** checkbox, shown when there are rules: confirms them for the current lane only (`move_rules_passed_lane_id`). Ticking it can be the edit that completes and moves the ticket. Any lane change resets it.
+  - **Move rules pass** checkbox, shown when there are rules: confirms them for the current lane only (`move_rules_passed_lane_id`). Ticking it can be the edit that completes and moves the ticket. Any lane change or rules edit resets it.
   - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.

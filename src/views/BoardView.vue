@@ -977,10 +977,14 @@ const laneName = (laneId: string) => {
   return board.value.lanes.find((lane) => lane.id === laneId)?.name ?? laneId
 }
 
-const readyToMoveLaneName = (ticket: Ticket): string | undefined => {
-  const targetLaneId = isReadyToMove(ticket, board.value)
-  return targetLaneId ? laneName(targetLaneId) : undefined
-}
+const readyLaneNameByTicketId = computed(() => {
+  const names = new Map<string, string>()
+  for (const ticket of board.value.tickets) {
+    const targetLaneId = isReadyToMove(ticket, board.value)
+    if (targetLaneId) names.set(ticket.id, laneName(targetLaneId))
+  }
+  return names
+})
 
 const openTicketNextLaneId = computed(() => {
   const ticket = openTicket.value
@@ -1562,10 +1566,10 @@ const runTicketAgent = (ticket: Ticket) => {
                 title="Full auto: the next lane's agent starts when this one moves the ticket on"
               >auto</span>
               <span
-                v-if="readyToMoveLaneName(ticket)"
+                v-if="readyLaneNameByTicketId.has(ticket.id)"
                 class="full-auto-badge ready-badge"
-                :title="`Move rules and checklist pass; ready to move to ${readyToMoveLaneName(ticket)}`"
-              >ready → {{ readyToMoveLaneName(ticket) }}</span>
+                :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
+              >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
             </h3>
             <p v-if="showsField('description') && ticket.description" class="ticket-preview">
               {{ ticket.description }}
@@ -2122,7 +2126,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
       </label>
 
-      <label v-if="openTicketNextLaneId">
+      <label v-if="openTicketNextLaneId || openTicket.moveRules">
         Move rules
         <textarea
           :value="openTicket.moveRules ?? ''"
@@ -2131,7 +2135,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label v-if="openTicketNextLaneId && moveRulesList(openTicket).length" class="checkbox-label">
+      <label v-if="moveRulesList(openTicket).length" class="checkbox-label">
         <input
           type="checkbox"
           :checked="openTicket.moveRulesPassedLaneId === openTicket.laneId"
