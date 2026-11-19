@@ -69,26 +69,32 @@ export const applyVersion = ({ db, projectPath, version, ticketNumbers }) => {
     db.exec('COMMIT')
     return found.map(({ number, row }) => ({ number, title: row.title, from: row.version ?? null, to: version }))
   } catch (error) {
-    db.exec('ROLLBACK')
+    // A failed COMMIT can auto-roll back; a second ROLLBACK would mask the real error.
+    if (db.isTransaction) db.exec('ROLLBACK')
     throw error
   }
 }
 
 // The tracker keys projects by main checkout, so worktrees resolve to it too.
 const mainCheckoutPath = () => {
-  const gitCommonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-    encoding: 'utf8'
-  }).trim()
+  const gitArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir']
+  let gitCommonDir
+  try {
+    gitCommonDir = execFileSync('git', gitArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch {
+    throw new Error('Not inside a git repo; pass --project <path>.')
+  }
   return dirname(gitCommonDir)
 }
 
+const formatChange = ({ number, title, from, to }) => `#${number} ${title}: ${from ?? 'unset'} → ${to}`
+
 const main = (argv) => {
   const { version, ticketNumbers, projectPath, dbPath } = parseArgs(argv)
-  // The app stores project_path via path.resolve. `bun run` moves cwd to the
-  // package root, so resolve a relative --project against where it was typed.
-  const invocationDirectory = process.env.INIT_CWD ?? process.cwd()
-  const resolvedProjectPath = projectPath ? resolve(invocationDirectory, projectPath) : mainCheckoutPath()
-  const databasePath = dbPath ? resolve(invocationDirectory, dbPath) : DEFAULT_DATABASE_PATH
+  // The app stores project_path via path.resolve. `bun run` runs from the
+  // package root and sets no INIT_CWD, so relative paths resolve there.
+  const resolvedProjectPath = projectPath ? resolve(projectPath) : mainCheckoutPath()
+  const databasePath = dbPath ? resolve(dbPath) : DEFAULT_DATABASE_PATH
   // DatabaseSync creates missing files; an empty DB at the app's path would confuse its first launch.
   if (!existsSync(databasePath)) throw new Error(`No tracker database at ${databasePath}`)
   const db = new DatabaseSync(databasePath)
@@ -96,14 +102,17 @@ const main = (argv) => {
     // Same wait as the app, so a write while it's open queues instead of failing.
     db.exec('PRAGMA busy_timeout = 5000')
     const changes = applyVersion({ db, projectPath: resolvedProjectPath, version, ticketNumbers })
-    for (const { number, title, from, to } of changes) console.log(`#${number} ${title}: ${from ?? 'unset'} → ${to}`)
+    for (const change of changes) {
+      console.log(formatChange(change))
+    }
   } finally {
     db.close()
   }
 }
 
 const entryScriptPath = process.argv[1]
-const entryScriptUrl = entryScriptPath ? pathToFileURL(realpathSync(entryScriptPath)).href : null
+const realEntryScriptPath = entryScriptPath ? realpathSync(entryScriptPath) : null
+const entryScriptUrl = realEntryScriptPath ? pathToFileURL(realEntryScriptPath).href : null
 const isRunDirectly = import.meta.url === entryScriptUrl
 
 if (isRunDirectly) {
