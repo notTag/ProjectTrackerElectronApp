@@ -441,6 +441,19 @@ button.secondary.lane-prompt-reset:not(:disabled):hover {
   flex: 1;
 }
 
+.filter-popover label:has(input:disabled) {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.filter-popover label:has(input:disabled):hover {
+  background: none;
+}
+
+.filter-popover label .field-hint {
+  display: block;
+}
+
 /* Theme picker dropdown */
 .theme-popover {
   min-width: 220px;

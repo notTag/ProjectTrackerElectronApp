@@ -79,6 +79,7 @@ import {
   setLaneWidth,
   toggleCardField,
   toggleModalField,
+  toggleLaneCardField,
   toggleHiddenLane,
   MAX_LANE_WIDTH,
   MIN_LANE_WIDTH,
@@ -563,6 +564,22 @@ describe('board preferences', () => {
     expect(toggleModalField(hidden, 'labels').hiddenModalFields).toEqual(original.hiddenModalFields)
   })
 
+  it('reads preferences saved before per-lane card fields as every lane following the board', () => {
+    const savedBeforeLaneFields = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
+    expect(savedBeforeLaneFields.hiddenLaneCardFields).toEqual({})
+  })
+
+  it('hides a card field in one lane only and shows it again', () => {
+    const original = createDefaultBoardPreferences()
+    const hiddenInIdea = toggleLaneCardField(original, 'idea', 'description')
+    const alsoHiddenInDone = toggleLaneCardField(hiddenInIdea, 'done', 'labels')
+    expect(alsoHiddenInDone.hiddenLaneCardFields).toEqual({ idea: ['description'], done: ['labels'] })
+    expect(alsoHiddenInDone.cardFields).toEqual(original.cardFields)
+
+    const shownAgainInIdea = toggleLaneCardField(alsoHiddenInDone, 'idea', 'description')
+    expect(shownAgainInIdea.hiddenLaneCardFields).toEqual({ idea: [], done: ['labels'] })
+  })
+
   it('clamps a lane width dragged past either limit', () => {
     expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 10).laneWidths.idea).toBe(MIN_LANE_WIDTH)
     expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 9999).laneWidths.idea).toBe(MAX_LANE_WIDTH)
@@ -678,6 +695,29 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Labels: ui')
     expect(prompt).toContain('Branch: feat/pop')
     expect(prompt).not.toContain('Version:')
+  })
+
+  // Lane card-field hiding is display-only too (#115): the prompt is built from the
+  // ticket alone, so hiding every field in its lane changes nothing.
+  it('sends the same prompt whatever card fields its lane hides', () => {
+    const filledTicket = ticket({ description: 'Make it pop', labels: ['ui'], branchName: 'feat/pop' })
+    const promptBefore = ticketAgentPrompt(filledTicket, lane())
+
+    const everyFieldHiddenInLane = TICKET_CARD_FIELDS.reduce(
+      (preferences, field) => toggleLaneCardField(preferences, lane().id, field.id),
+      createDefaultBoardPreferences()
+    )
+    expect(everyFieldHiddenInLane.hiddenLaneCardFields[lane().id]).toHaveLength(TICKET_CARD_FIELDS.length)
+
+    const promptAfter = ticketAgentPrompt(filledTicket, lane())
+    expect(promptAfter).toBe(promptBefore)
+    expect(promptAfter).toContain('Labels: ui')
+    expect(promptAfter).toContain('Branch: feat/pop')
+
+    const emptyTicket = ticket({ description: '', labels: [], branchName: undefined })
+    const emptyPrompt = ticketAgentPrompt(emptyTicket, lane())
+    expect(emptyPrompt).not.toContain('Labels:')
+    expect(emptyPrompt).not.toContain('Branch:')
   })
 
   it('lists external links only when the ticket has some', () => {
