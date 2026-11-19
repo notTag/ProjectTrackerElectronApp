@@ -2375,7 +2375,6 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
-        <ExpandToggle v-model="laneModalExpanded" />
         <div ref="laneFieldsMenuRef" class="filter-menu">
           <button
             type="button"
@@ -2412,6 +2411,7 @@ const runTicketAgent = (ticket: Ticket) => {
             </label>
           </div>
         </div>
+        <ExpandToggle v-model="laneModalExpanded" />
       </div>
       <input
         class="ticket-title-input"
