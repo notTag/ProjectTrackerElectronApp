@@ -191,7 +191,7 @@ const hiddenLaneIds = computed(() => new Set(preferences.value.hiddenLaneIds))
 const laneIsHidden = (laneId: string) => hiddenLaneIds.value.has(laneId)
 const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLane(preferences.value, laneId))
 
-// The board setting is every lane's default; a lane's cog can only hide further.
+// The board setting is every lane's default; a lane's settings can only hide further.
 const shownOnBoard = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 const hiddenInLane = (field: TicketCardField, laneId: string) =>
   preferences.value.hiddenLaneCardFields[laneId]?.includes(field) ?? false
@@ -200,16 +200,11 @@ const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(
 const toggleLaneField = (laneId: string, field: TicketCardField) =>
   savePreferences(toggleLaneCardField(preferences.value, laneId, field))
 
-// One popover at a time. It renders inside the lane v-for, so outside clicks
-// are detected by class rather than a single template ref.
-const laneFieldsMenuLaneId = ref<string | null>(null)
-const toggleLaneFieldsMenu = (laneId: string) => {
-  laneFieldsMenuLaneId.value = laneFieldsMenuLaneId.value === laneId ? null : laneId
-}
+const laneFieldsMenuOpen = ref(false)
+const laneFieldsMenuRef = ref<HTMLElement | null>(null)
 const closeLaneFieldsMenuOnOutsideClick = (event: PointerEvent) => {
-  const target = event.target as Element | null
-  if (target?.closest('.lane-fields-menu')) return
-  laneFieldsMenuLaneId.value = null
+  if (laneFieldsMenuRef.value?.contains(event.target as Node)) return
+  laneFieldsMenuOpen.value = false
 }
 
 // Display-only: ticketAgentPrompt never reads preferences, so hidden fields still reach the agent.
@@ -360,7 +355,7 @@ const startTicketDraftFromHeading = (laneId: string) => {
 }
 
 const startLaneDrag = (lane: SwimLane, event: PointerEvent) => {
-  const pressedHeaderButton = (event.target as HTMLElement).closest('button, .lane-fields-menu')
+  const pressedHeaderButton = (event.target as HTMLElement).closest('button')
   if (event.button !== 0 || pressedHeaderButton || !laneCanMove(lane.id)) return
   laneDrag.value = { laneId: lane.id, startX: event.clientX, offsetX: 0, active: false, beforeLaneId: null, indicatorLeft: null }
   // Captured straight away (as the resize handle does) so a fast flick that
@@ -458,7 +453,7 @@ const focusLaneHeading = (laneId: string) => {
 const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   const isLeft = event.key === 'ArrowLeft'
   const isRight = event.key === 'ArrowRight'
-  // Keys bubbling up from the ▶ / ✎ / ⚙ buttons inside the header aren't a lane move.
+  // Keys bubbling up from the ▶ / ⚙ buttons inside the header aren't a lane move.
   const fromHeadingItself = event.target === event.currentTarget
   if (!fromHeadingItself || !event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
   event.preventDefault()
@@ -686,11 +681,10 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
-  if (laneFieldsMenuLaneId.value) {
-    // The focused checkbox unmounts with the popover; hand focus back to its cog.
-    const openMenu = document.activeElement?.closest('.lane-fields-menu')
-    openMenu?.querySelector<HTMLElement>('button')?.focus()
-    laneFieldsMenuLaneId.value = null
+  if (laneFieldsMenuOpen.value) {
+    // The focused checkbox unmounts with the popover; hand focus back to its toggle.
+    laneFieldsMenuRef.value?.querySelector<HTMLElement>('button')?.focus()
+    laneFieldsMenuOpen.value = false
     event.preventDefault()
     return
   }
@@ -1324,6 +1318,7 @@ const commitTypedPrompts = () => {
 }
 
 watch(openLaneId, () => {
+  laneFieldsMenuOpen.value = false
   flushMarkdownSaves()
   commitTypedPrompts()
   laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
@@ -1690,52 +1685,13 @@ const runTicketAgent = (ticket: Ticket) => {
           </button>
           <button
             class="icon-button"
-            title="Edit lane"
-            aria-label="Edit lane"
+            title="Lane settings"
+            :aria-label="`Lane settings for ${lane.name}`"
             @click="openLaneId = lane.id"
             @dblclick.stop
           >
-            ✎
+            ⚙
           </button>
-          <div class="filter-menu lane-fields-menu" @dblclick.stop>
-            <button
-              type="button"
-              class="icon-button"
-              title="Card fields shown in this lane"
-              :aria-label="`Card fields in ${lane.name}`"
-              aria-haspopup="true"
-              :aria-expanded="laneFieldsMenuLaneId === lane.id"
-              @click="toggleLaneFieldsMenu(lane.id)"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            <div
-              v-if="laneFieldsMenuLaneId === lane.id"
-              class="filter-popover"
-              role="group"
-              aria-label="Card fields shown in this lane"
-            >
-              <label
-                v-for="field in TICKET_CARD_FIELDS"
-                :key="field.id"
-                :title="shownOnBoard(field.id) ? undefined : 'Hidden for the whole board'"
-              >
-                <input
-                  type="checkbox"
-                  :checked="showsField(field.id, lane.id)"
-                  :disabled="!shownOnBoard(field.id)"
-                  @change="toggleLaneField(lane.id, field.id)"
-                />
-                <span>
-                  {{ field.label }}
-                  <small v-if="!shownOnBoard(field.id)" class="field-hint">Hidden for the whole board</small>
-                </span>
-              </label>
-            </div>
-          </div>
         </header>
 
         <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
@@ -2420,6 +2376,42 @@ const runTicketAgent = (ticket: Ticket) => {
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
         <ExpandToggle v-model="laneModalExpanded" />
+        <div ref="laneFieldsMenuRef" class="filter-menu">
+          <button
+            type="button"
+            class="icon-button"
+            title="Card fields shown in this lane"
+            :aria-label="`Card fields in ${openLane.name}`"
+            aria-haspopup="true"
+            :aria-expanded="laneFieldsMenuOpen"
+            @click="laneFieldsMenuOpen = !laneFieldsMenuOpen"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+          </button>
+          <div v-if="laneFieldsMenuOpen" class="filter-popover" role="group" aria-label="Card fields shown in this lane">
+            <label
+              v-for="field in TICKET_CARD_FIELDS"
+              :key="field.id"
+              :title="shownOnBoard(field.id) ? undefined : 'Hidden for the whole board'"
+            >
+              <input
+                type="checkbox"
+                :checked="showsField(field.id, openLane.id)"
+                :disabled="!shownOnBoard(field.id)"
+                @change="toggleLaneField(openLane.id, field.id)"
+              />
+              <span>
+                {{ field.label }}
+                <small v-if="!shownOnBoard(field.id)" class="field-hint">Hidden for the whole board</small>
+              </span>
+            </label>
+          </div>
+        </div>
       </div>
       <input
         class="ticket-title-input"

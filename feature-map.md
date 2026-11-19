@@ -284,7 +284,7 @@ From left to right:
 
 - **Header**: lane name, count of matching tickets, and two buttons:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
-  - **✎** (Edit lane) opens the Lane settings modal (3.9); **⚙** opens the lane's card-field popover (3.5).
+  - **⚙** opens the Lane settings modal (3.9).
   - Narrow lanes: the buttons and badges keep their size and stay inside the lane. The name gives up space first: it stays on one line and truncates with an ellipsis, with the full name on hover (`.lane-heading` in `styles.css`).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
@@ -319,7 +319,7 @@ From left to right:
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
-- **Per-lane card fields** (⚙ at the top right of each lane header, incl. No status): the same checkboxes for that lane only, saved per user in `BoardPreferences.hiddenLaneCardFields`. Board setting is the default; a lane can only hide further, so a board-hidden field shows disabled with "Hidden for the whole board". Display-only: the agent prompt is unchanged. The lane settings button beside it is ✎ "Edit lane".
+- **Per-lane card fields** (closed-eye button beside Expand in the Lane settings modal, 3.9 — every lane incl. No status): the same checkboxes for that lane only, saved per user in `BoardPreferences.hiddenLaneCardFields`. Board setting is the default; a lane can only hide further, so a board-hidden field shows disabled with "Hidden for the whole board". Display-only: the agent prompt is unchanged.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
@@ -438,7 +438,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Cancel** undoes the edits made since the modal opened, then closes it.
 - **Done** closes the modal and keeps edits. So do clicking the backdrop and Escape.
 
-### 3.9 Lane settings modal (✎ on a lane)
+### 3.9 Lane settings modal (⚙ on a lane)
 
 - **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
 - **Lane name** input, for renaming.

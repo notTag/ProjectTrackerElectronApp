@@ -179,7 +179,7 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
           </tfoot>
         </table>
         <p v-for="row in projectsWithoutClosingLanes" :key="row.projectPath" class="field-hint">
-          No closing lanes set on {{ row.name }} (lane ✎ Edit lane → "Counts as closed").
+          No closing lanes set on {{ row.name }} (lane ⚙ → "Counts as closed").
         </p>
       </template>
     </section>
