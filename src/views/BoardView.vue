@@ -10,6 +10,7 @@ import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
+import InfoTip from '@/components/InfoTip.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -2219,6 +2220,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @change="editTicket(openTicket, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
           Full auto
+          <InfoTip text="Same as a lane's Full auto, but for this ticket in every lane it enters." />
         </label>
         <span v-if="!hidesModalField('fullAuto')" class="field-hint">
           In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
@@ -2413,9 +2415,13 @@ const runTicketAgent = (ticket: Ticket) => {
         @change="editLane(openLane, { name: ($event.target as HTMLInputElement).value })"
       />
 
-      <label>
-        Agent prompt
+      <label for="lane-agent-prompt">
+        <span class="label-with-tip">
+          Agent prompt
+          <InfoTip text="Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/)." />
+        </span>
         <textarea
+          id="lane-agent-prompt"
           class="agent-prompt"
           :value="laneMarkdownDraft.agent.prompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
@@ -2452,9 +2458,13 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
-      <label>
-        Orchestrator prompt
+      <label for="lane-orchestrator-prompt">
+        <span class="label-with-tip">
+          Orchestrator prompt
+          <InfoTip text="Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." />
+        </span>
         <textarea
+          id="lane-orchestrator-prompt"
           class="agent-prompt orchestrator-prompt"
           :value="laneMarkdownDraft.orchestrator.prompt"
           spellcheck="false"
@@ -2612,6 +2622,7 @@ const runTicketAgent = (ticket: Ticket) => {
             :checked="Boolean(openLane.fullAuto)"
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
+          <InfoTip text="When this lane's agent moves a ticket on, the next lane's agent starts on it automatically." />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
         </label>
         <label>
