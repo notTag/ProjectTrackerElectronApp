@@ -1526,6 +1526,68 @@ code {
   font-size: 0.75rem;
 }
 
+/* InfoTip (#102): inline ⓘ beside a field label, same bare-glyph treatment as
+   the ⚙ .icon-button. CSS shows the bubble on hover/focus; .dismissed is set
+   by the first Escape. ponytail: left-anchored, no flip; add a right-anchored
+   variant if a call site sits near a modal's right edge. */
+.label-with-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+}
+
+.info-tip-button {
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  background: none;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.info-tip-button:hover {
+  color: var(--color-text);
+}
+
+.info-tip-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.info-tip-bubble {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  display: none;
+  width: max-content;
+  max-width: min(280px, 70vw);
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 0.75rem;
+  font-weight: normal;
+  white-space: normal;
+}
+
+.info-tip:hover .info-tip-bubble,
+.info-tip:focus-within .info-tip-bubble {
+  display: block;
+}
+
+.info-tip.dismissed .info-tip-bubble {
+  display: none;
+}
+
 .field-hint.field-error {
   color: var(--color-destructive);
 }

@@ -9,6 +9,7 @@ import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
+import InfoTip from '@/components/InfoTip.vue'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -2037,6 +2038,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @change="editTicket(openTicket, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
           Full auto
+          <InfoTip text="Same as a lane's Full auto, but for this ticket in every lane it enters." />
         </label>
         <span v-if="!hidesModalField('fullAuto')" class="field-hint">
           In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
@@ -2207,7 +2209,10 @@ const runTicketAgent = (ticket: Ticket) => {
       />
 
       <label>
-        Agent prompt
+        <span class="label-with-tip">
+          Agent prompt
+          <InfoTip text="Instructions sent to the agent when a ticket enters this lane. Autosaves to SwimlaneAgentPrompt/<lane>/ as markdown." />
+        </span>
         <textarea
           class="agent-prompt"
           :value="laneMarkdownDraft.agent.prompt"
@@ -2246,7 +2251,10 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
 
       <label>
-        Orchestrator prompt
+        <span class="label-with-tip">
+          Orchestrator prompt
+          <InfoTip text="Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." />
+        </span>
         <textarea
           class="agent-prompt orchestrator-prompt"
           :value="laneMarkdownDraft.orchestrator.prompt"
@@ -2385,6 +2393,7 @@ const runTicketAgent = (ticket: Ticket) => {
             :checked="Boolean(openLane.fullAuto)"
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
+          <InfoTip text="When this lane's agent moves a ticket on, the next lane's agent starts on it automatically." />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
         </label>
         <label>
