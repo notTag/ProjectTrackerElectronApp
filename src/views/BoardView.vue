@@ -69,7 +69,10 @@ import {
   carriedTicketIds,
   ticketsToRun,
   toggleCardField,
-  toggleLaneCardField,
+  toggleLaneModalField,
+  toggleLaneModalFieldInLane,
+  LANE_MODAL_FIELDS,
+  type LaneModalField,
   toggleModalField,
   TICKET_MODAL_FIELDS,
   type TicketModalField,
@@ -191,25 +194,25 @@ const hiddenLaneIds = computed(() => new Set(preferences.value.hiddenLaneIds))
 const laneIsHidden = (laneId: string) => hiddenLaneIds.value.has(laneId)
 const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLane(preferences.value, laneId))
 
-// The board setting is every lane's default; a lane's cog can only hide further.
-const shownOnBoard = (field: TicketCardField) => preferences.value.cardFields.includes(field)
-const hiddenInLane = (field: TicketCardField, laneId: string) =>
-  preferences.value.hiddenLaneCardFields[laneId]?.includes(field) ?? false
-const showsField = (field: TicketCardField, laneId: string) => shownOnBoard(field) && !hiddenInLane(field, laneId)
+const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(preferences.value, field))
-const toggleLaneField = (laneId: string, field: TicketCardField) =>
-  savePreferences(toggleLaneCardField(preferences.value, laneId, field))
 
-// One popover at a time. It renders inside the lane v-for, so outside clicks
-// are detected by class rather than a single template ref.
-const laneFieldsMenuLaneId = ref<string | null>(null)
-const toggleLaneFieldsMenu = (laneId: string) => {
-  laneFieldsMenuLaneId.value = laneFieldsMenuLaneId.value === laneId ? null : laneId
-}
+// Lane settings modal fields. The Display modal's list is every lane's default;
+// a lane's eye button can only hide further. Display-only: values still reach the agent.
+const laneFieldShownOnBoard = (field: LaneModalField) => !preferences.value.hiddenLaneModalFields.includes(field)
+const laneFieldHiddenInLane = (field: LaneModalField, laneId: string) =>
+  preferences.value.hiddenLaneModalFieldsByLane[laneId]?.includes(field) ?? false
+const showsLaneField = (field: LaneModalField, laneId: string) =>
+  laneFieldShownOnBoard(field) && !laneFieldHiddenInLane(field, laneId)
+const toggleLaneFieldOnBoard = (field: LaneModalField) => savePreferences(toggleLaneModalField(preferences.value, field))
+const toggleLaneFieldInLane = (laneId: string, field: LaneModalField) =>
+  savePreferences(toggleLaneModalFieldInLane(preferences.value, laneId, field))
+
+const laneFieldsMenuOpen = ref(false)
+const laneFieldsMenuRef = ref<HTMLElement | null>(null)
 const closeLaneFieldsMenuOnOutsideClick = (event: PointerEvent) => {
-  const target = event.target as Element | null
-  if (target?.closest('.lane-fields-menu')) return
-  laneFieldsMenuLaneId.value = null
+  if (laneFieldsMenuRef.value?.contains(event.target as Node)) return
+  laneFieldsMenuOpen.value = false
 }
 
 // Display-only: ticketAgentPrompt never reads preferences, so hidden fields still reach the agent.
@@ -360,7 +363,7 @@ const startTicketDraftFromHeading = (laneId: string) => {
 }
 
 const startLaneDrag = (lane: SwimLane, event: PointerEvent) => {
-  const pressedHeaderButton = (event.target as HTMLElement).closest('button, .lane-fields-menu')
+  const pressedHeaderButton = (event.target as HTMLElement).closest('button')
   if (event.button !== 0 || pressedHeaderButton || !laneCanMove(lane.id)) return
   laneDrag.value = { laneId: lane.id, startX: event.clientX, offsetX: 0, active: false, beforeLaneId: null, indicatorLeft: null }
   // Captured straight away (as the resize handle does) so a fast flick that
@@ -458,7 +461,7 @@ const focusLaneHeading = (laneId: string) => {
 const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   const isLeft = event.key === 'ArrowLeft'
   const isRight = event.key === 'ArrowRight'
-  // Keys bubbling up from the ▶ / ✎ / ⚙ buttons inside the header aren't a lane move.
+  // Keys bubbling up from the ▶ / ⚙ buttons inside the header aren't a lane move.
   const fromHeadingItself = event.target === event.currentTarget
   if (!fromHeadingItself || !event.altKey || !(isLeft || isRight) || !laneCanMove(lane.id)) return
   event.preventDefault()
@@ -686,11 +689,10 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
-  if (laneFieldsMenuLaneId.value) {
-    // The focused checkbox unmounts with the popover; hand focus back to its cog.
-    const openMenu = document.activeElement?.closest('.lane-fields-menu')
-    openMenu?.querySelector<HTMLElement>('button')?.focus()
-    laneFieldsMenuLaneId.value = null
+  if (laneFieldsMenuOpen.value) {
+    // The focused checkbox unmounts with the popover; hand focus back to its toggle.
+    laneFieldsMenuRef.value?.querySelector<HTMLElement>('button')?.focus()
+    laneFieldsMenuOpen.value = false
     event.preventDefault()
     return
   }
@@ -1324,6 +1326,7 @@ const commitTypedPrompts = () => {
 }
 
 watch(openLaneId, () => {
+  laneFieldsMenuOpen.value = false
   flushMarkdownSaves()
   commitTypedPrompts()
   laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
@@ -1690,52 +1693,13 @@ const runTicketAgent = (ticket: Ticket) => {
           </button>
           <button
             class="icon-button"
-            title="Edit lane"
-            aria-label="Edit lane"
+            title="Lane settings"
+            :aria-label="`Lane settings for ${lane.name}`"
             @click="openLaneId = lane.id"
             @dblclick.stop
           >
-            ✎
+            ⚙
           </button>
-          <div class="filter-menu lane-fields-menu" @dblclick.stop>
-            <button
-              type="button"
-              class="icon-button"
-              title="Card fields shown in this lane"
-              :aria-label="`Card fields in ${lane.name}`"
-              aria-haspopup="true"
-              :aria-expanded="laneFieldsMenuLaneId === lane.id"
-              @click="toggleLaneFieldsMenu(lane.id)"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            <div
-              v-if="laneFieldsMenuLaneId === lane.id"
-              class="filter-popover"
-              role="group"
-              aria-label="Card fields shown in this lane"
-            >
-              <label
-                v-for="field in TICKET_CARD_FIELDS"
-                :key="field.id"
-                :title="shownOnBoard(field.id) ? undefined : 'Hidden for the whole board'"
-              >
-                <input
-                  type="checkbox"
-                  :checked="showsField(field.id, lane.id)"
-                  :disabled="!shownOnBoard(field.id)"
-                  @change="toggleLaneField(lane.id, field.id)"
-                />
-                <span>
-                  {{ field.label }}
-                  <small v-if="!shownOnBoard(field.id)" class="field-hint">Hidden for the whole board</small>
-                </span>
-              </label>
-            </div>
-          </div>
         </header>
 
         <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
@@ -1766,7 +1730,7 @@ const runTicketAgent = (ticket: Ticket) => {
                 :aria-label="cardAgentBadge(ticket)?.label"
                 :title="cardAgentBadge(ticket)?.label"
               >{{ cardAgentBadge(ticket)?.glyph }}</span>
-              <span v-if="showsField('number', lane.id)" class="ticket-number">#{{ ticket.number }}</span>
+              <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
               {{ ticket.title }}
               <span
                 v-if="isFullAuto(ticket, laneOfTicket(ticket))"
@@ -1779,42 +1743,42 @@ const runTicketAgent = (ticket: Ticket) => {
                 :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
               >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
             </h3>
-            <p v-if="showsField('description', lane.id) && ticket.description" class="ticket-preview">
+            <p v-if="showsField('description') && ticket.description" class="ticket-preview">
               {{ ticket.description }}
             </p>
-            <p v-if="showsField('assignee', lane.id) && ticket.assigneeId" class="ticket-assignee">
+            <p v-if="showsField('assignee') && ticket.assigneeId" class="ticket-assignee">
               {{ assigneeName(ticket.assigneeId) }}
             </p>
-            <ul v-if="showsField('labels', lane.id) && ticket.labels?.length" class="ticket-labels">
+            <ul v-if="showsField('labels') && ticket.labels?.length" class="ticket-labels">
               <li v-for="label in ticket.labels" :key="label">{{ label }}</li>
             </ul>
             <p
               v-if="
-                (showsField('checklist', lane.id) && ticket.checklist?.length) ||
-                (showsField('branch', lane.id) && ticket.branchName) ||
-                (showsField('worktree', lane.id) && ticket.worktreePath) ||
-                (showsField('version', lane.id) && ticket.version) ||
-                (showsField('pullRequest', lane.id) && isWebUrl(ticket.pullRequestUrl))
+                (showsField('checklist') && ticket.checklist?.length) ||
+                (showsField('branch') && ticket.branchName) ||
+                (showsField('worktree') && ticket.worktreePath) ||
+                (showsField('version') && ticket.version) ||
+                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
               "
               class="ticket-meta"
             >
-              <span v-if="showsField('checklist', lane.id) && ticket.checklist?.length">
+              <span v-if="showsField('checklist') && ticket.checklist?.length">
                 ☑ {{ checklistProgress(ticket.checklist).done }}/{{ checklistProgress(ticket.checklist).total }}
               </span>
-              <span v-if="showsField('branch', lane.id) && ticket.branchName" class="ticket-branch">
+              <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
                 ⑂ {{ ticket.branchName }}
               </span>
               <span
-                v-if="showsField('worktree', lane.id) && ticket.worktreePath"
+                v-if="showsField('worktree') && ticket.worktreePath"
                 class="ticket-branch"
                 :title="ticket.worktreePath"
               >
                 ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
               </span>
-              <span v-if="showsField('version', lane.id) && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
+              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
               <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
               <a
-                v-if="showsField('pullRequest', lane.id) && isWebUrl(ticket.pullRequestUrl)"
+                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
                 :href="ticket.pullRequestUrl"
                 target="_blank"
                 draggable="false"
@@ -1871,7 +1835,22 @@ const runTicketAgent = (ticket: Ticket) => {
       <ul class="card-field-list">
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
-            <input type="checkbox" :checked="shownOnBoard(field.id)" @change="toggleField(field.id)" />
+            <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
+            {{ field.label }}
+          </label>
+        </li>
+      </ul>
+
+      <p class="eyebrow">Swim lane settings fields</p>
+      <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
+      <ul class="card-field-list">
+        <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
+          <label>
+            <input
+              type="checkbox"
+              :checked="laneFieldShownOnBoard(field.id)"
+              @change="toggleLaneFieldOnBoard(field.id)"
+            />
             {{ field.label }}
           </label>
         </li>
@@ -2419,6 +2398,42 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
+        <div ref="laneFieldsMenuRef" class="filter-menu">
+          <button
+            type="button"
+            class="icon-button"
+            title="Settings shown for this lane"
+            :aria-label="`Settings shown for ${openLane.name}`"
+            aria-haspopup="true"
+            :aria-expanded="laneFieldsMenuOpen"
+            @click="laneFieldsMenuOpen = !laneFieldsMenuOpen"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+          </button>
+          <div v-if="laneFieldsMenuOpen" class="filter-popover" role="group" aria-label="Settings shown for this lane">
+            <label
+              v-for="field in LANE_MODAL_FIELDS"
+              :key="field.id"
+              :title="laneFieldShownOnBoard(field.id) ? undefined : 'Hidden for the whole board'"
+            >
+              <input
+                type="checkbox"
+                :checked="showsLaneField(field.id, openLane.id)"
+                :disabled="!laneFieldShownOnBoard(field.id)"
+                @change="toggleLaneFieldInLane(openLane.id, field.id)"
+              />
+              <span>
+                {{ field.label }}
+                <small v-if="!laneFieldShownOnBoard(field.id)" class="field-hint">Hidden for the whole board</small>
+              </span>
+            </label>
+          </div>
+        </div>
         <ExpandToggle v-model="laneModalExpanded" />
       </div>
       <input
@@ -2427,7 +2442,7 @@ const runTicketAgent = (ticket: Ticket) => {
         @change="editLane(openLane, { name: ($event.target as HTMLInputElement).value })"
       />
 
-      <label for="lane-agent-prompt">
+      <label v-if="showsLaneField('agentPrompt', openLane.id)" for="lane-agent-prompt">
         <span class="label-with-tip">
           Agent prompt
           <InfoTip :text="agentPromptTip" />
@@ -2442,7 +2457,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
+      <label v-if="showsLaneField('agentFile', openLane.id)">
         Agent markdown file
         <input
           class="agent-file-path"
@@ -2459,7 +2474,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </span>
       </label>
 
-      <label>
+      <label v-if="showsLaneField('output', openLane.id)">
         Output
         <textarea
           class="agent-prompt"
@@ -2470,7 +2485,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
       </label>
 
-      <label for="lane-orchestrator-prompt">
+      <label v-if="showsLaneField('orchestratorPrompt', openLane.id)" for="lane-orchestrator-prompt">
         <span class="label-with-tip">
           Orchestrator prompt
           <InfoTip :text="orchestratorPromptTip" />
@@ -2487,12 +2502,12 @@ const runTicketAgent = (ticket: Ticket) => {
           Sent to the Auto Run orchestrator (runs on every Auto Run). {{tickets}}, {{ticket_numbers}},
           {{lanes}}, {{terminal}} are filled in at launch.
         </span>
-        <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
-          Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
-        </span>
       </label>
+      <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
+        Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
+      </span>
       <button
-        v-if="openLaneOrchestratorOverride"
+        v-if="showsLaneField('orchestratorPrompt', openLane.id) && openLaneOrchestratorOverride"
         class="secondary lane-prompt-reset"
         type="button"
         @click="editLane(openLane, { orchestratorPromptOverride: '' })"
@@ -2500,7 +2515,7 @@ const runTicketAgent = (ticket: Ticket) => {
         Reset to default
       </button>
 
-      <label>
+      <label v-if="showsLaneField('orchestratorFile', openLane.id)">
         Agent Orchestrator markdown file
         <input
           class="agent-file-path"
@@ -2523,7 +2538,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
            clicking a wrapping caption would fire − and switch the lane off. -->
-      <div class="orchestrator-poll-row">
+      <div v-if="showsLaneField('orchestratorPoll', openLane.id)" class="orchestrator-poll-row">
         <label
           id="orchestrator-poll-caption"
           :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
@@ -2566,7 +2581,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <section class="ticket-agent">
         <p class="eyebrow">Auto Run</p>
         <div class="auto-run-pickers">
-          <label>
+          <label v-if="showsLaneField('autoRunAgent', openLane.id)">
             Agent
             <select
               :value="findAgent(agents, openLane.autoRunAgentId).id"
@@ -2575,7 +2590,7 @@ const runTicketAgent = (ticket: Ticket) => {
               <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
             </select>
           </label>
-          <label>
+          <label v-if="showsLaneField('autoRunShell', openLane.id)">
             Shell
             <select
               :value="autoRunTerminal(openLane).id"
@@ -2587,7 +2602,7 @@ const runTicketAgent = (ticket: Ticket) => {
             </select>
           </label>
         </div>
-        <label>
+        <label v-if="showsLaneField('autoRunModel', openLane.id)">
           Model
           <ModelField
             :model-value="openLane.autoRunModel ?? ''"
@@ -2596,7 +2611,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
           />
         </label>
-        <label>
+        <label v-if="showsLaneField('orchestratorAgent', openLane.id)">
           Orchestrator agent
           <select
             :value="openLane.orchestratorAgentId ?? ''"
@@ -2611,7 +2626,7 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label>
+        <label v-if="showsLaneField('orchestratorModel', openLane.id)">
           Orchestrator model
           <ModelField
             :model-value="openLane.orchestratorModel ?? ''"
@@ -2620,7 +2635,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
           />
         </label>
-        <label class="checkbox-label">
+        <label v-if="showsLaneField('worktrees', openLane.id)" class="checkbox-label">
           <input
             type="checkbox"
             :checked="autoRunUsesWorktrees(openLane)"
@@ -2628,7 +2643,7 @@ const runTicketAgent = (ticket: Ticket) => {
           />
           Worktree and branch per ticket
         </label>
-        <label class="checkbox-label">
+        <label v-if="showsLaneField('fullAuto', openLane.id)" class="checkbox-label">
           <input
             type="checkbox"
             :checked="Boolean(openLane.fullAuto)"
@@ -2637,7 +2652,7 @@ const runTicketAgent = (ticket: Ticket) => {
           <InfoTip text="When this lane's agent moves a ticket on, the next lane's agent starts on it automatically." />
           Full auto: start the next lane's agent when this lane's agent moves a ticket on
         </label>
-        <label>
+        <label v-if="showsLaneField('nextLane', openLane.id)">
           Next Lane
           <select
             :value="openLane.nextLaneId ?? ''"
@@ -2657,25 +2672,29 @@ const runTicketAgent = (ticket: Ticket) => {
           </select>
           <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
         </label>
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="Boolean(openLane.waitsForPullRequestMerge)"
-            @change="editLane(openLane, { waitsForPullRequestMerge: ($event.target as HTMLInputElement).checked })"
-          />
-          Wait for PR merge before moving on
-        </label>
-        <span class="field-hint">Armed tickets here move to the Next Lane when their PR merges, not when their checklist completes.</span>
-        <label class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="Boolean(openLane.agentSetsVersion)"
-            @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
-          />
-          Agent sets semantic version
-        </label>
-        <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
-        <label class="checkbox-label">
+        <template v-if="showsLaneField('waitsForPullRequestMerge', openLane.id)">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(openLane.waitsForPullRequestMerge)"
+              @change="editLane(openLane, { waitsForPullRequestMerge: ($event.target as HTMLInputElement).checked })"
+            />
+            Wait for PR merge before moving on
+          </label>
+          <span class="field-hint">Armed tickets here move to the Next Lane when their PR merges, not when their checklist completes.</span>
+        </template>
+        <template v-if="showsLaneField('agentSetsVersion', openLane.id)">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(openLane.agentSetsVersion)"
+              @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
+            />
+            Agent sets semantic version
+          </label>
+          <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
+        </template>
+        <label v-if="showsLaneField('closesTicket', openLane.id)" class="checkbox-label">
           <input
             type="checkbox"
             :checked="Boolean(openLane.closesTicket)"

@@ -2311,7 +2311,8 @@ span.ticket-image-thumb {
 }
 
 /* Outranks `.ticket-modal label` (column stack, muted text) and the narrow-viewport full-width .filter-menu. */
-.ticket-modal .filter-popover label {
+.ticket-modal .filter-popover label,
+.lane-modal .filter-popover label {
   flex-direction: row;
   gap: 10px;
   color: var(--color-text);
