@@ -70,9 +70,11 @@ body {
   -webkit-app-region: drag;
 }
 
-/* The title gives up width first: it ellipsizes (full text in its tooltip) so
-   the action buttons never get squeezed into wrapping. */
+/* The title takes only leftover width and ellipsizes, so the action buttons
+   never get squeezed into wrapping. No tooltip: the title sits in the drag
+   region, which receives no hover events. */
 .titlebar-title {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -85,31 +87,41 @@ body {
 .titlebar-actions {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  min-width: 0;
   gap: 5px;
   -webkit-app-region: no-drag;
 }
 
-/* Buttons pin height: 28px, so a wrapped label would spill out of the box. */
+/* Only the scan path may shrink (it ellipsizes); everything else keeps its width. */
+.titlebar-actions > :not(.scan-progress) {
+  flex-shrink: 0;
+}
+
 .titlebar-actions button {
   min-width: 58px;
   height: 28px;
   min-height: 28px;
   padding: 0 12px;
+}
+
+/* Buttons pin height: 28px, so a wrapped label would spill out of the box. */
+.titlebar-actions > button {
   white-space: nowrap;
 }
 
 /* Measured in-app: the board actions need ~850px, so below ~1180px the full
    project title no longer fits beside them. Tighten the buttons to win back
-   ~80px of title before it ellipsizes. */
+   title width before it ellipsizes. */
 @media (max-width: 1180px) {
   .titlebar-actions {
     gap: 4px;
   }
 
-  .titlebar-actions button {
+  .titlebar-actions > button,
+  .titlebar-actions .filter-trigger,
+  .titlebar-actions .offline-badge {
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 6px;
   }
 }
 

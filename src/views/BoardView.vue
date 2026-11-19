@@ -1332,7 +1332,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
 <template>
   <header class="titlebar">
-    <span class="titlebar-title" :title="projectTitle">{{ projectTitle }}</span>
+    <span class="titlebar-title">{{ projectTitle }}</span>
     <div class="titlebar-actions">
       <OfflineBadge />
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
