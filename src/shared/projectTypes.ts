@@ -1684,6 +1684,28 @@ export const TICKET_CARD_FIELDS = [
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
 
+// Display-only: hiding a field here never changes what the agent prompt sends.
+export const TICKET_MODAL_FIELDS = [
+  { id: 'status', label: 'Status' },
+  { id: 'assignee', label: 'Assignee' },
+  { id: 'description', label: 'Description' },
+  { id: 'labels', label: 'Labels' },
+  { id: 'branch', label: 'Branch' },
+  { id: 'worktree', label: 'Worktree' },
+  { id: 'version', label: 'Version' },
+  { id: 'pullRequest', label: 'Merge Request' },
+  { id: 'externalLinks', label: 'External Links' },
+  { id: 'images', label: 'Images' },
+  { id: 'checklist', label: 'Checklist' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'model', label: 'Model' },
+  { id: 'fullAuto', label: 'Full auto' },
+  { id: 'nextLane', label: 'Next Lane' },
+  { id: 'lastAgentRun', label: 'Last agent run' }
+] as const
+
+export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
+
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
 export const worktreeFolderName = (worktreePath: string) => {
@@ -1784,6 +1806,8 @@ export interface BoardPreferences {
   // missing from it shipped later, so it starts shown rather than looking
   // switched off.
   knownCardFields?: TicketCardField[]
+  // The hidden list, not the shown one, so modal fields added later show by default.
+  hiddenModalFields: TicketModalField[]
 }
 
 const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
@@ -1802,7 +1826,8 @@ export const createDefaultBoardPreferences = (): BoardPreferences => ({
   laneWidths: {},
   hiddenLaneIds: [],
   cardFields: [...ALL_CARD_FIELDS],
-  knownCardFields: [...ALL_CARD_FIELDS]
+  knownCardFields: [...ALL_CARD_FIELDS],
+  hiddenModalFields: []
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
@@ -1835,6 +1860,11 @@ export const toggleHiddenLane = (preferences: BoardPreferences, laneId: string):
 export const toggleCardField = (preferences: BoardPreferences, field: TicketCardField): BoardPreferences => ({
   ...preferences,
   cardFields: toggleInList(preferences.cardFields, field)
+})
+
+export const toggleModalField = (preferences: BoardPreferences, field: TicketModalField): BoardPreferences => ({
+  ...preferences,
+  hiddenModalFields: toggleInList(preferences.hiddenModalFields, field)
 })
 
 export const setLaneWidth = (
