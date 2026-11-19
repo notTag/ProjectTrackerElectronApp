@@ -20,6 +20,7 @@ import {
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
   completionMoves,
+  isReadyToMove,
   effectiveNextLaneId,
   createUnassignedLane,
   laneTransitions,
@@ -1176,6 +1177,31 @@ describe('full auto', () => {
         expect(waitingMovesBetween(armed(merged), completed(merged)).moves).toHaveLength(1)
       })
 
+      it('still needs move rules to pass when the PR merges', () => {
+        const rules = { moveRules: 'Deployed', pullRequestState: 'open' as const }
+        const mergedUnconfirmed = { ...rules, pullRequestState: 'merged' as const }
+        expect(waitingMovesBetween(armed(rules), armed(mergedUnconfirmed)).moves).toEqual([])
+
+        const mergedConfirmed = { ...mergedUnconfirmed, moveRulesPassedLaneId: 'prd' }
+        expect(waitingMovesBetween(armed(rules), armed(mergedConfirmed)).moves).toHaveLength(1)
+      })
+
+      it('moves when the rules are confirmed after the merge, whatever the checklist says', () => {
+        const mergedUnconfirmed = { moveRules: 'Deployed', pullRequestState: 'merged' as const }
+        const mergedConfirmed = { ...mergedUnconfirmed, moveRulesPassedLaneId: 'prd' }
+        const { moves } = waitingMovesBetween(armed(mergedUnconfirmed), armed(mergedConfirmed))
+        expect(moves).toHaveLength(1)
+      })
+
+      it('shows no ready label while the PR is unmerged', () => {
+        const rulesPassed = { moveRules: 'Deployed', moveRulesPassedLaneId: 'prd', moveOnComplete: false }
+        const open = completed({ ...rulesPassed, pullRequestState: 'open' })
+        const merged = completed({ ...rulesPassed, pullRequestState: 'merged' })
+        const board = boardWith([open], { waitsForPullRequestMerge: true })
+        expect(isReadyToMove(open, board)).toBeUndefined()
+        expect(isReadyToMove(merged, boardWith([merged], { waitsForPullRequestMerge: true }))).toBe('dev')
+      })
+
       it('leaves an unarmed ticket alone when its PR merges', () => {
         const before = armed({ moveOnComplete: false, pullRequestState: 'open' })
         const after = armed({ moveOnComplete: false, pullRequestState: 'merged' })
@@ -1228,6 +1254,100 @@ describe('full auto', () => {
       )
       expect(moves).toEqual([])
     })
+
+    describe('move rules', () => {
+      const withRules = { moveRules: '- PR merged\n- no open questions' }
+      const rulesPassed = { ...withRules, moveRulesPassedLaneId: 'prd' }
+
+      it('holds a done checklist until the rules pass, then moves and resets the rules pass', () => {
+        const checklistDone = movesBetween(armed(withRules), completed(withRules))
+        expect(checklistDone.moves).toEqual([])
+        expect(checklistDone.board.tickets[0].laneId).toBe('prd')
+
+        const { board, moves } = movesBetween(completed(withRules), completed(rulesPassed))
+        expect(moves.map((move) => move.toLane.id)).toEqual(['dev'])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'dev', moveRulesPassedLaneId: undefined })
+      })
+
+      it('ignores a rules pass confirmed in an earlier lane', () => {
+        const staleRules = { ...withRules, moveRulesPassedLaneId: 'idea' }
+        expect(movesBetween(armed(staleRules), completed(staleRules)).moves).toEqual([])
+      })
+
+      it('completes with an empty checklist once the rules pass', () => {
+        const noChecklist = { checklist: undefined }
+        expect(movesBetween(armed({ ...withRules, ...noChecklist }), armed({ ...rulesPassed, ...noChecklist })).moves)
+          .toHaveLength(1)
+      })
+
+      it('voids a rules pass when the ticket is dragged out and back', () => {
+        const draggedAway = completed({ ...rulesPassed, laneId: 'dev' })
+        const draggedBack = completed(rulesPassed)
+        const { board, moves } = movesBetween(draggedAway, draggedBack)
+        expect(moves).toEqual([])
+        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveRulesPassedLaneId: undefined })
+      })
+
+      it('voids a rules pass when the rules text changes', () => {
+        const editedRules = completed({ ...rulesPassed, moveRules: '- PR merged\n- QA sign-off' })
+        const { board, moves } = movesBetween(armed(rulesPassed), editedRules)
+        expect(moves).toEqual([])
+        expect(board.tickets[0].moveRulesPassedLaneId).toBeUndefined()
+      })
+
+      it('needs the rules for a reported ▶ Run completion too', () => {
+        expect(movesBetween(armed(withRules), armed(withRules), ['ticket-1']).moves).toEqual([])
+      })
+    })
+
+    describe('ready to move', () => {
+      const unarmed = { moveToLaneId: undefined, moveOnComplete: false }
+      const nextLane = { nextLaneId: 'dev' }
+
+      it('stamps an unarmed completion and labels it with the target lane', () => {
+        const { board } = completionMoves(
+          boardWith([armed(unarmed)], nextLane),
+          boardWith([completed(unarmed)], nextLane)
+        )
+        expect(board.tickets[0].readyLaneId).toBe('prd')
+        expect(isReadyToMove(board.tickets[0], board)).toBe('dev')
+      })
+
+      it('clears the stamp once the gate stops passing', () => {
+        const stamped = completed({ ...unarmed, readyLaneId: 'prd' })
+        const reopened = armed({ ...unarmed, readyLaneId: 'prd' })
+        const previousBoard = boardWith([stamped], nextLane)
+        const nextBoard = boardWith([reopened], nextLane)
+        const { board } = completionMoves(previousBoard, nextBoard)
+        expect(board.tickets[0].readyLaneId).toBeUndefined()
+      })
+
+      it('has no label without a resolvable next lane, or once the ticket left the stamped lane', () => {
+        const stamped = completed({ ...unarmed, readyLaneId: 'prd' })
+        expect(isReadyToMove(stamped, boardWith([stamped]))).toBeUndefined()
+        const movedOn = { ...stamped, laneId: 'dev', moveToLaneId: 'empty' }
+        expect(isReadyToMove(movedOn, boardWith([movedOn]))).toBeUndefined()
+        expect(isReadyToMove({ ...movedOn, readyLaneId: 'dev' }, boardWith([movedOn]))).toBe('empty')
+      })
+
+      it('reads the gate live for tickets with rules, so an outside confirm shows', () => {
+        const confirmed = completed({ ...unarmed, moveRules: 'PR merged', moveRulesPassedLaneId: 'prd' })
+        expect(isReadyToMove(confirmed, boardWith([confirmed], nextLane))).toBe('dev')
+        const unconfirmed = { ...confirmed, moveRulesPassedLaneId: undefined }
+        expect(isReadyToMove(unconfirmed, boardWith([unconfirmed], nextLane))).toBeUndefined()
+      })
+    })
+  })
+
+  it('ticketAgentPrompt lists move rules with the confirm write only when the ticket has rules', () => {
+    const prdLane = lane('prd')
+    const withRules = ticketAgentPrompt(ticket({ moveRules: '- PR merged' }), prdLane)
+    expect(withRules).toContain('move this ticket only when every rule below and every checklist item pass')
+    expect(withRules).toContain('- PR merged')
+    // shellQuote escapes the SQL literal's quotes inside the single-quoted argument.
+    expect(withRules).toContain(`SET move_rules_passed_lane_id = '\\''prd'\\''`)
+    expect(withRules).toContain(`WHERE id = '\\''ticket-1'\\'' AND lane_id = '\\''prd'\\'';`)
+    expect(ticketAgentPrompt(ticket(), prdLane)).not.toContain('Move rules')
   })
 
   describe('effectiveNextLaneId', () => {
