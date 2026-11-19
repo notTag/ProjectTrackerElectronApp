@@ -284,6 +284,7 @@ From left to right:
 - **Header**: lane name, count of matching tickets, and two buttons:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
+  - Narrow lanes: the buttons and badges keep their size and stay inside the lane. The name gives up space first: it stays on one line and truncates with an ellipsis, with the full name on hover (`.lane-heading` in `styles.css`).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
