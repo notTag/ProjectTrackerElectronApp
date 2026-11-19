@@ -348,6 +348,8 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both modals and kept until the app restarts. Not shown in the graph side panel.
 
+**⚙ Ticket fields** button (beside Expand, this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
+
 **Fields** (each saves when changed or when it loses focus; every edit updates `updatedAt`):
 
 | Field | Notes |
