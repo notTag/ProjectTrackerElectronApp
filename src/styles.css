@@ -1463,8 +1463,7 @@ code {
   width: min(760px, 100%);
 }
 
-.ticket-modal.expanded,
-.lane-modal.expanded {
+.modal.expanded {
   width: min(85vw, 100%);
 }
 
