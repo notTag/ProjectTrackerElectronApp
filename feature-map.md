@@ -309,6 +309,10 @@ From left to right:
   - **v1.4.0** semantic version
   - **PR #N ↗** link, with a dot for the PR's state (open, draft, merged, closed). Clicking it opens the PR without opening the ticket
 - **Agent run badge**: running, ✓ succeeded, failed, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
+- **auto** badge after the title when full auto is on, then a green **ready → <Next lane>** badge when the ticket is ready to move but nothing moved it (`isReadyToMove` in `projectTypes.ts`). Always shown, no Display toggle.
+  - With move rules: shows while the rules are confirmed in this lane and every checklist item is done. An agent's `sqlite3` confirm shows after the poll refresh.
+  - Without rules: shows when the ticket completed (3.8 Next Lane) in this lane while unarmed. Unticking an item clears it.
+  - Never shown when the Next Lane doesn't resolve to another lane on the board, or after the ticket moves.
 
 ### 3.5 Display settings modal (⚙ Display)
 
@@ -400,6 +404,9 @@ In graph view this opens as a side panel instead of a centered modal.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
   - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
   - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
+  - **Move rules** textarea under the footer checkbox (shown with it): one rule per line or bullet, saved on change. With rules, the ticket completes only when the rules pass AND every checklist item is done; an empty checklist then passes.
+  - **Move rules pass** checkbox, shown when there are rules: confirms them for the current lane only (`move_rules_passed_lane_id`). Ticking it can be the edit that completes and moves the ticket. Any lane change or rules edit resets it.
+  - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
   - Claude Code and Codex runs can write files but can't run shell commands.
