@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ticketModalExpanded } from '@/ticketModalWidth'
+import { laneModalExpanded, ticketModalExpanded } from '@/modalWidth'
 
+import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
@@ -1711,21 +1712,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
-        <button
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-model="ticketModalExpanded" />
       </div>
       <input
         v-model="ticketDraft.title"
@@ -1813,22 +1800,7 @@ const runTicketAgent = (ticket: Ticket) => {
           #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
           <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
         </p>
-        <button
-          v-if="boardView !== 'graph'"
-          type="button"
-          class="icon-button"
-          :title="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-label="ticketModalExpanded ? 'Collapse' : 'Expand'"
-          :aria-pressed="ticketModalExpanded"
-          @click="ticketModalExpanded = !ticketModalExpanded"
-        >
-          <svg v-if="ticketModalExpanded" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
+        <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
         <div ref="modalFieldsMenuRef" class="filter-menu">
           <button
             type="button"
@@ -2232,8 +2204,11 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="openLane" class="modal-backdrop" @click.self="openLaneId = null">
-    <section class="modal lane-modal">
-      <p class="eyebrow">Swim lane</p>
+    <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
+      <div class="ticket-modal-header">
+        <p class="eyebrow">Swim lane</p>
+        <ExpandToggle v-model="laneModalExpanded" />
+      </div>
       <input
         class="ticket-title-input"
         :value="openLane.name"
