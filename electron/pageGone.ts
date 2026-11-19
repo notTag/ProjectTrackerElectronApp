@@ -25,11 +25,13 @@ export function watchPageGone(sender: PageGoneSender, listener: () => void): () 
     const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
     if (isPageLoad) listener()
   }
+  // Own closure so cleanup can't remove another watcher's once-wrapper sharing `listener`.
+  const onDestroyed = () => listener()
   sender.on('did-start-navigation', onNavigation)
-  sender.once('destroyed', listener)
+  sender.once('destroyed', onDestroyed)
   return () => {
     if (sender.isDestroyed()) return
     sender.off('did-start-navigation', onNavigation)
-    sender.off('destroyed', listener)
+    sender.off('destroyed', onDestroyed)
   }
 }
