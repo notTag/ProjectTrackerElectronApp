@@ -736,9 +736,13 @@ export const ticketShellCommand = (
 // called; a name that sanitizes to nothing falls back to the lane id.
 export const laneTitleToken = (lane: Pick<SwimLane, 'id' | 'name'>): string => {
   if (lane.id === UNASSIGNED_LANE_ID) return 'Unassigned'
-  const dashedName = lane.name.replace(/\p{Cc}/gu, ' ').trim().replace(/\s+/g, '-')
+  const dashedName = singleLineText(lane.name).split(' ').join('-')
   return dashedName || lane.id
 }
+
+// Control characters become spaces: a title fed through a terminal escape could
+// otherwise end the sequence early (ESC, BEL) and inject its own.
+const singleLineText = (text: string): string => text.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
 
 // Number and lane only: a title can be edited later, and the number is what people search for.
 export const ticketSessionName = (ticket: Pick<Ticket, 'number'>, lane: Pick<SwimLane, 'id' | 'name'>): string =>
@@ -884,21 +888,20 @@ export const ticketBranchName = (ticket: Ticket): string => {
 // which is why the number leads.
 const TAB_TITLE_MAX_CODE_POINTS = 40
 
-// Control characters become spaces: a title fed through a terminal escape could
-// otherwise end the sequence early (ESC, BEL) and inject its own. Counting code
-// points rather than UTF-16 units keeps an emoji's surrogate pair whole at the cut.
-// Only the ticket title is cut: the number-lane prefix is what tells tabs apart.
+// Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
+// whole at the cut. Only the ticket title is cut: the number-lane prefix is what
+// tells tabs apart.
 export const ticketTabTitle = (
   ticket: Pick<Ticket, 'number' | 'title'>,
   lane: Pick<SwimLane, 'id' | 'name'>
 ): string => {
   const prefix = ticketSessionName(ticket, lane)
-  const singleLineTitle = ticket.title.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()
-  if (!singleLineTitle) return prefix
-  const codePoints = Array.from(`${prefix}-${singleLineTitle}`)
-  if (codePoints.length <= TAB_TITLE_MAX_CODE_POINTS) return codePoints.join('')
+  const titleCodePoints = Array.from(singleLineText(ticket.title))
+  if (titleCodePoints.length === 0) return prefix
   const titleBudget = TAB_TITLE_MAX_CODE_POINTS - Array.from(prefix).length - 1
-  const keptTitle = Array.from(singleLineTitle).slice(0, Math.max(titleBudget, 0)).join('').trimEnd()
+  if (titleCodePoints.length <= titleBudget) return `${prefix}-${titleCodePoints.join('')}`
+  const keptTitleCodePoints = titleCodePoints.slice(0, Math.max(titleBudget, 0))
+  const keptTitle = keptTitleCodePoints.join('').trimEnd()
   return keptTitle ? `${prefix}-${keptTitle}…` : prefix
 }
 

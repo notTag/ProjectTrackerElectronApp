@@ -59,6 +59,7 @@ import {
   ticketSearchText,
   ticketShellCommand,
   ticketTabTitle,
+  currentLaneOf,
   ticketIdsToMove,
   carriedTicketIds,
   ticketsToRun,
@@ -991,8 +992,7 @@ const setMoveToLane = (ticket: Ticket, laneId: string) => {
 
 // A ticket's prompt is built from its own lane, so the same ticket produces a
 // different instruction once it moves column.
-const laneOfTicket = (ticket: Ticket) =>
-  laneColumns.value.find((lane) => lane.id === ticket.laneId) ?? unassignedLane.value
+const laneOfTicket = (ticket: Ticket) => currentLaneOf(board.value, ticket)
 
 const promptContext = (ticket: Ticket) => ({
   assigneeName: ticket.assigneeId ? assigneeName(ticket.assigneeId) : undefined,
