@@ -886,6 +886,23 @@ describe('board preferences', () => {
   })
 })
 
+describe('theme', () => {
+  it('survives a reopen and stays private to the user who set it', () => {
+    const userDataPath = freshUserDataPath()
+    const asAlice = new StateRepository(userDataPath, 'alice')
+    const seeded = asAlice.saveState({ ...stateWithBoard(), userId: 'alice' })
+    const projectPath = seeded.snapshot.projects[0].path
+    expect(asAlice.getState().themeId).toBeUndefined()
+
+    asAlice.saveState({ ...asAlice.getState(), themeId: 'dracula' })
+
+    expect(new StateRepository(userDataPath, 'alice').getState().themeId).toBe('dracula')
+    const asBob = new StateRepository(userDataPath, 'bob')
+    asBob.addProjectMember(projectPath, 'bob')
+    expect(asBob.getState().themeId).toBeUndefined()
+  })
+})
+
 describe('StateRepository archived projects', () => {
   it('keeps an archived project and its board through a save and reopen', () => {
     const userDataPath = freshUserDataPath()

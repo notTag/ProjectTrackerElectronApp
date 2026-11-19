@@ -42,6 +42,7 @@ import {
   SETTING_BOARD_PREFERENCES,
   SETTING_SCAN_FAILURES,
   SETTING_SCANNED_AT,
+  SETTING_THEME,
   SETTING_UPDATED_AT,
   SETTING_VERSION
 } from './schema.js'
@@ -122,7 +123,8 @@ const settingsOf = (state: ProjectTrackerState): Record<string, string | undefin
   [SETTING_UPDATED_AT]: state.updatedAt,
   [SETTING_SCAN_FAILURES]: JSON.stringify(state.snapshot.failures ?? []),
   [SETTING_BOARD_PREFERENCES]: JSON.stringify(state.boardPreferences ?? {}),
-  [SETTING_SCANNED_AT]: state.snapshot.scannedAt
+  [SETTING_SCANNED_AT]: state.snapshot.scannedAt,
+  [SETTING_THEME]: state.themeId
 })
 
 const listChanges = (next: string[], previous: string[]) => ({
@@ -486,7 +488,8 @@ export class StateRepository {
       boardPreferences: parseJson<Record<string, BoardPreferences>>(
         this.readSetting(SETTING_BOARD_PREFERENCES),
         {}
-      )
+      ),
+      themeId: this.readSetting(SETTING_THEME)
     }
     // Cloned because callers may mutate what they get back before saving it.
     this.baseline = structuredClone(state)

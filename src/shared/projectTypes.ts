@@ -66,6 +66,8 @@ export interface ProjectTrackerState {
   boards?: Record<string, ProjectBoard>
   // Also keyed by project path, but per-user rather than shared — see BoardPreferences.
   boardPreferences?: Record<string, BoardPreferences>
+  // Per-user confirmed theme. Undefined until the user picks one.
+  themeId?: string
   // Extra agents offered on every board beside DEFAULT_AGENT. Optional and empty
   // by default — see availableAgents.
   agents?: Agent[]
