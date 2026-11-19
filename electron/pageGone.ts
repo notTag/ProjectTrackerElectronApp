@@ -16,6 +16,11 @@ export interface PageGoneSender {
 
 // Fires on reload/navigation and on window close (sender destroyed, no navigation).
 export function watchPageGone(sender: PageGoneSender, listener: () => void): () => void {
+  // Window closed before the IPC handler ran: 'destroyed' already fired and won't again.
+  if (sender.isDestroyed()) {
+    listener()
+    return () => {}
+  }
   const onNavigation = (navigation: NavigationEvent) => {
     const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
     if (isPageLoad) listener()

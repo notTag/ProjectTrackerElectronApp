@@ -24,6 +24,18 @@ describe('watchPageGone', () => {
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
+  it('fires right away when the sender is already destroyed', () => {
+    const sender = new FakeSender()
+    sender.destroyed = true
+    const listener = vi.fn()
+
+    const cleanup = watchPageGone(sender, listener)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(sender.listenerCount('destroyed')).toBe(0)
+    expect(() => cleanup()).not.toThrow()
+  })
+
   it('fires on main-frame cross-document navigation', () => {
     const { sender, listener } = setup()
     sender.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
