@@ -18,6 +18,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 
 - Opens at 1280×840 and can't be made smaller than 960×680.
 - The native title bar is hidden. Each view draws its own themed title strip, and the macOS window buttons (close, minimize, zoom) sit inside it at (12, 17).
+- Narrow windows: title-strip and filter-bar labels never wrap. The title strip's name gives up space first: it shrinks with an ellipsis. Below 1180px the title-strip buttons use tighter padding. The board's filter bar drops controls to a second row instead of squeezing them. (`.titlebar-title`, `.titlebar-actions`, `.board-filters` in `src/styles.css`)
 - Hardware acceleration is off. Some Apple Silicon GPUs scrambled the text in packaged builds.
 - Clicking the Dock icon reopens the window if every window was closed. On macOS, closing all windows doesn't quit the app.
 - The Dock icon and the About panel icon come from `assets/app-icon.png`.
@@ -265,7 +266,7 @@ From left to right:
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
-- **All swim lanes** select: limits the board to a single column.
+- **Swim lane** multi-select popover ("All swim lanes", one lane's name, or "N lanes"): check any set of lanes to show only those columns, in board order. None checked, or all checked, shows every lane. Lanes hidden by the Display toggles aren't listed, and a pick is ignored while its lane is hidden. Closes on outside click, focus leaving it, or Escape. Ids of deleted lanes are ignored. Resets when switching to another project's board.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.
@@ -276,7 +277,7 @@ From left to right:
 
 - When the board has no lanes: "No swim lanes yet." with a **Create swim lane** button.
 - Otherwise the columns are No status followed by the board's lanes in order. Hidden columns and the lane filter apply.
-- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while the lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
+- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while any lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
 
 #### Lane column
 
@@ -284,7 +285,7 @@ From left to right:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
-- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while the lane filter shows a single column.
+- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
 
@@ -308,6 +309,10 @@ From left to right:
   - **v1.4.0** semantic version
   - **PR #N ↗** link, with a dot for the PR's state (open, draft, merged, closed). Clicking it opens the PR without opening the ticket
 - **Agent run badge**: running, ✓ succeeded, failed, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
+- **auto** badge after the title when full auto is on, then a green **ready → <Next lane>** badge when the ticket is ready to move but nothing moved it (`isReadyToMove` in `projectTypes.ts`). Always shown, no Display toggle.
+  - With move rules: shows while the rules are confirmed in this lane and every checklist item is done. An agent's `sqlite3` confirm shows after the poll refresh.
+  - Without rules: shows when the ticket completed (3.8 Next Lane) in this lane while unarmed. Unticking an item clears it.
+  - Never shown when the Next Lane doesn't resolve to another lane on the board, or after the ticket moves.
 
 ### 3.5 Display settings modal (⚙ Display)
 
@@ -345,7 +350,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Header:** `#N · Created <date> · Updated <date time>`
 
-**Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both modals and kept until the app restarts. Not shown in the graph side panel.
+**Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both ticket modals (not the Lane settings modal) and kept until the app restarts. Not shown in the graph side panel. (`src/components/ExpandToggle.vue`, state in `src/modalWidth.ts`)
 
 **⚙ Ticket fields** button (beside Expand, this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
 
@@ -399,6 +404,9 @@ In graph view this opens as a side panel instead of a centered modal.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
   - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
   - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
+  - **Move rules** textarea under the footer checkbox (shown with it): one rule per line or bullet, saved on change. With rules, the ticket completes only when the rules pass AND every checklist item is done; an empty checklist then passes.
+  - **Move rules pass** checkbox, shown when there are rules: confirms them for the current lane only (`move_rules_passed_lane_id`). Ticking it can be the edit that completes and moves the ticket. Any lane change or rules edit resets it.
+  - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
   - Claude Code and Codex runs can write files but can't run shell commands.
@@ -429,6 +437,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 ### 3.9 Lane settings modal (⚙ on a lane)
 
+- **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
 - **Lane name** input, for renaming.
 - **Agent prompt** textarea: standing instructions for every ticket in this lane.
 - **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before. The box is bound to the typed draft, so autosave status, a first-save path update or an outside DB refresh never puts old text back mid-typing (#92). Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.
@@ -446,11 +455,11 @@ In graph view this opens as a side panel instead of a centered modal.
   - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
   - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
 - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): the Orchestrator prompt box (override or generated) autosaves here with the same rules as the Agent prompt, except it is always replaced (no other-content check: the generated text changes with the app, and the file is never read back); default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`. The text is stored with the same override rules as leaving the box, so typing back to the default doesn't create an override. The file is a copy for versioning and review: the launch prompt never reads or names it, so the orchestrator gets its prompt once. Ticket agents never see it.
-- **Orchestrator poll (minutes)** input with an unlabeled **Active** checkbox to its left, one row under the Orchestrator prompt; the checkbox sits centered on the input box (#84). Defaults: 2 minutes, Active.
-  - Hovering the checkbox shows "The Orchestrator agent will poll running agents every N minute(s)." or, when off, "Off: Auto Run launches no Orchestrator agent for this lane."
+- **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = orchestrator off; `+` from `∞` turns it back on at 1 (not the old interval). Defaults: 2 minutes, on.
+  - Hovering the stepper shows "The Orchestrator agent will poll running agents every N minute(s)." or, when off, "Off: Auto Run launches no Orchestrator agent for this lane."
   - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
-  - Active off: this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. The minutes input is disabled but keeps its value.
+  - `∞` (off): this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. `−` is disabled.
   - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
@@ -461,7 +470,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
 - **Wait for PR merge before moving on** checkbox. When on, an armed ticket here moves to its Next Lane when its PR turns merged, not when its checklist completes or a ▶ Run succeeds. A ticket with no PR, or an open one, stays put and stays armed. A ticket whose PR is already merged moves on completion as usual. On for In PR (`in-pr`) on new boards and, once, on existing boards (`swim_lanes.waits_for_pull_request_merge`, `completionMoves` in `projectTypes.ts`). The move happens when the app learns of the merge: the board-open PR sync, or an outside write to `pull_request_state`.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
-- **Delete lane** moves the lane's tickets to No status; no ticket is deleted. No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
+- **Delete lane** asks "Are you sure you want to delete the <lane> lane?", adding "Its N ticket(s) will move to No status." when the lane has tickets (#108). Cancel has focus on open, so a stray Enter can't delete; Cancel, Escape or a backdrop click close only the confirm. **Delete** moves the lane's tickets to No status; no ticket is deleted. The confirm drops itself if the lane vanishes underneath (poll, other window). No status can't be deleted, so its modal says "This column always exists — it holds tickets with no status." instead.
 - **Done** closes the modal.
 
 ### 3.10 GitHub issue import (⇣ Pull issues)
@@ -484,8 +493,9 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
 - Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
-- Tab titles are `#N <title>` (`ticketTabTitle`), the same for ⌁ Run in. The orchestrator tab matches tickets by that `#N ` prefix.
-- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name 'Ticket #N'` (`ticketSessionName`).
+- Tab titles are `<N>-<Lane>-<title>` (`ticketTabTitle`), e.g. `99-Merge-Request-Fix the thing`, the same for ⌁ Run in, Open in shell and Resume. The lane is the display name, dashed (`laneTitleToken`); No status reads `Unassigned`. Only the title part is cut, to 40 code points + `…`.
+- Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given.
+- Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
 - How each terminal does it:
   - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
@@ -526,7 +536,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
-- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time. Reloading or closing the window that started the scan aborts it too (`electron/pageGone.ts`), so a hung scan can't block the next window from scanning.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`

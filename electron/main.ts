@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { startUpdateCheck } from './autoUpdate.js'
 import { APP_NAME, EXTERNAL_CHANGE_POLL_MS, createIpcHandlers, type CallContext } from './ipcHandlers.js'
+import { watchPageGone } from './pageGone.js'
 import { DATABASE_FILE_NAME, StateRepository } from './storage/stateRepository.js'
 import { assertTrustedSenderUrl, isAppPageUrl } from './trustedSender.js'
 import { IMAGE_EXTENSIONS, addTicketImages, attachmentsRootOf, resolveAttachmentPath } from './ticketImages.js'
@@ -239,16 +240,7 @@ const registerIpc = () => {
         repository: stateRepository,
         onAgentRetry: (notice) => sendIfOpen('ticket:agent-retry', notice),
         onScanProgress: (progress) => sendIfOpen('projects:scan-progress', progress),
-        onPageGone: (listener) => {
-          const onNavigation = (navigation: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
-            const isPageLoad = navigation.isMainFrame && !navigation.isSameDocument
-            if (isPageLoad) listener()
-          }
-          sender.on('did-start-navigation', onNavigation)
-          return () => {
-            if (!sender.isDestroyed()) sender.off('did-start-navigation', onNavigation)
-          }
-        }
+        onPageGone: (listener) => watchPageGone(sender, listener)
       }
       return handler(payload, context)
     })
