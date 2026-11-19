@@ -584,7 +584,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 ### 4.5 Security boundaries — `electron/main.ts`, `electron/preload.cts`, `electron/ipcHandlers.ts`
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
-- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, `http://127.0.0.1:5173` in development. The web server's equivalent is its request guard (4.8).
+- Every IPC handler checks which page sent the request: the `file://` page in packaged builds, the dev server URL (`VITE_DEV_SERVER_URL`, port picked per checkout) in development. The web server's equivalent is its request guard (4.8).
 - Payloads are type-checked, and paths are normalized to POSIX absolute paths.
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
@@ -594,7 +594,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 ### 4.6 Build and release — `package.json`
 
-- `bun run dev` runs the Vite dev server and Electron together with hot reload.
+- `bun run dev` (`scripts/dev.mjs`) runs the Vite dev server and Electron together with hot reload. Each checkout gets its own fixed port: main checkout 5173, a linked worktree 5200–5899 hashed from its path; `PROJECT_TRACKER_DEV_PORT` overrides. A taken port fails loudly (`--strictPort`) instead of drifting. Cmd+Q, closing the last window (dev only) or Ctrl+C stops both and frees the port.
 - `bun run dist` builds an arm64 `.dmg` and `.zip` with electron-builder into `dist/`.
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
