@@ -1010,7 +1010,7 @@ export const orchestratorPollMinutes = (lane: SwimLane): number => {
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
-// Off (shown as ∞) sits below 1: stepping down from 1 turns the orchestrator off
+// Off (shown as ∞) sits below 1: stepping down from 1 stops polling
 // and leaves the stored minutes alone; stepping up from off lands on 1.
 export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<SwimLane> | undefined => {
   if (!orchestratorPollActive(lane)) {
@@ -1142,6 +1142,12 @@ const renderOrchestratorPrompt = (
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
   const pollSeconds = pollMinutes * 60
+  const gatherStep = orchestratorPollActive(lane)
+    ? `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`
+    : [
+        '1. On start, gather the state above once. Then do not poll, sleep, loop or schedule wake-ups: end your turn and wait.',
+        '   Gather the state again only when a message from a ticket agent arrives.'
+      ].join('\n')
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
@@ -1159,7 +1165,7 @@ const renderOrchestratorPrompt = (
     parts.terminal,
     [
       'Loop:',
-      `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`,
+      gatherStep,
       '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
       '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
       '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
@@ -1242,7 +1248,6 @@ export const buildOrchestratorLaunch = (
   context: OrchestratorPromptContext,
   model?: string
 ): TerminalTab | undefined => {
-  if (!orchestratorPollActive(lane)) return undefined
   const prompt = orchestratorPrompt(lane, entries, context)
   const title = orchestratorTabTitle(lane)
   return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
