@@ -18,6 +18,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 
 - Opens at 1280×840 and can't be made smaller than 960×680.
 - The native title bar is hidden. Each view draws its own themed title strip, and the macOS window buttons (close, minimize, zoom) sit inside it at (12, 17).
+- Narrow windows: title-strip and filter-bar labels never wrap. The title strip's name gives up space first: it shrinks with an ellipsis. Below 1180px the title-strip buttons use tighter padding. The board's filter bar drops controls to a second row instead of squeezing them. (`.titlebar-title`, `.titlebar-actions`, `.board-filters` in `src/styles.css`)
 - Hardware acceleration is off. Some Apple Silicon GPUs scrambled the text in packaged builds.
 - Clicking the Dock icon reopens the window if every window was closed. On macOS, closing all windows doesn't quit the app.
 - The Dock icon and the About panel icon come from `assets/app-icon.png`.
@@ -527,7 +528,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - whether it has git, `package.json` and a README
   - last-modified time
 - Errors are recorded for each path and the scan carries on.
-- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time.
+- Walks asynchronously, one folder at a time, so the app stays responsive. Sends progress (folders seen + current folder) at most every 100 ms over `projects:scan-progress`; `projects:scan-cancel` aborts it. Only one scan runs at a time. Reloading or closing the window that started the scan aborts it too (`electron/pageGone.ts`), so a hung scan can't block the next window from scanning.
 - **Merging with saved data**: your status, priority, notes and GitHub stats are kept across rescans, and new data from the scan fills in the rest.
 
 ### 4.2 Storage — `electron/storage/`
@@ -589,6 +590,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run release` builds and publishes to GitHub Releases, which is where auto-update gets new versions.
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
+- `bun run set-version <version> <ticket>...` (`scripts/set-ticket-version.mjs`) stamps one SemVer on many tickets in the tracker DB. Tickets as `12 14 15,16`; a `#` prefix must be quoted (`'#14'`) or the shell treats it as a comment. Project defaults to the main checkout of the cwd repo (works from worktrees); `--project` / `--db` override. All-or-nothing: any number missing for that project → error, nothing written. Prints `#N title: from → to` per ticket. The app picks the change up live.
 - CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`
