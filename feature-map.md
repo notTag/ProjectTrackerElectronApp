@@ -507,6 +507,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator poll **Active** checkbox is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
+  - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).
+  - Full auto ticket agents finish in a fixed order: move the ticket, print the final footer, then message the orchestrator (if one is watching) as the very last action.
 - A second click on the lane does nothing until the first launch has finished.
 
 ### 3.12 Graph view
