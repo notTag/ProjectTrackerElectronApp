@@ -87,7 +87,6 @@ body {
 .titlebar-actions {
   display: flex;
   align-items: center;
-  min-width: 0;
   gap: 5px;
   -webkit-app-region: no-drag;
 }
@@ -105,19 +104,21 @@ body {
 }
 
 /* Buttons pin height: 28px, so a wrapped label would spill out of the box. */
-.titlebar-actions > button {
+.titlebar-actions > button,
+.titlebar-actions > .metrics-menu > button {
   white-space: nowrap;
 }
 
-/* Measured in-app: the board actions need ~850px, so below ~1180px the full
-   project title no longer fits beside them. Tighten the buttons to win back
-   title width before it ellipsizes. */
+/* Measured in-app: the board actions need ~850px, so with a ~225px project
+   title (e.g. "ProjectTracker/electron-app") the title stops fitting below
+   ~1180px. Tighten the buttons to win back title width before it ellipsizes. */
 @media (max-width: 1180px) {
   .titlebar-actions {
     gap: 4px;
   }
 
   .titlebar-actions > button,
+  .titlebar-actions > .metrics-menu > button,
   .titlebar-actions .filter-trigger,
   .titlebar-actions .offline-badge {
     min-width: 0;

@@ -19,17 +19,17 @@ Scope: CSS only, `src/styles.css`. No component or behavior change.
 - Dashboard header (`src/views/DashboardView.vue`) reuses `.titlebar-actions` → one CSS fix covers both views
 
 ## Requirements
-- R1. No title-bar label wraps: `white-space: nowrap` on `.titlebar-actions button`, `.filter-trigger` (+ its caption), `.offline-badge`
+- R1. No title-bar label wraps: `white-space: nowrap` on direct `.titlebar-actions > button` (+ the Metrics trigger), `.filter-trigger` (+ its caption), `.offline-badge`
 - R2. Title gives up space first
 	- `.titlebar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }`
 	- `.titlebar-actions { flex-shrink: 0; }`
-	- Full title in a `title` attribute tooltip on the title element (Board + Dashboard) — the one template touch allowed
+	- No title tooltip (dropped in review): the title sits in the drag region, which gets no hover events
 - R3. Near min width: one `@media (max-width: <N>px)` rule tightens action buttons (smaller horizontal padding / `min-width`; optionally hide the "Open In" caption, keep the app name). Pick `<N>` from in-app measurement: the smallest width where R1+R2 alone no longer fit
 - R4. Filter row: `white-space: nowrap` on `.board-filters button` and `.filter-count`; `min-width: 0` on `.filter-query`; `flex-wrap: wrap` on `.board-filters` so controls drop to a second line instead of crushing text
 
 ## Acceptance criteria
 - 960px → full screen: no title-bar or filter-row label wraps or spills out of its button, Board + Dashboard
-- Project title ellipsizes (full text in tooltip) before any action button is squeezed
+- Project title ellipsizes before any action button is squeezed
 - All title-bar buttons still clickable (`-webkit-app-region: no-drag` intact on actions; title + gap still drag the window)
 - ≥1280px: pixel-identical to today
 - Typecheck + `bun run test` green
