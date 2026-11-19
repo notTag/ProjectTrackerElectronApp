@@ -266,7 +266,7 @@ From left to right:
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
-- **All swim lanes** select: limits the board to a single column.
+- **Swim lane** multi-select popover ("All swim lanes", one lane's name, or "N lanes"): check any set of lanes to show only those columns, in board order. None checked, or all checked, shows every lane. Lanes hidden by the Display toggles aren't listed, and a pick is ignored while its lane is hidden. Closes on outside click, focus leaving it, or Escape. Ids of deleted lanes are ignored. Resets when switching to another project's board.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.
@@ -277,7 +277,7 @@ From left to right:
 
 - When the board has no lanes: "No swim lanes yet." with a **Create swim lane** button.
 - Otherwise the columns are No status followed by the board's lanes in order. Hidden columns and the lane filter apply.
-- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while the lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
+- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while any lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
 
 #### Lane column
 
@@ -285,7 +285,7 @@ From left to right:
   - **▶ Auto Run** (3.11). Disabled when the lane has no matching tickets or a launch is already running. The tooltip names the terminal and agent.
   - **⚙** opens the Lane settings modal (3.9).
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
-- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while the lane filter shows a single column.
+- **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
 
