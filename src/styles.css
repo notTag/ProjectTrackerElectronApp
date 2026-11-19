@@ -2134,15 +2134,71 @@ span.ticket-image-thumb {
 }
 
 .orchestrator-poll-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
+  display: grid;
+  gap: 6px;
 }
 
-/* Matches the 40px input min-height (input:not([type="checkbox"])) so the
-   label's align-items: center lands the checkbox on the input's middle. */
-.orchestrator-poll-row .checkbox-label {
+/* Pill matches the shared input look (border, radius, raised surface). */
+.poll-stepper {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
   min-height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+
+.poll-stepper button {
+  min-height: 38px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+}
+
+.poll-stepper button:hover:not([aria-disabled="true"]) {
+  color: var(--color-text);
+}
+
+/* aria-disabled, not disabled: a real disabled − drops keyboard focus to <body> the moment it switches the lane off. */
+.poll-stepper button[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Screen-reader-only live text: an <input>'s value change isn't announced by a live region. */
+.poll-stepper-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.poll-stepper-value {
+  text-align: center;
+  font-weight: 700;
+}
+
+.poll-stepper-value input {
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: center;
+  font-weight: 700;
+  appearance: textfield;
+}
+
+.poll-stepper-value input::-webkit-inner-spin-button,
+.poll-stepper-value input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* Outranks `.ticket-modal label` (column stack, muted text) and the narrow-viewport full-width .filter-menu. */

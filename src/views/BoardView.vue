@@ -51,6 +51,7 @@ import {
   removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
+  steppedOrchestratorPoll,
   getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
@@ -68,6 +69,7 @@ import {
   TICKET_MODAL_FIELDS,
   type TicketModalField,
   toggleHiddenLane,
+  updateLaneInBoard,
   worktreeFolderName,
   type Agent,
   type LaneMarkdownKind,
@@ -929,6 +931,16 @@ const editOrchestratorPollMinutes = (lane: SwimLane, input: HTMLInputElement) =>
     return
   }
   editLane(lane, { orchestratorPollMinutes: minutes })
+}
+
+// Steps inside the queued mutate, not from the view's lane: the view only sees
+// a click's result once its write lands, so fast clicks would repeat a step.
+const stepOrchestratorPoll = (laneId: string, step: -1 | 1) => {
+  void store.updateBoard(projectPath.value, (board) => {
+    const currentLane = boardLaneById(board, laneId)
+    const patch = currentLane && steppedOrchestratorPoll(currentLane, step)
+    return patch ? updateLaneInBoard(board, laneId, patch) : board
+  })
 }
 
 const orchestratorPollTooltip = (lane: SwimLane): string => {
@@ -2301,26 +2313,46 @@ const runTicketAgent = (ticket: Ticket) => {
         </span>
       </label>
 
+      <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+           clicking a wrapping caption would fire − and switch the lane off. -->
       <div class="orchestrator-poll-row">
-        <label class="checkbox-label" :title="orchestratorPollTooltip(openLane)">
-          <input
-            type="checkbox"
-            aria-label="Orchestrator poll active"
-            :checked="orchestratorPollActive(openLane)"
-            @change="editLane(openLane, { orchestratorPollActive: ($event.target as HTMLInputElement).checked })"
-          />
-        </label>
-        <label>
-          Orchestrator poll (minutes)
-          <input
-            type="number"
-            min="1"
-            step="1"
-            :value="orchestratorPollMinutes(openLane)"
-            :disabled="!orchestratorPollActive(openLane)"
-            @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
-          />
-        </label>
+        <label
+          id="orchestrator-poll-caption"
+          :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
+        >Orchestrator poll (minutes)</label>
+        <div
+          class="poll-stepper"
+          role="group"
+          aria-labelledby="orchestrator-poll-caption"
+          :title="orchestratorPollTooltip(openLane)"
+        >
+          <button
+            type="button"
+            aria-label="Decrease orchestrator poll"
+            :aria-disabled="!orchestratorPollActive(openLane)"
+            @click="stepOrchestratorPoll(openLane.id, -1)"
+          >−</button>
+          <span class="poll-stepper-value">
+            <input
+              v-if="orchestratorPollActive(openLane)"
+              id="orchestrator-poll-minutes"
+              type="number"
+              min="1"
+              step="1"
+              :value="orchestratorPollMinutes(openLane)"
+              @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+            />
+            <span v-else role="img" aria-label="Orchestrator off">∞</span>
+          </span>
+          <span class="poll-stepper-status" aria-live="polite">{{
+            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Orchestrator off'
+          }}</span>
+          <button
+            type="button"
+            aria-label="Increase orchestrator poll"
+            @click="stepOrchestratorPoll(openLane.id, 1)"
+          >+</button>
+        </div>
       </div>
 
       <section class="ticket-agent">
