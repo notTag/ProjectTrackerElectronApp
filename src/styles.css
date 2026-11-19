@@ -1024,6 +1024,16 @@ code {
   flex: 0 1 320px;
 }
 
+/* The toolbar's compact trigger, grown to the height of its neighbours here. */
+.board-filters .filter-menu {
+  display: flex;
+  align-self: stretch;
+}
+
+.board-filters .filter-trigger {
+  height: auto;
+}
+
 /* Mask = shape only; colour comes from the theme so the ✕ follows every theme. */
 .filter-query::-webkit-search-cancel-button {
   -webkit-appearance: none;
