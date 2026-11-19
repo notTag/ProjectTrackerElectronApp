@@ -42,7 +42,6 @@ import {
   isWebUrl,
   moveLaneInBoard,
   orchestratorPollActive,
-  steppedOrchestratorPoll,
   orchestratorPollMinutes,
   parseLabels,
   pullRequestLabel,
@@ -51,6 +50,7 @@ import {
   removeExternalLink,
   setChecklistItemDone,
   setLaneWidth,
+  steppedOrchestratorPoll,
   getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
@@ -2320,10 +2320,10 @@ const runTicketAgent = (ticket: Ticket) => {
           <button
             type="button"
             aria-label="Decrease orchestrator poll"
-            :disabled="!orchestratorPollActive(openLane)"
+            :aria-disabled="!orchestratorPollActive(openLane)"
             @click="stepOrchestratorPoll(openLane.id, -1)"
           >−</button>
-          <span class="poll-stepper-value" aria-live="polite">
+          <span class="poll-stepper-value">
             <input
               v-if="orchestratorPollActive(openLane)"
               id="orchestrator-poll-minutes"
@@ -2335,6 +2335,9 @@ const runTicketAgent = (ticket: Ticket) => {
             />
             <span v-else role="img" aria-label="Orchestrator off">∞</span>
           </span>
+          <span class="poll-stepper-status" aria-live="polite">{{
+            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Orchestrator off'
+          }}</span>
           <button
             type="button"
             aria-label="Increase orchestrator poll"

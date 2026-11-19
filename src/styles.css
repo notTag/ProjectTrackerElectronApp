@@ -2114,13 +2114,24 @@ span.ticket-image-thumb {
   font-size: 1.1rem;
 }
 
-.poll-stepper button:hover:not(:disabled) {
+.poll-stepper button:hover:not([aria-disabled="true"]) {
   color: var(--color-text);
 }
 
-.poll-stepper button:disabled {
+/* aria-disabled, not disabled: a real disabled − drops keyboard focus to <body> the moment it switches the lane off. */
+.poll-stepper button[aria-disabled="true"] {
   opacity: 0.35;
   cursor: default;
+}
+
+/* Screen-reader-only live text: an <input>'s value change isn't announced by a live region. */
+.poll-stepper-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .poll-stepper-value {
