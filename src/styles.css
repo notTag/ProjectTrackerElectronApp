@@ -1475,8 +1475,9 @@ code {
   margin-bottom: 4px;
 }
 
+/* Right margin auto keeps Expand and the fields cog grouped at the right edge. */
 .ticket-modal-header .eyebrow {
-  margin: 0;
+  margin: 0 auto 0 0;
 }
 
 /* Base .icon-button pads the bottom to lift ×/⚙ glyphs; the SVG is already centred. */
@@ -2142,4 +2143,16 @@ span.ticket-image-thumb {
 .poll-stepper-value input::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* Outranks `.ticket-modal label` (column stack, muted text) and the narrow-viewport full-width .filter-menu. */
+.ticket-modal .filter-popover label {
+  flex-direction: row;
+  gap: 10px;
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.ticket-modal-header .filter-menu {
+  width: auto;
 }

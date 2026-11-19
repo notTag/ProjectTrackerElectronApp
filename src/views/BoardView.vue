@@ -64,6 +64,9 @@ import {
   carriedTicketIds,
   ticketsToRun,
   toggleCardField,
+  toggleModalField,
+  TICKET_MODAL_FIELDS,
+  type TicketModalField,
   toggleHiddenLane,
   updateLaneInBoard,
   worktreeFolderName,
@@ -132,9 +135,11 @@ const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
 const linkInput = ref<HTMLInputElement | null>(null)
 const imageError = ref<string | null>(null)
+const modalFieldsMenuOpen = ref(false)
 // An image error belongs to the ticket it happened on, not the next one opened.
 watch(openTicketId, (ticketId) => {
   if (!ticketId) imageError.value = null
+  modalFieldsMenuOpen.value = false
 })
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
@@ -170,6 +175,17 @@ const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLan
 
 const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(preferences.value, field))
+
+// Display-only: ticketAgentPrompt never reads preferences, so hidden fields still reach the agent.
+const hidesModalField = (field: TicketModalField) => preferences.value.hiddenModalFields.includes(field)
+const toggleModalFieldVisibility = (field: TicketModalField) =>
+  savePreferences(toggleModalField(preferences.value, field))
+
+const modalFieldsMenuRef = ref<HTMLElement | null>(null)
+const closeModalFieldsMenuOnOutsideClick = (event: PointerEvent) => {
+  if (modalFieldsMenuRef.value?.contains(event.target as Node)) return
+  modalFieldsMenuOpen.value = false
+}
 
 const laneTicketTotal = (laneId: string) =>
   board.value.tickets.filter((ticket) => ticket.laneId === laneId).length
@@ -572,6 +588,12 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     event.preventDefault()
     return
   }
+  // Like the delete confirm below: Escape closes the fields menu, not the modal under it.
+  if (modalFieldsMenuOpen.value) {
+    modalFieldsMenuOpen.value = false
+    event.preventDefault()
+    return
+  }
   // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
   if (ticketPendingDeletion.value) {
     ticketPendingDeletion.value = null
@@ -597,6 +619,7 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
 onMounted(() => {
   if (!store.state.snapshot.scannedAt) void store.load()
   window.addEventListener('keydown', handleBoardKeydown)
+  window.addEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
 })
 
 // Trailing "+" zone: shown on hover, lingers after the pointer leaves so it
@@ -622,6 +645,7 @@ const hideAddZoneLater = () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleBoardKeydown)
+  window.removeEventListener('pointerdown', closeModalFieldsMenuOnOutsideClick)
   clearTimeout(addZoneHideTimer)
   ticketDraft.value?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
@@ -1783,6 +1807,32 @@ const runTicketAgent = (ticket: Ticket) => {
             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
           </svg>
         </button>
+        <div ref="modalFieldsMenuRef" class="filter-menu">
+          <button
+            type="button"
+            class="icon-button"
+            title="Ticket fields"
+            aria-label="Ticket fields"
+            aria-haspopup="true"
+            :aria-expanded="modalFieldsMenuOpen"
+            @click="modalFieldsMenuOpen = !modalFieldsMenuOpen"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <div v-if="modalFieldsMenuOpen" class="filter-popover" role="group" aria-label="Shown ticket fields">
+            <label v-for="field in TICKET_MODAL_FIELDS" :key="field.id">
+              <input
+                type="checkbox"
+                :checked="!hidesModalField(field.id)"
+                @change="toggleModalFieldVisibility(field.id)"
+              />
+              <span>{{ field.label }}</span>
+            </label>
+          </div>
+        </div>
       </div>
       <input
         class="ticket-title-input"
@@ -1790,7 +1840,7 @@ const runTicketAgent = (ticket: Ticket) => {
         @change="editTicket(openTicket, { title: ($event.target as HTMLInputElement).value })"
       />
 
-      <label>
+      <label v-if="!hidesModalField('status')">
         Status
         <select
           :value="openTicket.laneId"
@@ -1801,7 +1851,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </select>
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('assignee')">
         Assignee
         <select
           :value="openTicket.assigneeId ?? ''"
@@ -1816,7 +1866,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </select>
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('description')">
         Description
         <textarea
           :value="openTicket.description"
@@ -1825,7 +1875,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('labels')">
         Labels
         <input
           :value="formatLabels(openTicket.labels)"
@@ -1835,7 +1885,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <span class="field-hint">Comma separated. Searchable from the filter box.</span>
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('branch')">
         Branch
         <input
           class="agent-file-path"
@@ -1845,7 +1895,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('worktree')">
         Worktree
         <input
           class="agent-file-path"
@@ -1857,7 +1907,7 @@ const runTicketAgent = (ticket: Ticket) => {
         />
       </label>
 
-      <label>
+      <label v-if="!hidesModalField('version')">
         Version
         <input
           class="agent-file-path"
@@ -1868,7 +1918,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <span v-if="versionInvalid" class="field-hint field-error">Use MAJOR.MINOR.PATCH, like 1.4.0</span>
       </label>
 
-      <section class="ticket-pull-request">
+      <section v-if="!hidesModalField('pullRequest')" class="ticket-pull-request">
         <p class="eyebrow">Merge Request</p>
         <p class="pull-request-status">
           <span class="pull-request-pill" :data-state="openTicket.pullRequestState ?? 'none'">
@@ -1902,7 +1952,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </label>
       </section>
 
-      <section class="ticket-checklist ticket-links">
+      <section v-if="!hidesModalField('externalLinks')" class="ticket-checklist ticket-links">
         <p class="eyebrow">External Links</p>
         <ul v-if="openTicket.externalLinks?.length">
           <li v-for="(link, index) in openTicket.externalLinks" :key="index">
@@ -1926,6 +1976,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </section>
 
       <section
+        v-if="!hidesModalField('images') || imageError"
         class="ticket-images"
         @dragover.prevent
         @drop.prevent="dropTicketImages(openTicket, $event)"
@@ -1946,7 +1997,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <span v-if="imageError" class="field-hint field-error">{{ imageError }}</span>
       </section>
 
-      <section class="ticket-checklist">
+      <section v-if="!hidesModalField('checklist')" class="ticket-checklist">
         <p class="eyebrow">
           Checklist
           <span v-if="openTicket.checklist?.length">
@@ -1973,7 +2024,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <section class="ticket-agent">
         <p class="eyebrow">Agent completion</p>
-        <label>
+        <label v-if="!hidesModalField('agent')">
           Agent
           <select
             :value="agentForTicket(openTicket, agents).id"
@@ -1982,7 +2033,7 @@ const runTicketAgent = (ticket: Ticket) => {
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
           </select>
         </label>
-        <label>
+        <label v-if="!hidesModalField('model')">
           Model
           <ModelField
             :model-value="openTicket.model ?? ''"
@@ -1991,7 +2042,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @update:model-value="editTicket(openTicket, { model: $event || undefined })"
           />
         </label>
-        <label class="checkbox-label">
+        <label v-if="!hidesModalField('fullAuto')" class="checkbox-label">
           <input
             type="checkbox"
             :checked="Boolean(openTicket.fullAuto)"
@@ -1999,10 +2050,10 @@ const runTicketAgent = (ticket: Ticket) => {
           />
           Full auto
         </label>
-        <span class="field-hint">
+        <span v-if="!hidesModalField('fullAuto')" class="field-hint">
           In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
         </span>
-        <label>
+        <label v-if="!hidesModalField('nextLane')">
           Next Lane
           <select
             :value="openTicketOverrideId"
@@ -2051,7 +2102,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </div>
       </section>
 
-      <section v-if="openTicket.agentRun" class="ticket-agent-run">
+      <section v-if="openTicket.agentRun && !hidesModalField('lastAgentRun')" class="ticket-agent-run">
         <p class="eyebrow">
           Last agent run · {{ laneName(openTicket.agentRun.laneId) }} · {{ formatDateTime(openTicket.agentRun.at) }}
         </p>
@@ -2062,7 +2113,7 @@ const runTicketAgent = (ticket: Ticket) => {
         View on GitHub ({{ openTicket.externalId?.replace('github:', '#') }})
       </a>
 
-      <label v-if="openTicketNextLaneId" class="checkbox-label">
+      <label v-if="openTicketNextLaneId && !hidesModalField('nextLane')" class="checkbox-label">
         <input
           type="checkbox"
           :checked="Boolean(openTicket.moveOnComplete)"

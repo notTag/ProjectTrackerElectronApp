@@ -74,6 +74,7 @@ import {
   getBoardPreferences,
   setLaneWidth,
   toggleCardField,
+  toggleModalField,
   toggleHiddenLane,
   MAX_LANE_WIDTH,
   MIN_LANE_WIDTH,
@@ -546,6 +547,18 @@ describe('board preferences', () => {
     expect(preferences.cardFields).toContain('number')
   })
 
+  it('reads preferences saved before modal fields could be hidden as all shown', () => {
+    const savedBeforeModalFields = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
+    expect(savedBeforeModalFields.hiddenModalFields).toEqual([])
+  })
+
+  it('hides a modal field and shows it again', () => {
+    const original = createDefaultBoardPreferences()
+    const hidden = toggleModalField(original, 'labels')
+    expect(hidden.hiddenModalFields).toEqual(['labels'])
+    expect(toggleModalField(hidden, 'labels').hiddenModalFields).toEqual(original.hiddenModalFields)
+  })
+
   it('clamps a lane width dragged past either limit', () => {
     expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 10).laneWidths.idea).toBe(MIN_LANE_WIDTH)
     expect(setLaneWidth(createDefaultBoardPreferences(), 'idea', 9999).laneWidths.idea).toBe(MAX_LANE_WIDTH)
@@ -650,6 +663,17 @@ describe('ticketShellCommand', () => {
     expect(prompt).toContain('Pull request: https://github.com/o/r/pull/4')
     expect(prompt).toContain('Source: https://github.com/o/r/issues/3')
     expect(prompt).toContain('Checklist:\n- [x] spec\n- [ ] build')
+  })
+
+  // Hiding modal fields is display-only: ticketAgentPrompt takes no preferences, so
+  // a hidden field with a value still reaches the agent and an empty one never does.
+  it('sends filled fields and drops empty ones', () => {
+    const filledTicket = ticket({ description: 'Make it pop', labels: ['ui'], branchName: 'feat/pop', version: undefined })
+    const prompt = ticketAgentPrompt(filledTicket, lane())
+    expect(prompt).toContain('Make it pop')
+    expect(prompt).toContain('Labels: ui')
+    expect(prompt).toContain('Branch: feat/pop')
+    expect(prompt).not.toContain('Version:')
   })
 
   it('lists external links only when the ticket has some', () => {
