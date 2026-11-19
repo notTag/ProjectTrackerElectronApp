@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { MAIN_CHECKOUT_PORT, resolveDevPort } from './dev.mjs'
 
 const mainCheckout = '/repo/electron-app'
-const mainPaths = { toplevel: mainCheckout, mainCheckout }
-const worktreePaths = { toplevel: `${mainCheckout}/.worktrees/t88`, mainCheckout }
-const otherWorktreePaths = { toplevel: `${mainCheckout}/.worktrees/t90`, mainCheckout }
+const mainPaths = { toplevel: mainCheckout, isMainCheckout: true }
+const worktreePaths = { toplevel: `${mainCheckout}/.worktrees/t88`, isMainCheckout: false }
+const otherWorktreePaths = { toplevel: `${mainCheckout}/.worktrees/t90`, isMainCheckout: false }
 
 const expectWorktreeRange = (port) => {
   expect(port).toBeGreaterThanOrEqual(5200)
@@ -21,7 +21,9 @@ describe('resolveDevPort', () => {
     const { port } = resolveDevPort({}, worktreePaths)
     expectWorktreeRange(port)
     expect(resolveDevPort({}, worktreePaths).port).toBe(port)
-    expectWorktreeRange(resolveDevPort({}, otherWorktreePaths).port)
+    const otherPort = resolveDevPort({}, otherWorktreePaths).port
+    expectWorktreeRange(otherPort)
+    expect(otherPort).not.toBe(port)
   })
 
   it('falls back to 5173 when git cannot say which checkout this is', () => {

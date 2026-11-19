@@ -5,7 +5,6 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import concurrently from 'concurrently'
@@ -21,8 +20,7 @@ export const devPortForCheckout = (checkoutPaths) => {
   const isUnknownCheckout = checkoutPaths === null
   if (isUnknownCheckout) return MAIN_CHECKOUT_PORT
 
-  const { toplevel, mainCheckout } = checkoutPaths
-  const isMainCheckout = toplevel === mainCheckout
+  const { toplevel, isMainCheckout } = checkoutPaths
   if (isMainCheckout) return MAIN_CHECKOUT_PORT
 
   const pathDigest = createHash('sha256').update(toplevel).digest()
@@ -33,7 +31,11 @@ export const devPortForCheckout = (checkoutPaths) => {
 
 export const resolveDevPort = (env, checkoutPaths) => {
   const override = env[PORT_OVERRIDE_VAR]
-  if (override === undefined || override === '') return { port: devPortForCheckout(checkoutPaths) }
+  const hasOverride = override !== undefined && override !== ''
+  if (!hasOverride) {
+    const checkoutPort = devPortForCheckout(checkoutPaths)
+    return { port: checkoutPort }
+  }
 
   const overridePort = Number(override)
   const isValidPort = Number.isInteger(overridePort) && overridePort >= 1 && overridePort <= 65535
@@ -41,13 +43,20 @@ export const resolveDevPort = (env, checkoutPaths) => {
   return { port: overridePort }
 }
 
-const gitOutput = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+const readGitPaths = () => {
+  const gitArgs = ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']
+  const gitOptions = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+  const output = execFileSync('git', gitArgs, gitOptions)
+  return output.trim().split('\n')
+}
 
+// A linked worktree has its own git dir under the common one; only the main
+// checkout's git dir is the common dir. Holds for --separate-git-dir too.
 const readCheckoutPaths = () => {
   try {
-    const toplevel = gitOutput(['rev-parse', '--show-toplevel'])
-    const commonGitDir = gitOutput(['rev-parse', '--path-format=absolute', '--git-common-dir'])
-    return { toplevel, mainCheckout: dirname(commonGitDir) }
+    const [toplevel, gitDir, commonGitDir] = readGitPaths()
+    const isMainCheckout = gitDir === commonGitDir
+    return { toplevel, isMainCheckout }
   } catch {
     return null
   }
@@ -70,7 +79,8 @@ const runDevServer = async () => {
   }
 
   const { port } = resolved
-  if (!(await isPortFree(port))) {
+  const isPortAvailable = await isPortFree(port)
+  if (!isPortAvailable) {
     console.error(`Port ${port} is taken. Set ${PORT_OVERRIDE_VAR} to use another.`)
     process.exit(1)
   }
@@ -93,16 +103,25 @@ const runDevServer = async () => {
     successCondition: 'first'
   })
 
+  // exitCode, not exit(): lets Node flush piped stdout before it exits.
   try {
     await result
-    process.exit(0)
+    process.exitCode = 0
   } catch {
-    process.exit(1)
+    process.exitCode = 1
   }
 }
 
-const entryScriptPath = process.argv[1]
-const entryScriptUrl = entryScriptPath ? pathToFileURL(realpathSync(entryScriptPath)).href : null
-const isRunDirectly = import.meta.url === entryScriptUrl
+const entryScriptUrl = () => {
+  const entryScriptPath = process.argv[1]
+  if (!entryScriptPath) return null
+  try {
+    const resolvedEntryPath = realpathSync(entryScriptPath)
+    return pathToFileURL(resolvedEntryPath).href
+  } catch {
+    return null
+  }
+}
+const isRunDirectly = import.meta.url === entryScriptUrl()
 
 if (isRunDirectly) await runDevServer()
