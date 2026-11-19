@@ -16,6 +16,7 @@ import {
   orchestratorPrompt,
   orchestratorPromptMissingTokens,
   orchestratorPromptTemplate,
+  orchestratorPromptTokenHelp,
   ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
   TRACKER_DATABASE_PATH,
@@ -1560,6 +1561,19 @@ describe('Auto Run orchestrator', () => {
 
     it('never ends on a bare prefix', () => {
       expect(orchestratorTabTitle({ name: '   ' })).toBe('AUTORUN-ORCHESTRATOR-LANE')
+    })
+  })
+
+  describe('orchestratorPromptTokenHelp', () => {
+    it('lists every token, one per line, and marks the required ones', () => {
+      const helpLines = orchestratorPromptTokenHelp().split('\n')
+      expect(helpLines[0]).toBe('Variables:')
+      for (const token of Object.values(ORCHESTRATOR_PROMPT_TOKENS)) {
+        const tokenLine = helpLines.find((line) => line.startsWith(`${token}:`))
+        const isRequired = token === ORCHESTRATOR_PROMPT_TOKENS.tickets || token === ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers
+        expect(tokenLine).toBeDefined()
+        expect(tokenLine?.endsWith('(required)')).toBe(isRequired)
+      }
     })
   })
 

@@ -1126,7 +1126,29 @@ export const ORCHESTRATOR_PROMPT_TOKENS = {
 type OrchestratorPromptParts = Record<keyof typeof ORCHESTRATOR_PROMPT_TOKENS, string>
 
 // Without these the orchestrator has nothing to watch.
-const REQUIRED_ORCHESTRATOR_TOKENS = [ORCHESTRATOR_PROMPT_TOKENS.tickets, ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]
+const REQUIRED_ORCHESTRATOR_TOKENS: readonly string[] = [
+  ORCHESTRATOR_PROMPT_TOKENS.tickets,
+  ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers
+]
+
+// Typed by token key, so a new token fails typecheck until it has a meaning.
+const ORCHESTRATOR_TOKEN_MEANINGS: OrchestratorPromptParts = {
+  tickets: 'one line per launched ticket: number, title, tab, branch, handoff tabs',
+  ticketNumbers: 'comma-separated ticket numbers, e.g. for SQL IN (…)',
+  lanes: 'board lanes: id — name — agent work yes/no',
+  terminal: "the lane's Auto Run terminal tab section (list/close recipes)"
+}
+
+// The "Variables:" block for the Orchestrator prompt ⓘ tip (#112).
+export const orchestratorPromptTokenHelp = (): string => {
+  const tokenKeys = Object.keys(ORCHESTRATOR_PROMPT_TOKENS) as (keyof typeof ORCHESTRATOR_PROMPT_TOKENS)[]
+  const tokenLines = tokenKeys.map((key) => {
+    const token = ORCHESTRATOR_PROMPT_TOKENS[key]
+    const requiredMark = REQUIRED_ORCHESTRATOR_TOKENS.includes(token) ? ' (required)' : ''
+    return `${token}: ${ORCHESTRATOR_TOKEN_MEANINGS[key]}${requiredMark}`
+  })
+  return ['Variables:', ...tokenLines].join('\n')
+}
 
 // The orchestrator only reports: it shares the DB with the app and the ticket
 // agents, so it is told never to write, and never to steer the other agents.

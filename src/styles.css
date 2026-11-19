@@ -1646,7 +1646,7 @@ code {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-size: 0.75rem;
   font-weight: normal;
-  white-space: normal;
+  white-space: pre-line;
 }
 
 .info-tip:not(.dismissed):hover .info-tip-bubble,

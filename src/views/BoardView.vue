@@ -85,8 +85,17 @@ import {
   type SwimLane,
   type Ticket,
   type TicketPatch,
-  plural
+  plural,
+  orchestratorPromptTokenHelp
 } from '@/shared/projectTypes'
+
+// Bound as :text strings, never template text, so Vue can't interpolate {{…}} (#112).
+const agentPromptTip =
+  'Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/).' +
+  '\n\nNo {{variables}}: this text is sent as typed; ticket details are added automatically.'
+const orchestratorPromptTip =
+  "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
+  `\n\n${orchestratorPromptTokenHelp()}`
 
 const route = useRoute()
 const router = useRouter()
@@ -2352,7 +2361,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <label for="lane-agent-prompt">
         <span class="label-with-tip">
           Agent prompt
-          <InfoTip text="Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/)." />
+          <InfoTip :text="agentPromptTip" />
         </span>
         <textarea
           id="lane-agent-prompt"
@@ -2395,7 +2404,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <label for="lane-orchestrator-prompt">
         <span class="label-with-tip">
           Orchestrator prompt
-          <InfoTip text="Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." />
+          <InfoTip :text="orchestratorPromptTip" />
         </span>
         <textarea
           id="lane-orchestrator-prompt"
