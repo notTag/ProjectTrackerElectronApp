@@ -89,10 +89,10 @@ import {
   orchestratorPromptTokenHelp
 } from '@/shared/projectTypes'
 
-// Bound as :text strings, never template text, so Vue can't interpolate {{…}} (#112).
+// Bound as :text strings so they can carry \n line breaks for the bubble's pre-line (#112).
 const agentPromptTip =
   'Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/).' +
-  '\n\nNo {{variables}}: this text is sent as typed; ticket details are added automatically.'
+  "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
   "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
   `\n\n${orchestratorPromptTokenHelp()}`

@@ -1134,7 +1134,7 @@ const REQUIRED_ORCHESTRATOR_TOKENS: readonly string[] = [
 ]
 
 // Typed by token key, so a new token fails typecheck until it has a meaning.
-const ORCHESTRATOR_TOKEN_MEANINGS: OrchestratorPromptParts = {
+const ORCHESTRATOR_TOKEN_MEANINGS: Record<keyof typeof ORCHESTRATOR_PROMPT_TOKENS, string> = {
   tickets: 'one line per launched ticket: number, title, tab, branch, handoff tabs',
   ticketNumbers: 'comma-separated ticket numbers, e.g. for SQL IN (…)',
   lanes: 'board lanes: id — name — agent work yes/no',
