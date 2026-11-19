@@ -2396,7 +2396,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @change="storeTypedPrompts"
         />
         <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run while the poll checkbox is on). {{tickets}}, {{ticket_numbers}},
+          Sent to the Auto Run orchestrator (runs on every Auto Run). {{tickets}}, {{ticket_numbers}},
           {{lanes}}, {{terminal}} are filled in at launch.
         </span>
         <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
