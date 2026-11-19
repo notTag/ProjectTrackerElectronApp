@@ -64,6 +64,8 @@ import {
 
 interface ProjectsStoreState {
   state: ProjectTrackerState
+  // False while `state` is still the seed: saving then would write seed state over the DB.
+  loaded: boolean
   loading: boolean
   scanning: boolean
   // Null until the first progress event of a scan arrives.
@@ -260,6 +262,7 @@ const withWrittenEntity = (board: ProjectBoard, write: BoardWrite, written: Tick
 export const useProjectsStore = defineStore('projects', {
   state: (): ProjectsStoreState => ({
     state: createSeedState(),
+    loaded: false,
     loading: false,
     scanning: false,
     scanProgress: null,
@@ -308,6 +311,10 @@ export const useProjectsStore = defineStore('projects', {
         ...currentState,
         boardPreferences: { ...currentState.boardPreferences, [projectPath]: preferences }
       }))
+    },
+
+    async saveThemeId(themeId: string) {
+      await this.save((currentState) => ({ ...currentState, themeId }))
     },
 
     async addLane(projectPath: string, name: string) {
@@ -565,6 +572,7 @@ export const useProjectsStore = defineStore('projects', {
       this.error = null
       try {
         this.state = await projectTrackerApi.getProjectState()
+        this.loaded = true
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {
@@ -591,6 +599,7 @@ export const useProjectsStore = defineStore('projects', {
           // failed completion-move write must not leave this window behind.
           handoffs = handoffsBetween(previousState, freshState)
           this.state = freshState
+          this.loaded = true
           if (settledState === freshState) return
           // ticket:update carries the disarmed Move to along with the new lane.
           this.state = settledState

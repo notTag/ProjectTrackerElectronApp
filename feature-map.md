@@ -55,7 +55,7 @@ Shown in the Dashboard title strip.
 - Themes come from `@nick_tag_tech/themes` and are grouped under **light** and **dark** headings, each with an accent-color swatch.
 - Hovering a theme previews it. Moving off the menu, clicking outside it, or closing it reverts the preview.
 - Clicking a theme applies it. A ✓ marks the current theme.
-- The choice is stored in `localStorage` under `project-tracker-theme`.
+- Only a clicked choice is saved, never a hover preview. It goes to SQLite `user_settings` key `theme` (per user), so it survives restarts, dev-server port changes and dev ↔ packaged builds. `localStorage` key `project-tracker-theme` is kept only as a first-paint cache; on boot the DB theme wins, and an existing localStorage theme is adopted into an empty DB once. Unknown ids fall back to the default. (`useThemePersistence` in `src/stores/theme.ts`)
 - macOS draws the window buttons light or dark to match the theme type, so they stay readable on dark themes.
 
 ### 1.6 Open In picker — `src/components/OpenInPicker.vue`, `src/shared/openInTargets.ts`
