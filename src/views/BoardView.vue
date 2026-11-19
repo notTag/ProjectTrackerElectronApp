@@ -1629,7 +1629,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @lostpointercapture="cancelLaneDrag"
           @keydown="moveLaneByKeyboard(lane, $event)"
         >
-          <h2>{{ lane.name }}</h2>
+          <h2 :title="lane.name">{{ lane.name }}</h2>
           <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
           <span
             v-if="unseenAgentResultCount(lane.id) > 0"
@@ -2363,7 +2363,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <input
           class="agent-file-path"
           :value="openLane.agentFilePath"
-          placeholder="/Users/you/Projects/thing/docs/prd-template.md"
+          placeholder="/Users/you/Projects/thing/docs/agent-prompt.md"
           @input="laneMarkdownDraft.agent.filePath = ($event.target as HTMLInputElement).value"
           @change="onLaneMarkdownPathChange(openLane, 'agent', $event)"
         />
@@ -2380,7 +2380,7 @@ const runTicketAgent = (ticket: Ticket) => {
         <textarea
           class="agent-prompt"
           :value="openLane.outputTarget ?? ''"
-          placeholder="A file, a directory, or where it goes — e.g. a new folder called PRD inside the project directory"
+          placeholder="A file, a directory, or where it goes — e.g. a new folder inside the project directory"
           @change="editLane(openLane, { outputTarget: ($event.target as HTMLTextAreaElement).value })"
         />
         <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
