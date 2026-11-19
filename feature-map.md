@@ -458,11 +458,11 @@ In graph view this opens as a side panel instead of a centered modal.
   - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
   - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
 - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): the Orchestrator prompt box (override or generated) autosaves here with the same rules as the Agent prompt, except it is always replaced (no other-content check: the generated text changes with the app, and the file is never read back); default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`. The text is stored with the same override rules as leaving the box, so typing back to the default doesn't create an override. The file is a copy for versioning and review: the launch prompt never reads or names it, so the orchestrator gets its prompt once. Ticket agents never see it.
-- **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = orchestrator off; `+` from `∞` turns it back on at 1 (not the old interval). Defaults: 2 minutes, on.
+- **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
   - Hovering the stepper shows "The Orchestrator agent will poll running agents every N minute(s)." or, at ∞, "The Orchestrator agent never polls: it waits for messages from the ticket agents."
-  - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`.
+  - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`; at `∞` it gathers state once, then waits for ticket-agent messages (#114).
   - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
-  - `∞` (off): this lane's Auto Run opens no orchestrator tab; ticket tabs are unchanged. `−` is disabled.
+  - `∞`: Auto Run still opens the orchestrator tab; it never polls, sleeps or schedules wake-ups. `−` is disabled. Lane prompt overrides keep their own text, so a hardcoded sleep loop there still loops.
   - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
 - **Auto Run** section:
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.

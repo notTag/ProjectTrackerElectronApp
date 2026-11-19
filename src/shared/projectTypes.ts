@@ -1012,7 +1012,7 @@ export const orchestratorPollMinutes = (lane: SwimLane): number => {
 
 export const orchestratorPollActive = (lane: SwimLane): boolean => lane.orchestratorPollActive !== false
 
-// Off (shown as ∞) sits below 1: stepping down from 1 stops polling
+// Never polls (shown as ∞) sits below 1: stepping down from 1 stops polling
 // and leaves the stored minutes alone; stepping up from off lands on 1.
 export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<SwimLane> | undefined => {
   if (!orchestratorPollActive(lane)) {
@@ -1249,7 +1249,7 @@ export const buildOrchestratorLaunch = (
   agent: Agent,
   context: OrchestratorPromptContext,
   model?: string
-): TerminalTab | undefined => {
+): TerminalTab => {
   const prompt = orchestratorPrompt(lane, entries, context)
   const title = orchestratorTabTitle(lane)
   return { command: agentShellCommand(agent, prompt, { model, sessionName: title }), title }
