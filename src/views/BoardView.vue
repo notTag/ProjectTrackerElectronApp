@@ -2415,7 +2415,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </label>
       <button
         v-if="openLaneOrchestratorOverride"
-        class="secondary save-agent-markdown"
+        class="secondary lane-prompt-reset"
         type="button"
         @click="editLane(openLane, { orchestratorPromptOverride: '' })"
       >
