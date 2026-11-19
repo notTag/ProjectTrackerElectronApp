@@ -558,7 +558,7 @@ const closeModals = () => {
   boardSettingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
-  lanePendingDeletion.value = null
+  lanePendingDeletionId.value = null
   checklistDraft.value = ''
   linkDraft.value = ''
   linkDraftInvalid.value = false
@@ -601,7 +601,7 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     return
   }
   if (lanePendingDeletion.value) {
-    lanePendingDeletion.value = null
+    lanePendingDeletionId.value = null
     event.preventDefault()
     return
   }
@@ -739,29 +739,30 @@ const deleteLane = async (lane: SwimLane) => {
   await store.removeLane(projectPath.value, lane.id)
 }
 
-const lanePendingDeletion = ref<SwimLane | null>(null)
+// Stored by id and looked up live, so a rename shows in the question and a lane
+// removed underneath (poll, other window) drops the confirm by itself.
+const lanePendingDeletionId = ref<string | null>(null)
+const lanePendingDeletion = computed(
+  () => laneColumns.value.find((lane) => lane.id === lanePendingDeletionId.value) ?? null
+)
 const laneDeleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)
 
 const pendingLaneTicketCount = computed(() => {
-  const laneId = lanePendingDeletion.value?.id
-  return board.value.tickets.filter((ticket) => ticket.laneId === laneId).length
-})
-
-// The lane can vanish underneath the confirm (poll, other window); drop the stale question.
-watch(openLane, (lane) => {
-  if (!lane) lanePendingDeletion.value = null
+  const pendingLane = lanePendingDeletion.value
+  if (!pendingLane) return 0
+  return board.value.tickets.filter((ticket) => ticket.laneId === pendingLane.id).length
 })
 
 // Focus lands on Cancel so a stray Enter can't delete the lane.
 const askToDeleteLane = async (lane: SwimLane) => {
-  lanePendingDeletion.value = lane
+  lanePendingDeletionId.value = lane.id
   await nextTick()
   laneDeleteConfirmCancelButton.value?.focus()
 }
 
 const confirmDeleteLane = async () => {
   const lane = lanePendingDeletion.value
-  lanePendingDeletion.value = null
+  lanePendingDeletionId.value = null
   if (lane) await deleteLane(lane)
 }
 
@@ -2492,7 +2493,7 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="lanePendingDeletion" class="modal-backdrop" @click.self="lanePendingDeletion = null">
+  <div v-if="lanePendingDeletion" class="modal-backdrop" @click.self="lanePendingDeletionId = null">
     <section class="modal" role="alertdialog" aria-labelledby="delete-lane-question">
       <p class="eyebrow">Delete lane</p>
       <p id="delete-lane-question">Are you sure you want to delete the {{ lanePendingDeletion.name }} lane?</p>
@@ -2501,7 +2502,7 @@ const runTicketAgent = (ticket: Ticket) => {
         {{ UNASSIGNED_LANE_NAME }}.
       </p>
       <div class="modal-actions">
-        <button ref="laneDeleteConfirmCancelButton" class="secondary" @click="lanePendingDeletion = null">Cancel</button>
+        <button ref="laneDeleteConfirmCancelButton" class="secondary" @click="lanePendingDeletionId = null">Cancel</button>
         <button class="secondary danger" @click="confirmDeleteLane">Delete</button>
       </div>
     </section>

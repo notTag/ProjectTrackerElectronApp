@@ -8,24 +8,24 @@
 - Lost on misclick: lane name, prompt, Next Lane config. All its tickets → No status, Next Lane pointers to it cleared, affected tickets disarmed (`removeLaneFromBoard`).
 
 ## Today (verified 2026-11-18)
-- Button: `src/views/BoardView.vue:2448-2456` → `@click="deleteLane(openLane)"`; hidden for `UNASSIGNED_LANE_ID`
-- `deleteLane` `src/views/BoardView.vue:730` → `openLaneId = null`, `store.removeLane(...)`
-- `removeLane` `src/stores/projects.ts:361` → `removeLaneFromBoard` `src/shared/projectTypes.ts:1450`
+- Button: `src/views/BoardView.vue` → `@click="deleteLane(openLane)"`; hidden for `UNASSIGNED_LANE_ID`
+- `deleteLane` `src/views/BoardView.vue` → `openLaneId = null`, `store.removeLane(...)`
+- `removeLane` `src/stores/projects.ts` → `removeLaneFromBoard` `src/shared/projectTypes.ts`
 - Pattern to copy, ticket delete confirm:
-	- `ticketPendingDeletion` + `deleteConfirmCancelButton` refs `:452-453`
-	- stale watch on `openTicket` `:456`
-	- `askToDeleteTicket` focuses Cancel after `nextTick` `:461`
-	- `confirmDeleteTicket` `:467`
-	- listed in `anyModalOpen` `:153`, cleared in `closeModals` `:559`
-	- Escape backs out of confirm only `:596`
-	- alertdialog markup `:2128-2139`
+	- `ticketPendingDeletion` + `deleteConfirmCancelButton` refs
+	- stale watch on `openTicket`
+	- `askToDeleteTicket` focuses Cancel after `nextTick`
+	- `confirmDeleteTicket`
+	- listed in `anyModalOpen`, cleared in `closeModals`
+	- Escape backs out of confirm only
+	- alertdialog markup
 
 ## Change (all in `src/views/BoardView.vue`)
 - State
-	- `lanePendingDeletion = ref<SwimLane | null>(null)`
+	- `lanePendingDeletionId = ref<string | null>(null)`; `lanePendingDeletion` computed looks the lane up live in `laneColumns`
 	- `laneDeleteConfirmCancelButton = ref<HTMLButtonElement | null>(null)`
-	- `lanePendingDeletionTicketCount` computed: `board.value.tickets.filter(t => t.laneId === lane.id).length`
-- Stale guard: `watch(openLane, lane => { if (!lane) lanePendingDeletion.value = null })` — lane removed by poll / other window → drop the question
+	- `pendingLaneTicketCount` computed: tickets whose `laneId` is the pending lane's id, 0 when none pending
+- Stale guard: live lookup — lane removed by poll / other window → computed goes null → confirm drops; a rename shows in the question
 - `askToDeleteLane(lane)`: set pending, `await nextTick()`, focus Cancel
 - `confirmDeleteLane`: read pending, clear it, `await deleteLane(lane)` (unchanged)
 - Button `@click` → `askToDeleteLane(openLane)`
@@ -67,7 +67,6 @@
 
 ## Work tracking
 - Branch: `t108-feature-need-confirmation`
-- Worktree: `/Users/nicktag/Code/Projects/ProjectTracker/electron-app/.worktrees/t108`
 - PRD: `docs/prd/t108-lane-delete-confirm.md`
 
 ## Open questions
