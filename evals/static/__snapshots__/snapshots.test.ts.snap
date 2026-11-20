@@ -274,6 +274,14 @@ Review
 2. Add the feature to the feature map. 
 3. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, approve it. 
 
+Ownership check (two agents on one ticket can merge before the other's review finishes — #121):
+1. At start, record the ticket's run and the branch head:
+   - \`SELECT agent_run_json FROM tickets WHERE project_path = '<main-checkout-path>' AND number = <N>;\` → note \`sessionId\` + \`startedAt\`
+   - \`git rev-parse origin/<branch>\`
+2. Just before approving/merging, \`git fetch\` and re-read both.
+   - Ticket's run \`sessionId\`/\`startedAt\` changed → another agent was launched on this ticket. Do not merge.
+   - \`origin/<branch>\` has commits this session didn't push (a foreign merge or fix) → do not merge.
+   - Either case: leave the PR open, report what you found to the orchestrator and as an open question.
 
 After merge (once you've reviewed it and it's merged)
 1. Move the ticket to "In Dev".
@@ -309,6 +317,14 @@ Review
 2. Add the feature to the feature map. 
 3. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, approve it. 
 
+Ownership check (two agents on one ticket can merge before the other's review finishes — #121):
+1. At start, record the ticket's run and the branch head:
+   - \`SELECT agent_run_json FROM tickets WHERE project_path = '<main-checkout-path>' AND number = <N>;\` → note \`sessionId\` + \`startedAt\`
+   - \`git rev-parse origin/<branch>\`
+2. Just before approving/merging, \`git fetch\` and re-read both.
+   - Ticket's run \`sessionId\`/\`startedAt\` changed → another agent was launched on this ticket. Do not merge.
+   - \`origin/<branch>\` has commits this session didn't push (a foreign merge or fix) → do not merge.
+   - Either case: leave the PR open, report what you found to the orchestrator and as an open question.
 
 After merge (once you've reviewed it and it's merged)
 1. Move the ticket to "In Dev".
@@ -346,6 +362,14 @@ Review
 2. Add the feature to the feature map. 
 3. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, approve it. 
 
+Ownership check (two agents on one ticket can merge before the other's review finishes — #121):
+1. At start, record the ticket's run and the branch head:
+   - \`SELECT agent_run_json FROM tickets WHERE project_path = '<main-checkout-path>' AND number = <N>;\` → note \`sessionId\` + \`startedAt\`
+   - \`git rev-parse origin/<branch>\`
+2. Just before approving/merging, \`git fetch\` and re-read both.
+   - Ticket's run \`sessionId\`/\`startedAt\` changed → another agent was launched on this ticket. Do not merge.
+   - \`origin/<branch>\` has commits this session didn't push (a foreign merge or fix) → do not merge.
+   - Either case: leave the PR open, report what you found to the orchestrator and as an open question.
 
 After merge (once you've reviewed it and it's merged)
 1. Move the ticket to "In Dev".
@@ -384,6 +408,14 @@ Review
 2. Add the feature to the feature map. 
 3. Review the PR with /code-review <PR#>, or /code-review on the working diff before the PR exists. Delete any unnecessary code. Make any changes needed. Make sure the app has been tested by running the application. Do not merge unless the app has been run and tested. When you deem the MR/PR is worthy, approve it. 
 
+Ownership check (two agents on one ticket can merge before the other's review finishes — #121):
+1. At start, record the ticket's run and the branch head:
+   - \`SELECT agent_run_json FROM tickets WHERE project_path = '<main-checkout-path>' AND number = <N>;\` → note \`sessionId\` + \`startedAt\`
+   - \`git rev-parse origin/<branch>\`
+2. Just before approving/merging, \`git fetch\` and re-read both.
+   - Ticket's run \`sessionId\`/\`startedAt\` changed → another agent was launched on this ticket. Do not merge.
+   - \`origin/<branch>\` has commits this session didn't push (a foreign merge or fix) → do not merge.
+   - Either case: leave the PR open, report what you found to the orchestrator and as an open question.
 
 After merge (once you've reviewed it and it's merged)
 1. Move the ticket to "In Dev".

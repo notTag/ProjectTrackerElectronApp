@@ -68,6 +68,8 @@ import {
   ticketIdsToMove,
   carriedTicketIds,
   ticketsToRun,
+  splitRunnable,
+  skippedRunsNotice,
   toggleCardField,
   toggleLaneModalField,
   toggleLaneModalFieldInLane,
@@ -1400,10 +1402,13 @@ const onLaneMarkdownPathChange = (lane: SwimLane, kind: LaneMarkdownKind, event:
   if (laneMarkdownDraft.value[kind].prompt.trim()) scheduleLaneMarkdownSave(lane, kind)
 }
 
-const autoRunTickets = (lane: SwimLane) => {
+const autoRunSplit = (lane: SwimLane) => {
   const visibleLaneTickets = ticketsInLane(lane.id)
-  return ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
+  const candidates = ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
+  return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
+
+const autoRunTickets = (lane: SwimLane) => autoRunSplit(lane).runnable
 
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
@@ -1442,10 +1447,15 @@ const confirmAutoRunLane = () => {
   const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === autoRunConfirmTerminalId.value)
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
-  const launches = autoRunTickets(lane).map((ticket) =>
+  const { runnable, skipped } = autoRunSplit(lane)
+  const skippedNotice = skipped.length > 0 ? skippedRunsNotice(skipped, lane.name) : null
+  const launches = runnable.map((ticket) =>
     buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
   )
-  if (launches.length === 0) return
+  if (launches.length === 0) {
+    if (skippedNotice) store.notice = skippedNotice
+    return
+  }
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
   const orchestratorContext = orchestratorContextFor(terminal)
@@ -1461,7 +1471,18 @@ const confirmAutoRunLane = () => {
     orchestratorContext,
     orchestratorChoice.model
   )
-  void store.autoRunLane(projectPath.value, lane.id, terminal.id, terminal.label, launches, useWorktrees, orchestrator)
+  const launch = store.autoRunLane(
+    projectPath.value,
+    lane.id,
+    terminal.id,
+    terminal.label,
+    launches,
+    useWorktrees,
+    orchestrator
+  )
+  void launch.then((launched) => {
+    if (launched && skippedNotice) store.notice = `${store.notice} ${skippedNotice}`
+  })
 }
 
 const openTicketInShell = (ticket: Ticket) => {
