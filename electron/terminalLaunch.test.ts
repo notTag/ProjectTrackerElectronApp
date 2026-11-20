@@ -29,29 +29,29 @@ describe('warpLaunchConfigYaml', () => {
   }
 
   it('names the config so warp://launch/<name> resolves it', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude hello'))
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', tabs('claude hello'))
     expect(yaml).toContain(`name: ${WARP_LAUNCH_CONFIG_NAME}`)
   })
 
   it('runs the command in the project directory', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/my project', tabs('claude hello'))
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/my project', tabs('claude hello'))
     expect(yaml).toContain('cwd: "/tmp/my project"')
     expect(execValue(yaml)).toBe('claude hello')
   })
 
   it('keeps a prompt containing quotes, newlines and backslashes intact', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs(AWKWARD_COMMAND))
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', tabs(AWKWARD_COMMAND))
     expect(execValue(yaml)).toBe(AWKWARD_COMMAND)
   })
 
   it('emits the exec on a single line so the YAML stays flat', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude one\ntwo'))
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', tabs('claude one\ntwo'))
     const execLines = yaml.split('\n').filter((line) => line.includes('exec'))
     expect(execLines).toHaveLength(1)
   })
 
   it('opens one tab per command in a single window', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude one', 'codex two'))
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', tabs('claude one', 'codex two'))
     expect(yaml.split('\n').filter((line) => line.includes('- tabs:'))).toHaveLength(1)
     expect(yaml.split('\n').filter((line) => line.includes('- layout:'))).toHaveLength(2)
     expect(yaml).toContain('- exec: "codex two"')
@@ -181,7 +181,7 @@ describe('tab titles', () => {
   ]
 
   it('Warp puts a single-line title beside each layout and round-trips it', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', titledTabs)
+    const yaml = warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', titledTabs)
     const titleLines = yaml.split('\n').filter((line) => line.startsWith('      - title: '))
     expect(titleLines.map((line) => JSON.parse(line.slice('      - title: '.length)))).toEqual([
       HOSTILE_TITLE,
@@ -191,7 +191,7 @@ describe('tab titles', () => {
   })
 
   it('Warp emits no title line for an untitled tab', () => {
-    expect(warpLaunchConfigYaml('/tmp/project', tabs('claude one'))).not.toContain('title:')
+    expect(warpLaunchConfigYaml(WARP_LAUNCH_CONFIG_NAME, '/tmp/project', tabs('claude one'))).not.toContain('title:')
   })
 
   it('Terminal pairs each command with its title, in order', () => {

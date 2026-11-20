@@ -14,6 +14,7 @@
 
 import { shellQuote, type TabLiveness, type TerminalTab } from '../src/shared/projectTypes.js'
 
+// Prefix only: each launch appends its own id, see openWarpWithCommands.
 export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
 
 // Formatting is ticketTabTitle's job; this only refuses garbage, and an
@@ -59,10 +60,10 @@ const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
   ]
 }
 
-export const warpLaunchConfigYaml = (projectPath: string, tabs: TerminalTab[]): string =>
+export const warpLaunchConfigYaml = (configName: string, projectPath: string, tabs: TerminalTab[]): string =>
   [
     '---',
-    `name: ${WARP_LAUNCH_CONFIG_NAME}`,
+    `name: ${configName}`,
     'windows:',
     '  - tabs:',
     ...tabs.flatMap((tab) => warpTabYaml(projectPath, tab)),

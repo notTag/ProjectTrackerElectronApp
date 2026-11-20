@@ -6,7 +6,9 @@
  * the few platform pieces arrive through HandlerDependencies.
  */
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
@@ -288,24 +290,44 @@ const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
     (status === undefined || PROJECT_STATUSES.includes(status as ProjectStatus))
 }
 
+// Each launch gets its own file: with one shared file, two lanes started back to
+// back overwrote it before Warp read the first, so both windows opened the
+// second lane's tabs (#116).
+export const writeWarpLaunchConfig = (homeDirectory: string, projectPath: string, tabs: TerminalTab[]) => {
+  const configName = `${WARP_LAUNCH_CONFIG_NAME}-${randomUUID().slice(0, 8)}`
+  const configDirectory = path.join(homeDirectory, '.warp', 'launch_configurations')
+  const configPath = path.join(configDirectory, `${configName}.yaml`)
+  mkdirSync(configDirectory, { recursive: true })
+  writeFileSync(configPath, warpLaunchConfigYaml(configName, projectPath, tabs), 'utf8')
+  return { configName, configPath }
+}
+
+// The config is a hand-off, not a document worth keeping: removed once Warp has
+// had time to read it, so files don't pile up in the user's Warp directory.
+// ponytail: fixed delay; a launch Warp takes longer than this to read would miss
+// its file. A crash before the timer fires leaves one stray file behind.
+const WARP_CONFIG_LIFETIME_MS = 30_000
+
+// Warp drops one of two warp://launch URIs handed over at once (seen in the
+// #116 repro: only the second lane's window opened), so launches are queued the
+// same way Ghostty's are. A failed launch rejects to its caller without
+// stalling the queue.
+let warpLaunchQueue: Promise<unknown> = Promise.resolve()
+
 export const createIpcHandlers = (dependencies: HandlerDependencies): Record<IpcChannel, IpcHandler> => {
-  // Write the tickets' commands where Warp looks for launch configurations, then
-  // ask Warp to open it. One reused file rather than one per ticket: the config
-  // is a hand-off, not a document worth keeping, and per-ticket files would pile
-  // up in the user's Warp directory forever.
-  // ponytail: single reused config. Two launches within the moment it takes Warp
-  // to read the file would race; key the name per launch if that ever bites.
-  //
   // This executes the command rather than pasting it. What makes that safe is the
   // single-quote wrapping applied in ticketShellCommand: ticket text — which can
   // arrive from a GitHub issue — lands as one literal argument to the agent, never
   // as shell code.
-  const openWarpWithCommands = async (projectPath: string, tabs: TerminalTab[]) => {
-    const configDirectory = path.join(dependencies.homeDirectory, '.warp', 'launch_configurations')
-    const configPath = path.join(configDirectory, `${WARP_LAUNCH_CONFIG_NAME}.yaml`)
-    mkdirSync(configDirectory, { recursive: true })
-    writeFileSync(configPath, warpLaunchConfigYaml(projectPath, tabs), 'utf8')
-    await openUri(`warp://launch/${WARP_LAUNCH_CONFIG_NAME}`)
+  const openWarpWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
+    const launch = warpLaunchQueue.then(async () => {
+      const { configName, configPath } = writeWarpLaunchConfig(dependencies.homeDirectory, projectPath, tabs)
+      const removeConfig = () => rm(configPath, { force: true }).catch(() => {})
+      setTimeout(removeConfig, WARP_CONFIG_LIFETIME_MS).unref()
+      await openUri(`warp://launch/${configName}`)
+    })
+    warpLaunchQueue = launch.catch(() => undefined)
+    return launch
   }
 
   // Only the terminals can run a ticket's command; the editors in the allowlist
