@@ -95,7 +95,7 @@ import {
 
 // Bound as :text strings so they can carry \n line breaks for the bubble's pre-line (#112).
 const agentPromptTip =
-  'Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/).' +
+  'Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
   "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
   "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
@@ -2468,10 +2468,6 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
         <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
-        <span v-else class="field-hint">
-          The prompt above autosaves here. Left empty it's SwimlaneAgentPrompt/&lt;lane&gt;/AgentPrompt.md. With no
-          prompt typed, the agent is pointed at this file instead.
-        </span>
       </label>
 
       <label v-if="showsLaneField('output', openLane.id)">
@@ -2498,10 +2494,6 @@ const runTicketAgent = (ticket: Ticket) => {
           @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
           @change="storeTypedPrompts"
         />
-        <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run). {{tickets}}, {{ticket_numbers}},
-          {{lanes}}, {{terminal}} are filled in at launch.
-        </span>
       </label>
       <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
         Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
