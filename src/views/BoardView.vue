@@ -645,6 +645,13 @@ watch(
   { immediate: true }
 )
 
+// click fires on the common ancestor of press + release, so dragging a resizable
+// modal's edge and letting go over the backdrop would otherwise close the modal.
+let pressStartedOnBackdrop = false
+const notePressTarget = (event: PointerEvent) => {
+  pressStartedOnBackdrop = event.target === event.currentTarget
+}
+
 const closeModals = () => {
   openTicketId.value = null
   openLaneId.value = null
@@ -1876,8 +1883,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="ticketDraft" class="modal-backdrop" @click.self="ticketDraft = null">
-    <section class="modal ticket-modal" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
+  <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && (ticketDraft = null)">
+    <section class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
         <ExpandToggle v-model="ticketModalExpanded" />
@@ -1955,11 +1962,11 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @click.self="closeModals">
+  <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && closeModals()">
     <!-- Refresh before editing so fields include writes from other processes. -->
     <section
       class="modal ticket-modal"
-      :class="{ expanded: ticketModalExpanded && boardView !== 'graph' }"
+      :class="{ expanded: ticketModalExpanded && boardView !== 'graph', resizable: boardView !== 'graph' }"
       @focusin="store.refresh()"
       @paste="pasteTicketImages(openTicket, $event)"
     >
@@ -2394,8 +2401,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="openLane" class="modal-backdrop" @click.self="openLaneId = null">
-    <section class="modal lane-modal" :class="{ expanded: laneModalExpanded }">
+  <div v-if="openLane" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && (openLaneId = null)">
+    <section class="modal lane-modal resizable" :class="{ expanded: laneModalExpanded }">
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
         <div ref="laneFieldsMenuRef" class="filter-menu">
