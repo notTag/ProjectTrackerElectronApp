@@ -1075,7 +1075,8 @@ interface TerminalTabRecipes {
 }
 
 // <N> is the ticket number. Each listing prints every tab title in one line.
-// Verified against each app's scripting dictionary; Warp has none, so it gets no recipes.
+// Verified against each app's scripting dictionary. Warp has none: its tabs are
+// found and closed through their agent's process instead (warpTabSection).
 const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
   ghostty: {
     listTabs: `osascript -e 'tell application "Ghostty" to get name of every tab of every window'`,
@@ -1115,7 +1116,36 @@ export interface OrchestratorPromptContext {
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
-const tabSection = (context: OrchestratorPromptContext): string => {
+// Warp tabs exit with their agent (`; exit`, warpTabConfigToml), so ending the
+// agent closes the tab. The session id is a UUID, unique across projects and
+// lanes, so no title or ticket number can match the wrong agent. The regex
+// form keeps pgrep from matching the shell that runs it, whose argv holds the
+// pattern rather than the plain `--session-id <uuid>`.
+// An agent without session args (anything but Claude Code) can't be found in
+// Warp, so its ticket keeps the old hands-off rule.
+const WARP_NO_SESSION_NOTE = ' — no session id: report its agent as unknown and tell the user to close its tab by hand'
+
+const warpTabSection = (context: OrchestratorPromptContext, ticketNumbers: string): string => {
+  const handoffSql = [
+    "SELECT number, json_extract(agent_run_json, '$.laneId'), json_extract(agent_run_json, '$.sessionId') FROM tickets",
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
+  ].join(' ')
+  const handoffQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(handoffSql)}`
+  return [
+    'Warp tabs are found by their agent\'s session id, not by tab title. Each ticket tab closes itself when its agent exits.',
+    'This lane\'s session id is the "session <uuid>" on the ticket\'s line above. A handoff tab\'s session id (number, lane id, session id; use it only when that lane id is not this lane). Each new handoff overwrites the last one\'s, so note every handoff session id the first time you see it:',
+    handoffQuery,
+    '',
+    'A ticket\'s agent is running while exactly one pid matches its session id (replace <SESSION> with it):',
+    "pgrep -f -- '--(session-id|resume) <SESSION>'",
+    '',
+    'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any session id more than one pid matches. Close by ending its agent, then rerun the check until no pid matches:',
+    'kill -TERM <pid>'
+  ].join('\n')
+}
+
+const tabSection = (context: OrchestratorPromptContext, ticketNumbers: string): string => {
+  if (context.terminalId === 'warp') return warpTabSection(context, ticketNumbers)
   const recipes = TERMINAL_TAB_RECIPES[context.terminalId]
   if (!recipes) {
     return [
@@ -1227,7 +1257,8 @@ const renderOrchestratorPrompt = (
       `   Close this lane's tab only after the ticket query shows the ticket has left the ${lane.id} lane, never on a done message alone:`,
       '   re-run the ticket query first. Close handoff tabs only once the ticket is done: they are the next lane\'s running agents.',
       '   A merged ticket still in this lane keeps its tab: report it instead. Never close when more than one open tab matches the title.',
-      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
+      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit only when nothing needs the user.',
+      '   Otherwise stay running with the open questions as the last thing on screen: in some terminals exiting closes your tab.'
     ].join('\n'),
     laneInstructionsSection(lane)
   ]
@@ -1240,10 +1271,17 @@ const orchestratorPromptParts = (
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
   const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
+  // Warp is watched by the full session id (warpTabSection); isUuid keeps
+  // anything else out of the shell recipe it is pasted into. Other terminals
+  // match tab titles, which carry only the short suffix.
+  const watchesSessions = context.terminalId === 'warp'
+  const sessionPartFor = (sessionId: string | undefined): string => {
+    if (watchesSessions) return isUuid(sessionId) ? ` — session ${sessionId}` : WARP_NO_SESSION_NOTE
+    return sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
+  }
   const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    const sessionPart = sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
-    const line = `- #${launch.number} ${ticket.title}${sessionPart} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const line = `- #${launch.number} ${ticket.title}${sessionPartFor(sessionId)} — tab "${tabTitle}" — branch ${launch.branchName}`
     const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
     if (!handsOff) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
@@ -1264,7 +1302,7 @@ const orchestratorPromptParts = (
     tickets: ticketLines.join('\n'),
     ticketNumbers,
     lanes: laneLines.join('\n'),
-    terminal: tabSection(context)
+    terminal: tabSection(context, ticketNumbers)
   }
 }
 

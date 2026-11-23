@@ -1782,7 +1782,7 @@ describe('Auto Run orchestrator', () => {
 
     it('follows the launch terminal in an edited prompt', () => {
       const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
-      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('kill -TERM <pid>')
     })
 
     it('does not expand a token that appears inside a ticket title', () => {
@@ -1880,11 +1880,38 @@ describe('Auto Run orchestrator', () => {
       expect(handoffTitles).not.toContain('14-In-Development-Third thing')
     })
 
-    it('tells the user to close Warp tabs by hand', () => {
+    it('watches and closes Warp tabs through their agent session id', () => {
       const warp = orchestratorPrompt(inDev, entries, context('warp', 'Warp'))
-      expect(warp).toContain('Warp cannot be queried')
-      expect(warp).toContain('close its tab by hand')
+      expect(warp).toContain("pgrep -f -- '--(session-id|resume) <SESSION>'")
+      expect(warp).toContain('kill -TERM <pid>')
+      expect(warp).toContain("json_extract(agent_run_json, '\\''$.sessionId'\\'')")
+      expect(warp).toContain(`First thing — session ${entries[0].sessionId} — tab `)
+      expect(warp).not.toContain('by hand')
       expect(warp).not.toContain('osascript')
+    })
+
+    it('gives non-Warp ticket lines only the short session suffix and keeps non-UUIDs off Warp ones', () => {
+      const ghosttyPrompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
+      expect(ghosttyPrompt).not.toContain(`— session ${entries[0].sessionId}`)
+      const forged = [{ ...entries[0], sessionId: "x'; rm -rf ~; '" }]
+      expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
+    })
+
+    it('leaves a Warp ticket with no session id to the user to close by hand', () => {
+      const noSession = [{ ...entries[0], sessionId: undefined }]
+      const ticketLine = orchestratorPrompt(inDev, noSession, context('warp', 'Warp'))
+        .split('\n')
+        .find((line) => line.startsWith('- #12 ')) ?? ''
+      expect(ticketLine).toContain('no session id: report its agent as unknown and tell the user to close its tab by hand')
+    })
+
+    // Warp closes the tab when the orchestrator exits, so exiting with questions open would erase them.
+    it('exits only when nothing needs the user, in every terminal', () => {
+      for (const terminal of [context('warp', 'Warp'), context('ghostty', 'Ghostty')]) {
+        const prompt = orchestratorPrompt(inDev, entries, terminal)
+        expect(prompt).toContain('exit only when nothing needs the user')
+        expect(prompt).not.toContain('Leave your own tab open')
+      }
     })
 
     it("appends the lane's orchestrator prompt after the generated rules", () => {

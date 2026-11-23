@@ -40,30 +40,38 @@ describe('warpTabConfigToml', () => {
   it('runs the command in the project directory', () => {
     const toml = warpTabConfigToml('/tmp/my project', { command: 'claude hello' })
     expect(tomlValue(toml, 'directory')).toBe('/tmp/my project')
-    expect(tomlValue(toml, 'commands')).toEqual(['claude hello'])
+    expect(tomlValue(toml, 'commands')).toEqual(['claude hello; exit'])
   })
 
   it('keeps a prompt containing quotes, newlines and backslashes intact', () => {
     const toml = warpTabConfigToml('/tmp/project', { command: AWKWARD_COMMAND })
-    expect(commandValue(toml)).toBe(AWKWARD_COMMAND)
+    expect(commandValue(toml)).toBe(`${AWKWARD_COMMAND}; exit`)
   })
 
   it('emits a multi-line command on a single line', () => {
     const toml = warpTabConfigToml('/tmp/project', { command: 'claude one\ntwo' })
     expect(toml.split('\n').filter((line) => line.startsWith('commands = '))).toHaveLength(1)
-    expect(commandValue(toml)).toBe('claude one\ntwo')
+    expect(commandValue(toml)).toBe('claude one\ntwo; exit')
+  })
+
+  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close its tab.
+  it('ends every tab, ticket and orchestrator alike, with its agent', () => {
+    const ticketTab = warpTabConfigToml('/tmp/project', { command: 'claude hello', title: '12-In-Dev' })
+    const orchestrator = warpTabConfigToml('/tmp/project', { command: 'claude watch', title: 'AUTORUN-ORCHESTRATOR-IN-DEV' })
+    expect(commandValue(ticketTab)).toBe('claude hello; exit')
+    expect(commandValue(orchestrator)).toBe('claude watch; exit')
   })
 
   it('escapes DEL, which JSON leaves raw but TOML forbids', () => {
     const toml = warpTabConfigToml('/tmp/project', { command: 'claude a\x7fb' })
     expect(toml).not.toContain('\x7f')
-    expect(commandValue(toml)).toBe('claude a\x7fb')
+    expect(commandValue(toml)).toBe('claude a\x7fb; exit')
   })
 
   it('replaces a lone surrogate, which TOML rejects, and keeps paired ones', () => {
     const toml = warpTabConfigToml('/tmp/project', { command: 'claude \ud800 🚀' })
     expect(toml).not.toMatch(/\\ud[89a-f]/i)
-    expect(commandValue(toml)).toBe('claude \ufffd 🚀')
+    expect(commandValue(toml)).toBe('claude \ufffd 🚀; exit')
   })
 })
 
