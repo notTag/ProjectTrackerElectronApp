@@ -1570,6 +1570,20 @@ code {
   width: min(85vw, 100%);
 }
 
+/* Native drag handle writes an inline width; ExpandToggle clears it so
+   expand/collapse still wins after a drag. Floor = default width.
+   Viewport units, not %: the backdrop's auto grid track grows with its item,
+   so 100% never caps a dragged width. 48px = backdrop padding both sides. */
+.modal.resizable {
+  resize: horizontal;
+  min-width: min(560px, 100vw - 48px);
+  max-width: calc(100vw - 48px);
+}
+
+.ticket-modal.resizable {
+  min-width: min(760px, 100vw - 48px);
+}
+
 .ticket-modal-header {
   display: flex;
   align-items: center;
