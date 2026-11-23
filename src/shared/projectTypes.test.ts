@@ -55,6 +55,9 @@ import {
   ticketIdsToMove,
   carriedTicketIds,
   ticketsToRun,
+  splitRunnable,
+  skippedRunsNotice,
+  joinNotices,
   agentForTicket,
   availableAgents,
   DEFAULT_AGENT,
@@ -980,6 +983,50 @@ describe('ticketsToRun', () => {
 
   it('runs every ticket when the only checks are in another lane', () => {
     expect(ticketsToRun(tickets, new Set(['z']))).toEqual(tickets)
+  })
+})
+
+describe('splitRunnable', () => {
+  const runIn = (id: string, laneId: string, status: string) =>
+    ({ id, number: id.length, agentRun: { laneId, status } }) as unknown as Ticket
+  const idsOf = (tickets: Ticket[]) => tickets.map((ticket) => ticket.id)
+
+  it('skips a ticket whose agent is already running in this lane', () => {
+    const { runnable, skipped } = splitRunnable([runIn('a', 'in-pr', 'running'), { id: 'b' } as Ticket], 'in-pr')
+    expect(idsOf(skipped)).toEqual(['a'])
+    expect(idsOf(runnable)).toEqual(['b'])
+  })
+
+  it('runs a checked ticket even when its agent shows running', () => {
+    const { runnable, skipped } = splitRunnable([runIn('a', 'in-pr', 'running')], 'in-pr', new Set(['a']))
+    expect(idsOf(runnable)).toEqual(['a'])
+    expect(skipped).toEqual([])
+  })
+
+  it('runs a ticket whose running agent belongs to another lane', () => {
+    const { runnable } = splitRunnable([runIn('a', 'in-dev', 'running')], 'in-pr')
+    expect(idsOf(runnable)).toEqual(['a'])
+  })
+
+  it('runs tickets whose agent run has ended', () => {
+    const ended = ['done', 'failed', 'interrupted'].map((status) => runIn(status, 'in-pr', status))
+    const { runnable } = splitRunnable(ended, 'in-pr')
+    expect(idsOf(runnable)).toEqual(['done', 'failed', 'interrupted'])
+  })
+
+  it('names every skipped ticket in the notice', () => {
+    const skipped = [{ number: 102 }, { number: 106 }] as Ticket[]
+    expect(skippedRunsNotice(skipped, 'Merge Request')).toBe('Skipped #102, #106: agent already running in Merge Request')
+  })
+
+  it('has no notice when nothing was skipped', () => {
+    expect(skippedRunsNotice([], 'Merge Request')).toBeNull()
+  })
+
+  it('joins only the notices that are set', () => {
+    expect(joinNotices(null, 'Skipped #102')).toBe('Skipped #102')
+    expect(joinNotices('Auto Run opened 2 tabs.', 'Skipped #102')).toBe('Auto Run opened 2 tabs. Skipped #102')
+    expect(joinNotices(null, null)).toBeNull()
   })
 })
 

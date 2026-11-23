@@ -2075,6 +2075,32 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
   return nothingSelectedHere ? tickets : selectedTickets
 }
 
+// Two agents on one ticket race each other (#121: one merged while the
+// other's review ran). A checked ticket still runs: that is how a stale
+// `running` record from a closed tab gets overridden.
+export const splitRunnable = (
+  tickets: Ticket[],
+  laneId: string,
+  checkedTicketIds: ReadonlySet<string> = new Set()
+): { runnable: Ticket[]; skipped: Ticket[] } => {
+  const isAlreadyRunningHere = (ticket: Ticket) =>
+    ticket.agentRun?.status === 'running' && ticket.agentRun.laneId === laneId && !checkedTicketIds.has(ticket.id)
+  const skipped = tickets.filter(isAlreadyRunningHere)
+  const runnable = tickets.filter((ticket) => !isAlreadyRunningHere(ticket))
+  return { runnable, skipped }
+}
+
+export const skippedRunsNotice = (skipped: Ticket[], laneName: string): string | null => {
+  if (skipped.length === 0) return null
+  const ticketNumbers = skipped.map((ticket) => `#${ticket.number}`).join(', ')
+  return `Skipped ${ticketNumbers}: agent already running in ${laneName}`
+}
+
+export const joinNotices = (...notices: (string | null)[]): string | null => {
+  const shown = notices.filter((notice): notice is string => Boolean(notice))
+  return shown.length > 0 ? shown.join(' ') : null
+}
+
 // Dragging a checked card carries every checked ticket the user can see;
 // dragging an unchecked one carries just that card.
 export const carriedTickets = (
