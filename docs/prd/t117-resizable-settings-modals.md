@@ -32,12 +32,14 @@
 - Opt-in class, not selector exclusions: add `resizable` to the three in-scope `<section>`s.
 	- 1961: `:class="{ expanded: …, resizable: boardView !== 'graph' }"` → graph panel excluded without a `:not()` rule
 - CSS (next to `.modal.expanded`):
-	- `.modal.resizable { resize: horizontal; min-width: min(560px, 100%); max-width: 100%; }`
-	- `.ticket-modal.resizable { min-width: min(760px, 100%); }`
+	- `.modal.resizable { resize: horizontal; min-width: min(560px, 100vw - 48px); max-width: calc(100vw - 48px); }` — `100%` doesn't cap: the backdrop's auto grid track grows with the modal`
+	- `.ticket-modal.resizable { min-width: min(760px, 100vw - 48px); }`
 	- `overflow-y: auto` on `.modal` already satisfies `resize`'s non-visible-overflow requirement
 - Expand reset — one line in shared `ExpandToggle.vue` click handler, covers all three modals:
 	- `(event.currentTarget as HTMLElement).closest<HTMLElement>('.modal')?.style.removeProperty('width')` then flip `expanded`
 	- Why there, not a watch per ref: the toggle is the only path that changes expand state, and both ticket modals share one ref
+- Backdrop close guard: `click` fires on the common ancestor of press + release, so a drag released over the backdrop closed the modal
+	- The three backdrops close only when `pointerdown` started on the backdrop
 - Not persisted: inline width dies with the `v-if` section on close → each open starts at default/expanded width. Nothing to add.
 
 ## Risk to check in app

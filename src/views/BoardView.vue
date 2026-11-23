@@ -651,6 +651,11 @@ let pressStartedOnBackdrop = false
 const notePressTarget = (event: PointerEvent) => {
   pressStartedOnBackdrop = event.target === event.currentTarget
 }
+const closeIfPressStartedOnBackdrop = (close: () => void) => {
+  const startedOnBackdrop = pressStartedOnBackdrop
+  pressStartedOnBackdrop = false
+  if (startedOnBackdrop) close()
+}
 
 const closeModals = () => {
   openTicketId.value = null
@@ -1883,7 +1888,7 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && (ticketDraft = null)">
+  <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (ticketDraft = null))">
     <section class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
@@ -1962,7 +1967,7 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && closeModals()">
+  <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(closeModals)">
     <!-- Refresh before editing so fields include writes from other processes. -->
     <section
       class="modal ticket-modal"
@@ -2401,7 +2406,7 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="openLane" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="pressStartedOnBackdrop && (openLaneId = null)">
+  <div v-if="openLane" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (openLaneId = null))">
     <section class="modal lane-modal resizable" :class="{ expanded: laneModalExpanded }">
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
