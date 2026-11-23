@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  WARP_LAUNCH_CONFIG_NAME,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
   tabLiveness,
   tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
-  warpLaunchConfigYaml
+  warpTabConfigToml
 } from './terminalLaunch.js'
 import type { TerminalTab } from '../src/shared/projectTypes.js'
 
@@ -19,53 +18,60 @@ const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1
 // A prompt that breaks every naive escaping attempt at once.
 const AWKWARD_COMMAND = `claude 'Fix the "parser" bug\n\nIt drops C:\\path, $HOME and it'\\''s late'`
 
-describe('warpLaunchConfigYaml', () => {
-  // The emitted scalars are JSON strings, so parsing them back is a genuine
-  // round-trip: whatever survives this survives Warp's YAML reader.
-  const execValue = (yaml: string) => {
-    const line = yaml.split('\n').find((candidate) => candidate.includes('- exec: '))
-    if (!line) throw new Error('no exec line emitted')
-    return JSON.parse(line.slice(line.indexOf('- exec: ') + '- exec: '.length))
+describe('warpTabConfigToml', () => {
+  // The emitted strings are JSON strings, so parsing them back is a genuine
+  // round-trip: whatever survives this survives Warp's TOML reader.
+  const tomlValue = (toml: string, key: string) => {
+    const prefix = `${key} = `
+    const line = toml.split('\n').find((candidate) => candidate.startsWith(prefix))
+    if (!line) throw new Error(`no ${key} line emitted`)
+    return JSON.parse(line.slice(prefix.length))
   }
+  const commandValue = (toml: string) => tomlValue(toml, 'commands')[0]
 
-  it('names the config so warp://launch/<name> resolves it', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude hello'))
-    expect(yaml).toContain(`name: ${WARP_LAUNCH_CONFIG_NAME}`)
+  it('declares one terminal pane with the Tab Config schema Warp requires', () => {
+    const toml = warpTabConfigToml('/tmp/project', { command: 'claude hello' })
+    expect(tomlValue(toml, 'name')).toBe('Project Tracker ticket')
+    expect(toml.split('\n').filter((line) => line === '[[panes]]')).toHaveLength(1)
+    expect(toml).toContain('id = "main"')
+    expect(toml).toContain('type = "terminal"')
   })
 
   it('runs the command in the project directory', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/my project', tabs('claude hello'))
-    expect(yaml).toContain('cwd: "/tmp/my project"')
-    expect(execValue(yaml)).toBe('claude hello; exit')
+    const toml = warpTabConfigToml('/tmp/my project', { command: 'claude hello' })
+    expect(tomlValue(toml, 'directory')).toBe('/tmp/my project')
+    expect(tomlValue(toml, 'commands')).toEqual(['claude hello; exit'])
   })
 
   it('keeps a prompt containing quotes, newlines and backslashes intact', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs(AWKWARD_COMMAND))
-    expect(execValue(yaml)).toBe(`${AWKWARD_COMMAND}; exit`)
+    const toml = warpTabConfigToml('/tmp/project', { command: AWKWARD_COMMAND })
+    expect(commandValue(toml)).toBe(`${AWKWARD_COMMAND}; exit`)
   })
 
-  it('emits the exec on a single line so the YAML stays flat', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude one\ntwo'))
-    const execLines = yaml.split('\n').filter((line) => line.includes('exec'))
-    expect(execLines).toHaveLength(1)
-  })
-
-  it('opens one tab per command in a single window', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude one', 'codex two'))
-    expect(yaml.split('\n').filter((line) => line.includes('- tabs:'))).toHaveLength(1)
-    expect(yaml.split('\n').filter((line) => line.includes('- layout:'))).toHaveLength(2)
-    expect(yaml).toContain('- exec: "codex two; exit"')
+  it('emits a multi-line command on a single line', () => {
+    const toml = warpTabConfigToml('/tmp/project', { command: 'claude one\ntwo' })
+    expect(toml.split('\n').filter((line) => line.startsWith('commands = '))).toHaveLength(1)
+    expect(commandValue(toml)).toBe('claude one\ntwo; exit')
   })
 
   // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close its tab.
   it('ends every tab, ticket and orchestrator alike, with its agent', () => {
-    const ticketTab = { command: 'claude hello', title: '12-In-Dev' }
-    const orchestrator = { command: 'claude watch', title: 'AUTORUN-ORCHESTRATOR-IN-DEV' }
-    const execLines = warpLaunchConfigYaml('/tmp/project', [ticketTab, orchestrator])
-      .split('\n')
-      .filter((line) => line.includes('- exec: '))
-    expect(execLines[0]).toContain('- exec: "claude hello; exit"')
-    expect(execLines[1]).toContain('- exec: "claude watch; exit"')
+    const ticketTab = warpTabConfigToml('/tmp/project', { command: 'claude hello', title: '12-In-Dev' })
+    const orchestrator = warpTabConfigToml('/tmp/project', { command: 'claude watch', title: 'AUTORUN-ORCHESTRATOR-IN-DEV' })
+    expect(commandValue(ticketTab)).toBe('claude hello; exit')
+    expect(commandValue(orchestrator)).toBe('claude watch; exit')
+  })
+
+  it('escapes DEL, which JSON leaves raw but TOML forbids', () => {
+    const toml = warpTabConfigToml('/tmp/project', { command: 'claude a\x7fb' })
+    expect(toml).not.toContain('\x7f')
+    expect(commandValue(toml)).toBe('claude a\x7fb; exit')
+  })
+
+  it('replaces a lone surrogate, which TOML rejects, and keeps paired ones', () => {
+    const toml = warpTabConfigToml('/tmp/project', { command: 'claude \ud800 🚀' })
+    expect(toml).not.toMatch(/\\ud[89a-f]/i)
+    expect(commandValue(toml)).toBe('claude \ufffd 🚀; exit')
   })
 })
 
@@ -191,18 +197,14 @@ describe('tab titles', () => {
     { command: 'claude two', title: '#34 Second' }
   ]
 
-  it('Warp puts a single-line title beside each layout and round-trips it', () => {
-    const yaml = warpLaunchConfigYaml('/tmp/project', titledTabs)
-    const titleLines = yaml.split('\n').filter((line) => line.startsWith('      - title: '))
-    expect(titleLines.map((line) => JSON.parse(line.slice('      - title: '.length)))).toEqual([
-      HOSTILE_TITLE,
-      '#34 Second'
-    ])
-    expect(yaml.split('\n').filter((line) => line === '        layout:')).toHaveLength(2)
+  it('Warp sets the tab title and round-trips a hostile one', () => {
+    const toml = warpTabConfigToml('/tmp/project', titledTabs[0])
+    const titleLine = toml.split('\n').find((line) => line.startsWith('title = '))
+    expect(JSON.parse(titleLine!.slice('title = '.length))).toBe(HOSTILE_TITLE)
   })
 
   it('Warp emits no title line for an untitled tab', () => {
-    expect(warpLaunchConfigYaml('/tmp/project', tabs('claude one'))).not.toContain('title:')
+    expect(warpTabConfigToml('/tmp/project', { command: 'claude one' })).not.toContain('title =')
   })
 
   it('Terminal pairs each command with its title, in order', () => {

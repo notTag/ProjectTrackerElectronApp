@@ -1,11 +1,11 @@
 /**
  * Builds the launch arguments that carry ticket commands into each supported
- * terminal — one tab per command, all in one new window, each tab titled after
- * its ticket where the terminal allows it.
+ * terminal — one tab per command, each tab titled after its ticket where the
+ * terminal allows it.
  *
  * None of them accept a command through `open -a <app> <dir>`, which takes a
- * directory and no argv, so each needs its own route: Warp reads a launch
- * configuration file, and Terminal, iTerm2 and Ghostty are driven by AppleScript.
+ * directory and no argv, so each needs its own route: Warp reads a Tab Config
+ * file per tab, and Terminal, iTerm2 and Ghostty are driven by AppleScript.
  *
  * Kept out of main.ts — which cannot be imported under test because it touches
  * the Electron app object at module load — so the escaping below has a home
@@ -14,7 +14,8 @@
 
 import { shellQuote, type TabLiveness, type TerminalTab } from '../src/shared/projectTypes.js'
 
-export const WARP_LAUNCH_CONFIG_NAME = 'project-tracker-ticket'
+// Warp's Tab Config file stems are snake_case.
+export const WARP_TAB_CONFIG_PREFIX = 'project_tracker_ticket_'
 
 // Formatting is ticketTabTitle's job; this only refuses garbage, and an
 // oversized title is dropped rather than failing the run over a nicety.
@@ -40,37 +41,40 @@ export const orchestratorTab = (value: unknown): TerminalTab | undefined => {
   return { command: candidate.command, title }
 }
 
-// JSON's string syntax is a subset of a YAML double-quoted scalar, so this
-// carries the newlines and quotes of a ticket prompt through intact without
-// pulling in a YAML serializer for two fields.
-const yamlDoubleQuoted = (value: string) => JSON.stringify(value)
-
-// A tab's `title` sits beside its `layout`, so a titled tab opens its list
-// entry with the title instead.
-const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
-  // Warp closes a tab when its shell exits, so every tab ends with its agent.
-  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
-  const command = `${tab.command}; exit`
-  const tabHeader = tab.title
-    ? [`      - title: ${yamlDoubleQuoted(tab.title)}`, '        layout:']
-    : ['      - layout:']
-  return [
-    ...tabHeader,
-    `          cwd: ${yamlDoubleQuoted(projectPath)}`,
-    '          commands:',
-    `            - exec: ${yamlDoubleQuoted(command)}`
-  ]
+// JSON's string syntax is a subset of a TOML basic string, so this carries the
+// newlines and quotes of a ticket prompt through intact without pulling in a
+// TOML serializer for four fields. Two exceptions: a lone surrogate, which JSON
+// escapes (\ud800) but TOML rejects, becomes U+FFFD first; and DEL, which JSON
+// leaves raw but TOML requires escaped, is escaped after.
+// ponytail: regex rather than String.prototype.toWellFormed, which is ES2024
+// and outside this build's ES2022 lib.
+const LONE_SURROGATE = /\p{Surrogate}/gu
+const RAW_DELETE = /\x7f/g
+const doubleQuotedString = (value: string) => {
+  const wellFormed = value.replace(LONE_SURROGATE, '\uFFFD')
+  const jsonString = JSON.stringify(wellFormed)
+  return jsonString.replace(RAW_DELETE, '\\u007f')
 }
 
-export const warpLaunchConfigYaml = (projectPath: string, tabs: TerminalTab[]): string =>
-  [
-    '---',
-    `name: ${WARP_LAUNCH_CONFIG_NAME}`,
-    'windows:',
-    '  - tabs:',
-    ...tabs.flatMap((tab) => warpTabYaml(projectPath, tab)),
+// One Tab Config per tab: warp://tab_config/<stem> opens a single tab, in the
+// focused Warp window when there is one.
+export const warpTabConfigToml = (projectPath: string, tab: TerminalTab): string => {
+  // Warp closes a tab when its shell exits, so every tab ends with its agent.
+  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
+  const commandThenExit = `${tab.command}; exit`
+  const titleLine = tab.title ? [`title = ${doubleQuotedString(tab.title)}`] : []
+  return [
+    'name = "Project Tracker ticket"',
+    ...titleLine,
+    '',
+    '[[panes]]',
+    'id = "main"',
+    'type = "terminal"',
+    `directory = ${doubleQuotedString(projectPath)}`,
+    `commands = [${doubleQuotedString(commandThenExit)}]`,
     ''
   ].join('\n')
+}
 
 // AppleScript is passed as one -e per line. Commands and titles travel as argv
 // entries read back via `item i of argv` rather than being interpolated into the

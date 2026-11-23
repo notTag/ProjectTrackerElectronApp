@@ -1089,7 +1089,7 @@ export interface OrchestratorPromptContext {
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
-// Warp tabs exit with their agent (`; exit`, warpTabYaml), so ending the
+// Warp tabs exit with their agent (`; exit`, warpTabConfigToml), so ending the
 // agent closes the tab. The session id is a UUID, unique across projects and
 // lanes, so no title or ticket number can match the wrong agent. The regex
 // form keeps pgrep from matching the shell that runs it, whose argv holds the
