@@ -177,7 +177,7 @@ textarea {
 button {
   min-height: 40px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-button, 8px);
   padding: 0 16px;
   color: var(--color-text-on-accent);
   background: var(--color-accent);
@@ -992,6 +992,8 @@ code {
   max-height: 100%;
   overflow-y: auto;
   padding: 24px;
+  border-radius: var(--ui-radius-modal, 8px);
+  background: color-mix(in srgb, var(--color-surface-raised) calc(var(--ui-alpha-modal, 100) * 1%), transparent);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
 }
 
@@ -1270,8 +1272,8 @@ code {
   min-height: 0;
   padding: 12px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface-raised);
+  border-radius: var(--ui-radius-lane, 8px);
+  background: color-mix(in srgb, var(--color-surface-raised) calc(var(--ui-alpha-lane, 100) * 1%), transparent);
   transition: border-color 120ms ease;
 }
 
@@ -1342,8 +1344,9 @@ code {
 .ticket {
   padding: 10px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
+  border-radius: var(--ui-radius-card, 6px);
+  background: color-mix(in srgb, var(--color-surface) calc(var(--ui-alpha-card, 100) * 1%), transparent);
+  text-align: var(--ui-card-text-align, left);
   cursor: grab;
   flex: 0 0 auto;
   transition: border-color 120ms ease, opacity 180ms ease, transform 180ms ease;
@@ -1352,7 +1355,7 @@ code {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: 8px;
-  align-items: start;
+  align-items: var(--ui-card-align-items, start);
 }
 
 .ticket > :not(.ticket-select) {
@@ -1379,6 +1382,11 @@ code {
 
 .ticket-drag-front {
   position: relative;
+}
+
+/* The drag ghost stays solid even when UI Demo fades the cards. */
+.ticket-drag-stack .ticket {
+  background: var(--color-surface);
 }
 
 .ticket-drag-layer {
@@ -2321,4 +2329,54 @@ span.ticket-image-thumb {
 
 .ticket-modal-header .filter-menu {
   width: auto;
+}
+
+.ui-demo-panel {
+  position: fixed;
+  /* Above the sticky titlebar (100) so the panel can't be dragged under its
+     window-drag region and lost; below modal backdrops (200). */
+  z-index: 150;
+  width: 320px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.ui-demo-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.ui-demo-titlebar button {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.ui-demo-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.ui-demo-row {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr) 4rem;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.ui-demo-row select {
+  grid-column: 2 / 4;
+}
+
+.ui-demo-row input[type='number'] {
+  width: 100%;
 }
