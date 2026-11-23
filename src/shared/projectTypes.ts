@@ -570,6 +570,14 @@ export interface TicketPromptContext {
   projectPath?: string
   // The DB the version instruction points at. Evals swap in a throwaway one.
   databasePath?: string
+  // This launch's session and tab, so the agent can name itself to the orchestrator (#124).
+  sessionId?: string
+  tabTitle?: string
+}
+
+const sessionIdentityInstruction = (context: TicketPromptContext): string => {
+  if (!context.sessionId || !context.tabTitle) return ''
+  return `Your session id is ${context.sessionId}; your tab is "${context.tabTitle}". Include both in every message to the orchestrator.`
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
@@ -683,10 +691,12 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
   const moveRules = moveRulesInstruction(ticket, context)
+  const sessionIdentity = sessionIdentityInstruction(context)
   const sections = [
     lanePrompt,
     laneFileReference,
     ticketMetadata,
+    sessionIdentity,
     ticketDescription,
     moveRules,
     versionSection,
@@ -932,10 +942,25 @@ export const ticketBranchName = (ticket: Ticket): string => {
 // which is why the number leads.
 const TAB_TITLE_MAX_CODE_POINTS = 40
 
+const TAB_SESSION_SUFFIX_LENGTH = 8
+
+const tabSessionSuffix = (sessionId: string): string => sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)
+
 // Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
-// whole at the cut. Only the ticket title is cut: the number-lane prefix is what
-// tells tabs apart.
+// whole at the cut. Only the ticket title is cut: the number-lane prefix and
+// the session suffix are what tell tabs apart. The suffix makes two runs of one
+// ticket in one lane distinguishable, so the orchestrator closes the right one (#124).
 export const ticketTabTitle = (
+  ticket: Pick<Ticket, 'number' | 'title'>,
+  lane: Pick<SwimLane, 'id' | 'name'>,
+  sessionId?: string
+): string => {
+  const baseTitle = ticketTabTitleWithoutSession(ticket, lane)
+  if (!sessionId) return baseTitle
+  return `${baseTitle} · ${tabSessionSuffix(sessionId)}`
+}
+
+const ticketTabTitleWithoutSession = (
   ticket: Pick<Ticket, 'number' | 'title'>,
   lane: Pick<SwimLane, 'id' | 'name'>
 ): string => {
@@ -987,8 +1012,10 @@ export const buildAutoRunLaunch = (
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
   // Fresh per launch: the CLI refuses a session id that is already in use.
   const sessionId = newAgentSessionId(agent)
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
-  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket, lane) }
+  const title = ticketTabTitle(ticket, lane, sessionId)
+  const contextWithSession = { ...context, sessionId, tabTitle: title }
+  const command = ticketShellCommand(ticketAsRun, lane, agent, contextWithSession, model, sessionId)
+  const launch = { number: ticket.number, branchName, command, title }
   return { ticket, launch, agentId: agent.id, sessionId }
 }
 
@@ -1045,7 +1072,8 @@ interface TerminalTabRecipes {
 }
 
 // <N> is the ticket number. Each listing prints every tab title in one line.
-// Verified against each app's scripting dictionary; Warp has none, so it gets no recipes.
+// Verified against each app's scripting dictionary. Warp has none: its tabs are
+// found and closed through their agent's process instead (warpTabSection).
 const TERMINAL_TAB_RECIPES: Record<string, TerminalTabRecipes> = {
   ghostty: {
     listTabs: `osascript -e 'tell application "Ghostty" to get name of every tab of every window'`,
@@ -1085,7 +1113,36 @@ export interface OrchestratorPromptContext {
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
-const tabSection = (context: OrchestratorPromptContext): string => {
+// Warp tabs exit with their agent (`; exit`, warpTabConfigToml), so ending the
+// agent closes the tab. The session id is a UUID, unique across projects and
+// lanes, so no title or ticket number can match the wrong agent. The regex
+// form keeps pgrep from matching the shell that runs it, whose argv holds the
+// pattern rather than the plain `--session-id <uuid>`.
+// An agent without session args (anything but Claude Code) can't be found in
+// Warp, so its ticket keeps the old hands-off rule.
+const WARP_NO_SESSION_NOTE = ' — no session id: report its agent as unknown and tell the user to close its tab by hand'
+
+const warpTabSection = (context: OrchestratorPromptContext, ticketNumbers: string): string => {
+  const handoffSql = [
+    "SELECT number, json_extract(agent_run_json, '$.laneId'), json_extract(agent_run_json, '$.sessionId') FROM tickets",
+    `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${ticketNumbers});`
+  ].join(' ')
+  const handoffQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(handoffSql)}`
+  return [
+    'Warp tabs are found by their agent\'s session id, not by tab title. Each ticket tab closes itself when its agent exits.',
+    'This lane\'s session id is the "session <uuid>" on the ticket\'s line above. A handoff tab\'s session id (number, lane id, session id; use it only when that lane id is not this lane). Each new handoff overwrites the last one\'s, so note every handoff session id the first time you see it:',
+    handoffQuery,
+    '',
+    'A ticket\'s agent is running while exactly one pid matches its session id (replace <SESSION> with it):',
+    "pgrep -f -- '--(session-id|resume) <SESSION>'",
+    '',
+    'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any session id more than one pid matches. Close by ending its agent, then rerun the check until no pid matches:',
+    'kill -TERM <pid>'
+  ].join('\n')
+}
+
+const tabSection = (context: OrchestratorPromptContext, ticketNumbers: string): string => {
+  if (context.terminalId === 'warp') return warpTabSection(context, ticketNumbers)
   const recipes = TERMINAL_TAB_RECIPES[context.terminalId]
   if (!recipes) {
     return [
@@ -1097,7 +1154,8 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     `Open tab titles in ${context.terminalLabel}:`,
     recipes.listTabs,
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
-    'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
+    'open new tabs titled with the later lane and a new session id; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
+    'A ticket\'s handoff tabs: open tabs titled with a handoff tab listed above, or that title followed by " · " and an 8-character session id, plus any tab_title the ticket query shows and any tab title its agents report to you. Close each by the exact title the tab list shows.',
     '',
     'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any title more than one open tab matches (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
@@ -1159,7 +1217,7 @@ const renderOrchestratorPrompt = (
   context: OrchestratorPromptContext
 ): string => {
   const ticketSql = [
-    'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
+    "SELECT number, title, lane_id, branch_name, pull_request_url, json_extract(agent_run_json, '$.tabTitle') AS tab_title, description FROM tickets",
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
@@ -1196,7 +1254,8 @@ const renderOrchestratorPrompt = (
       `   Close this lane's tab only after the ticket query shows the ticket has left the ${lane.id} lane, never on a done message alone:`,
       '   re-run the ticket query first. Close handoff tabs only once the ticket is done: they are the next lane\'s running agents.',
       '   A merged ticket still in this lane keeps its tab: report it instead. Never close when more than one open tab matches the title.',
-      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
+      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit only when nothing needs the user.',
+      '   Otherwise stay running with the open questions as the last thing on screen: in some terminals exiting closes your tab.'
     ].join('\n'),
     laneInstructionsSection(lane)
   ]
@@ -1209,16 +1268,25 @@ const orchestratorPromptParts = (
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
   const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
-  const ticketLines = entries.map(({ ticket, launch }) => {
+  // Warp is watched by the full session id (warpTabSection); isUuid keeps
+  // anything else out of the shell recipe it is pasted into. Other terminals
+  // match tab titles, which carry only the short suffix.
+  const watchesSessions = context.terminalId === 'warp'
+  const sessionPartFor = (sessionId: string | undefined): string => {
+    if (watchesSessions) return isUuid(sessionId) ? ` — session ${sessionId}` : WARP_NO_SESSION_NOTE
+    return sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
+  }
+  const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const line = `- #${launch.number} ${ticket.title}${sessionPartFor(sessionId)} — tab "${tabTitle}" — branch ${launch.branchName}`
     const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
     if (!handsOff) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
     const handoffTitles = context.lanes
       .filter(laneHasAgentWork)
       .map((boardLane) => ticketTabTitle(ticket, boardLane))
-      .filter((title) => title !== tabTitle)
+      // A handoff's session id is picked at handoff, so only the part before " · <id>" is predictable (#124).
+      .filter((title) => title !== tabTitle && !tabTitle.startsWith(`${title} · `))
     if (handoffTitles.length === 0) return line
     const quotedHandoffTitles = handoffTitles.map((title) => `"${title}"`).join(', ')
     return `${line} — handoff tabs ${quotedHandoffTitles}`
@@ -1231,7 +1299,7 @@ const orchestratorPromptParts = (
     tickets: ticketLines.join('\n'),
     ticketNumbers,
     lanes: laneLines.join('\n'),
-    terminal: tabSection(context)
+    terminal: tabSection(context, ticketNumbers)
   }
 }
 
@@ -2020,6 +2088,32 @@ export const ticketsToRun = (tickets: Ticket[], selectedTicketIds: ReadonlySet<s
   const selectedTickets = tickets.filter((ticket) => selectedTicketIds.has(ticket.id))
   const nothingSelectedHere = selectedTickets.length === 0
   return nothingSelectedHere ? tickets : selectedTickets
+}
+
+// Two agents on one ticket race each other (#121: one merged while the
+// other's review ran). A checked ticket still runs: that is how a stale
+// `running` record from a closed tab gets overridden.
+export const splitRunnable = (
+  tickets: Ticket[],
+  laneId: string,
+  checkedTicketIds: ReadonlySet<string> = new Set()
+): { runnable: Ticket[]; skipped: Ticket[] } => {
+  const isAlreadyRunningHere = (ticket: Ticket) =>
+    ticket.agentRun?.status === 'running' && ticket.agentRun.laneId === laneId && !checkedTicketIds.has(ticket.id)
+  const skipped = tickets.filter(isAlreadyRunningHere)
+  const runnable = tickets.filter((ticket) => !isAlreadyRunningHere(ticket))
+  return { runnable, skipped }
+}
+
+export const skippedRunsNotice = (skipped: Ticket[], laneName: string): string | null => {
+  if (skipped.length === 0) return null
+  const ticketNumbers = skipped.map((ticket) => `#${ticket.number}`).join(', ')
+  return `Skipped ${ticketNumbers}: agent already running in ${laneName}`
+}
+
+export const joinNotices = (...notices: (string | null)[]): string | null => {
+  const shown = notices.filter((notice): notice is string => Boolean(notice))
+  return shown.length > 0 ? shown.join(' ') : null
 }
 
 // Dragging a checked card carries every checked ticket the user can see;

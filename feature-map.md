@@ -324,6 +324,17 @@ From left to right:
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
+#### UI Demo panel (🎚 UI Demo) — `src/components/UiDemoPanel.vue`, `src/uiDemo.ts`
+
+- The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune.
+- Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
+- Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
+  - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
+  - Opacity 0–100%: modals, swimlanes, ticket cards. Fades the background only, text stays solid.
+  - Card text justify (left / center / right) and card content align (top / middle / bottom).
+- Each knob writes one `--ui-*` CSS variable on `:root`; `styles.css` falls back to the original values, so defaults look unchanged in every theme. Button and modal radius also reach the Dashboard, since those styles are shared.
+- **Reset** restores every default. Values and panel position are saved to `localStorage` key `project-tracker-ui-demo` (this machine only, not the DB) and applied before the app first paints.
+
 ### 3.6 New ticket modal
 
 - **Title** input. Enter saves.
@@ -355,7 +366,9 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both ticket modals (not the Lane settings modal) and kept until the app restarts. Not shown in the graph side panel. (`src/components/ExpandToggle.vue`, state in `src/modalWidth.ts`)
 
-**⚙ Ticket fields** button (beside Expand, this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
+**Drag to resize:** the bottom-right corner of the New ticket, Open ticket (board view), and Lane settings modals drags the width anywhere from the default (760px ticket, 560px lane) up to the window width minus the backdrop padding. These three modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`.modal.resizable` in `src/styles.css`)
+
+**Ticket fields** closed-eye button (left of Expand, same closed-eye icon as the fields button in the Lane settings modal (3.9); this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
 
 **Fields** (each saves when changed or when it loses focus; every edit updates `updatedAt`):
 
@@ -401,7 +414,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
-- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus; first Esc hides the tip, second closes the modal (#102).
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119).
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
@@ -448,11 +461,11 @@ In graph view this opens as a side panel instead of a centered modal.
   - File field empty: writes `<project>/SwimlaneAgentPrompt/<LANE>/AgentPrompt.md`, making the folders if they're missing. One folder per lane, so the lane's other prompt files (e.g. `AgentOrchestratorPrompt.md`) sit beside it. The lane name is sanitized: spaces and `/ \` become `-`, `: * ? " < > |` and leading dots are dropped, and an empty result falls back to `lane`. A path the app generated (an old `agent-context/*-AgentContext.md`, or a lane folder under the lane's old name) is re-derived on the next save, so a lane's prompts always share one folder; the old file is left in place. Any other path you typed is kept.
   - File field set: writes to that file, creating missing parent folders. The path must end in `.md`. A relative path resolves against the project. Changing the path saves the current prompt there, unless the prompt is empty.
   - The file mirrors the box: each save replaces it, and clearing the prompt leaves it blank. A file holding anything other than what this lane last wrote (a hand-written guide, an edit made in an editor) is never overwritten: the save fails with "<path> has other content…". Pasting the file's text into the box (or pointing the field at another file) lets autosave carry on.
-  - Field hint: "Saved to <path>" on success, the error on failure (lane left unchanged). Works on **No status** too.
+  - Field hint: "Saved to <path>" on success, the error on failure (lane left unchanged). Works on **No status** too. No default caption otherwise: the Agent prompt ⓘ tip covers the autosave, the default folder and the no-prompt fallback (#120).
 - **Agent markdown file**: the file the prompt autosaves to. Ticket agents get the prompt once: the typed prompt when there is one, else "Follow the guidance in <path>." (a hand-written guide with no prompt).
 - **Output**: free text naming where the work goes. An existing directory is used as-is, without asking.
 - Placeholders are lane-neutral (`docs/agent-prompt.md`, "a new folder inside the project directory"): the modal is shared by every lane, so example text never names one lane's artifact (#103).
-- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable. Has the same ⓘ tooltip icon (#102). Its tip ends with a "Variables:" list, one token per line with its meaning, built from `ORCHESTRATOR_PROMPT_TOKENS` by `orchestratorPromptTokenHelp()`; `{{tickets}}` and `{{ticket_numbers}}` are marked required. The Agent prompt tip instead says it takes no `{{variables}}` (tokens aren't filled in). Tip text keeps `\n` line breaks (`white-space: pre-line`) (#112).
+- **Orchestrator prompt** textarea (monospace): the full prompt this lane's Auto Run orchestrator gets, fully editable. Has the same ⓘ tooltip icon (#102). Its tip ends with a "Variables:" list, one token per line with its meaning, built from `ORCHESTRATOR_PROMPT_TOKENS` by `orchestratorPromptTokenHelp()`; `{{tickets}}` and `{{ticket_numbers}}` are marked required. The Agent prompt tip instead says it takes no `{{variables}}` (tokens aren't filled in). Tip text keeps `\n` line breaks (`white-space: pre-line`) (#112). No token caption under the box; the tip is the one place tokens are listed. The "Missing {{…}}" error still shows below it (#120).
   - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
   - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
   - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
@@ -471,7 +484,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
   - Note: Terminal needs Accessibility permission to open tabs.
-- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on. An ⓘ icon beside it shows a tooltip on hover or keyboard focus (#102).
+- **Full auto** checkbox: start the next lane's agent when this lane's agent moves a ticket on. An ⓘ icon after the label shows a tooltip on hover or keyboard focus, explaining the ticket-level Full auto override and Next Lane (#102, #119).
 - **Next Lane** select, under Full auto: None, No status, or any other lane (never the lane itself). Where this lane's tickets go on completion when they set no Next Lane of their own. Saved per lane (`swim_lanes.next_lane_id`). Deleting the target lane resets it to None.
 - No built-in PR-merge gate: the lane-level "Wait for PR merge" setting was removed (#127). To hold tickets until a merge, write it into the lane's agent prompt or the ticket's Move Rules. The old `swim_lanes.waits_for_pull_request_merge` column stays in the schema, unread and unwritten.
 - **Agent sets semantic version** checkbox, off by default. When on, the lane's ticket prompts tell the agent it decides whether the ticket needs a version, with the `sqlite3` command to write it. The app sets no rule for when.
@@ -497,12 +510,13 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.11 Auto Run (▶ on a lane)
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
-- Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
+- Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind — except in Warp, where the command is `<agent>; exit`, so the tab closes when its agent ends (#123).
 - Tab titles are `<N>-<Lane>-<title>` (`ticketTabTitle`), e.g. `99-Merge-Request-Fix the thing`, the same for ⌁ Run in, Open in shell and Resume. The lane is the display name, dashed (`laneTitleToken`); No status reads `Unassigned`. Only the title part is cut, to 40 code points + `…`.
-- Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given.
+- Launches with a session id (Auto Run, full auto handoffs, Resume) end the title with ` · <first 8 of the session id>`, e.g. `99-PRD-Fix the thing · 1234abcd`, so two runs of one ticket in one lane get different tabs (#124). The suffix is never cut. ⌁ Run in, Open in shell and agents without session ids keep the plain title.
+- Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given; its ticket lines carry the session id, and a handoff tab is any open tab titled with a predicted handoff title, alone or plus ` · <session id>`, or one seen in `agent_run_json.tabTitle` from its ticket query, or one a ticket agent reports (each agent's prompt states its session id and tab title).
 - Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
 - How each terminal does it:
-  - **Warp**: writes one Tab Config per tab to `~/.warp/tab_configs/project_tracker_ticket_<id>.toml` and opens `warp://tab_config/<stem>`. Tabs land in the focused Warp window; a new window opens only when Warp has none. Each file is deleted after ~60 s, so none linger in Warp's `+` menu.
+  - **Warp**: writes one Tab Config per tab to `~/.warp/tab_configs/project_tracker_ticket_<id>.toml` and opens `warp://tab_config/<stem>`. Tabs land in the focused Warp window; a new window opens only when Warp has none. Each file is deleted after ~60 s, so none linger in Warp's `+` menu. Launches are queued, so two lanes started back to back both get their tabs (#116).
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
@@ -510,8 +524,11 @@ In graph view this opens as a side panel instead of a centered modal.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
   - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).
+  - In Warp (no tab scripting) it finds each agent by its `--session-id`/`--resume` UUID with `pgrep -f` and closes the tab with `kill -TERM <pid>`; a session id matching more than one pid is skipped. Handoff session ids come from `agent_run_json.sessionId` (#123).
+  - It exits only when nothing needs the user; otherwise it stays running with open questions on screen, since in Warp exiting closes its tab.
   - Full auto ticket agents finish in a fixed order: move the ticket, print the final footer, then message the orchestrator (if one is watching) as the very last action.
 - A second click on the lane does nothing until the first launch has finished.
+- One agent per ticket per lane (#121): tickets whose agent is already running in this lane are left out of the count and the launch, and the notice adds "Skipped #N, #M: agent already running in <lane>". Checking a card overrides this (for a stale `running` record). Full auto handoffs into a lane skip the same tickets — dropped, not queued (`splitRunnable`).
 
 ### 3.12 Graph view
 

@@ -59,6 +59,9 @@ const doubleQuotedString = (value: string) => {
 // One Tab Config per tab: warp://tab_config/<stem> opens a single tab, in the
 // focused Warp window when there is one.
 export const warpTabConfigToml = (projectPath: string, tab: TerminalTab): string => {
+  // Warp closes a tab when its shell exits, so every tab ends with its agent.
+  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
+  const commandThenExit = `${tab.command}; exit`
   const titleLine = tab.title ? [`title = ${doubleQuotedString(tab.title)}`] : []
   return [
     'name = "Project Tracker ticket"',
@@ -68,7 +71,7 @@ export const warpTabConfigToml = (projectPath: string, tab: TerminalTab): string
     'id = "main"',
     'type = "terminal"',
     `directory = ${doubleQuotedString(projectPath)}`,
-    `commands = [${doubleQuotedString(tab.command)}]`,
+    `commands = [${doubleQuotedString(commandThenExit)}]`,
     ''
   ].join('\n')
 }
