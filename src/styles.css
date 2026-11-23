@@ -1570,12 +1570,12 @@ code {
   margin-bottom: 4px;
 }
 
-/* Right margin auto keeps Expand and the fields cog grouped at the right edge. */
+/* Right margin auto keeps Expand and the fields toggle grouped at the right edge. */
 .ticket-modal-header .eyebrow {
   margin: 0 auto 0 0;
 }
 
-/* Base .icon-button pads the bottom to lift ×/⚙ glyphs; the SVG is already centred. */
+/* Base .icon-button pads the bottom to lift text glyphs like ×; the SVG is already centred. */
 .ticket-modal-header .icon-button {
   padding: 0;
 }

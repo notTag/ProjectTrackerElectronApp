@@ -95,7 +95,7 @@ import {
 
 // Bound as :text strings so they can carry \n line breaks for the bubble's pre-line (#112).
 const agentPromptTip =
-  'Instructions given to the agent each time it starts on a ticket in this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/).' +
+  'Instructions given to the agent each time it starts on a ticket in this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
   "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
   "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
@@ -1968,7 +1968,6 @@ const runTicketAgent = (ticket: Ticket) => {
           #{{ openTicket.number }} · Created {{ formatDate(openTicket.createdAt) }}
           <template v-if="openTicket.updatedAt"> · Updated {{ formatDateTime(openTicket.updatedAt) }}</template>
         </p>
-        <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
         <div ref="modalFieldsMenuRef" class="filter-menu">
           <button
             type="button"
@@ -1980,8 +1979,10 @@ const runTicketAgent = (ticket: Ticket) => {
             @click="modalFieldsMenuOpen = !modalFieldsMenuOpen"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
             </svg>
           </button>
           <div v-if="modalFieldsMenuOpen" class="filter-popover" role="group" aria-label="Shown ticket fields">
@@ -1995,6 +1996,7 @@ const runTicketAgent = (ticket: Ticket) => {
             </label>
           </div>
         </div>
+        <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
       </div>
       <input
         class="ticket-title-input"
@@ -2470,10 +2472,6 @@ const runTicketAgent = (ticket: Ticket) => {
         />
         <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
         <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
-        <span v-else class="field-hint">
-          The prompt above autosaves here. Left empty it's SwimlaneAgentPrompt/&lt;lane&gt;/AgentPrompt.md. With no
-          prompt typed, the agent is pointed at this file instead.
-        </span>
       </label>
 
       <label v-if="showsLaneField('output', openLane.id)">
@@ -2501,10 +2499,6 @@ const runTicketAgent = (ticket: Ticket) => {
           @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
           @change="storeTypedPrompts"
         />
-        <span v-pre class="field-hint">
-          Sent to the Auto Run orchestrator (runs on every Auto Run). {{tickets}}, {{ticket_numbers}},
-          {{lanes}}, {{terminal}} are filled in at launch.
-        </span>
       </label>
       <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
         Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
