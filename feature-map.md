@@ -324,6 +324,17 @@ From left to right:
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
+#### UI Demo panel (🎚 UI Demo) — `src/components/UiDemoPanel.vue`, `src/uiDemo.ts`
+
+- The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune.
+- Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
+- Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
+  - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
+  - Opacity 0–100%: modals, swimlanes, ticket cards. Fades the background only, text stays solid.
+  - Card text justify (left / center / right) and card content align (top / middle / bottom).
+- Each knob writes one `--ui-*` CSS variable on `:root`; `styles.css` falls back to the original values, so defaults look unchanged in every theme. Button and modal radius also reach the Dashboard, since those styles are shared.
+- **Reset** restores every default. Values and panel position are saved to `localStorage` key `project-tracker-ui-demo` (this machine only, not the DB) and applied before the app first paints.
+
 ### 3.6 New ticket modal
 
 - **Title** input. Enter saves.
