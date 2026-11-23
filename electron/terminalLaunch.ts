@@ -48,7 +48,9 @@ const yamlDoubleQuoted = (value: string) => JSON.stringify(value)
 // A tab's `title` sits beside its `layout`, so a titled tab opens its list
 // entry with the title instead.
 const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
-  const command = tab.exitWithCommand ? `${tab.command}; exit` : tab.command
+  // Warp closes a tab when its shell exits, so every tab ends with its agent.
+  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
+  const command = `${tab.command}; exit`
   const tabHeader = tab.title
     ? [`      - title: ${yamlDoubleQuoted(tab.title)}`, '        layout:']
     : ['      - layout:']

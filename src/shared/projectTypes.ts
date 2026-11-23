@@ -956,9 +956,6 @@ export const ticketTabTitle = (
 export interface TerminalTab {
   title?: string
   command: string
-  // The shell exits with the command, so a terminal that closes a tab on shell
-  // exit (Warp) closes it once the agent ends. Only Warp's launcher reads it.
-  exitWithCommand?: boolean
 }
 
 // One ticket of an Auto Run as it crosses IPC. With worktrees on, main makes
@@ -1092,7 +1089,7 @@ export interface OrchestratorPromptContext {
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
-// Warp ticket tabs exit with their agent (exitWithCommand), so ending the
+// Warp tabs exit with their agent (`; exit`, warpTabYaml), so ending the
 // agent closes the tab. The session id is a UUID, unique across projects and
 // lanes, so no title or ticket number can match the wrong agent. The regex
 // form keeps pgrep from matching the shell that runs it, whose argv holds the

@@ -15,20 +15,20 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 - Handoff tabs: the session id is minted at handoff time, so it is not in the orchestrator's launch prompt. Terminal runs record it on the ticket (`agent_run_json.sessionId`, `laneId`, from #63). The orchestrator already queries tickets, so it reads it there
 
 ## Decisions
-- D1. Tab closes when its shell exits → ticket tab command becomes `<agent command>; exit` (Warp only)
+- D1. Tab closes when its shell exits → every Warp tab's command becomes `<agent command>; exit`
 	- `; exit`, not `&& exit`: SIGTERM exits nonzero (143), and `&&` would leave the tab open
 	- not `exec <cmd>`: resume commands start with `cd … &&`, `exec` can't prefix those
 	- Trade-off accepted: an agent that crashes at once takes its tab with it. The orchestrator already reports "tab gone while still in this lane" as Needs you, and the run is resumable
-- D2. Every ticket agent tab gets `; exit` (Auto Run tabs, full auto handoff tabs, manual single-ticket opens via `openProjectIn`). The orchestrator tab does not: its prompt says "Leave your own tab open" and its final summary must stay on screen
+- D2. Every Warp tab gets `; exit`: Auto Run ticket tabs, full auto handoff tabs, manual single-ticket opens, and the orchestrator tab (user decision, 2026-11-22). The orchestrator closes its own tab only when it has no open questions; that condition lives in the orchestrator prompt's close step, not in the launcher
 	- Live V1 (user): a tab launched without `; exit` stays open after its agent is killed → `; exit` is required on every agent launch
-	- Mechanism: optional `exitWithCommand?: boolean` on `TerminalTab`. `warpTabYaml` appends `; exit` when set. Other launchers ignore it → non-Warp output unchanged
+	- Mechanism: `warpTabYaml` always appends `; exit`. Other launchers don't read it → non-Warp output unchanged. No per-tab flag: every caller would set it
 - D3. Close = end the agent process: `kill -TERM <pid>`. The agent exits, `; exit` runs, Warp closes the tab
 - D4. Liveness = the process exists. Replaces "report every agent as unknown"
 - D5. Rejected: System Events ⌘W on Warp. It only hits the front tab, steals focus, needs Accessibility, and can't target a tab by title
 
 ## Requirements
-- R1. `TerminalTab` (`projectTypes.ts:956`) adds `exitWithCommand?: boolean`. Auto Run ticket launches, full auto handoff launches and manual ticket opens set it. The orchestrator tab never does
-- R2. `warpTabYaml`: `exec` = `` `${tab.command}; exit` `` when `exitWithCommand`, else unchanged
+- R1. Every Warp tab exits with its agent; `TerminalTab` is unchanged
+- R2. `warpTabYaml`: `exec` = `` `${tab.command}; exit` ``
 - R3. Orchestrator `{{tickets}}` line: Warp only, append ` — session <uuid>` from the launch entry's `sessionId` (`orchestratorPromptParts`, `projectTypes.ts:1215`). Non-Warp lines unchanged (snapshots)
 - R4. `tabSection` Warp recipe (new `TERMINAL_TAB_RECIPES.warp` entry, or a Warp branch; the comment at `:1051` is updated either way):
 	- Session id: the launch line's `session <uuid>` for this lane's tab; `agent_run_json` → `$.sessionId` for a handoff (only when `$.laneId` is the handoff lane)
@@ -45,7 +45,7 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 - [ ] A tab whose agent still has open questions is not closed (#68)
 - [ ] Closing never touches another project's agent with the same ticket number, or a handoff tab with the same session name (UUID match)
 - [ ] The Warp orchestrator prompt has no "close its tab by hand" or "unknown"
-- [ ] The orchestrator's own Warp tab stays open after it exits
+- [ ] The orchestrator's Warp tab closes when its agent exits (its prompt exits only with no open questions)
 - [ ] Non-Warp terminals unchanged (`evals/static` snapshots change only for Warp)
 - [ ] Unit tests (`electron/terminalLaunch.test.ts`, `src/shared/projectTypes.test.ts`):
 	- Warp YAML `exec` ends in `; exit` for a ticket tab, and not for the orchestrator tab

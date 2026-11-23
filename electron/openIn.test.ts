@@ -68,14 +68,14 @@ describe('project:open-in launch and fallback', () => {
     expect(result).toEqual({ ok: true, appLabel: 'Zed', copiedCommand: 'claude' })
   })
 
-  it('terminal + ticket command: runs it in a tab that exits with the agent', async () => {
+  it('terminal + ticket command: runs it in a tab', async () => {
     const runner = vi.fn(async () => undefined)
     const { dependencies } = fakeDependencies({ commandRunnerFor: (id) => (id === 'warp' ? runner : undefined) })
     const result = await openProjectIn(
       { projectPath: PROJECT, targetId: 'warp', command: 'claude', title: 'T4' },
       dependencies
     )
-    expect(runner).toHaveBeenCalledWith(PROJECT, [{ command: 'claude', title: 'T4', exitWithCommand: true }])
+    expect(runner).toHaveBeenCalledWith(PROJECT, [{ command: 'claude', title: 'T4' }])
     expect(result).toEqual({ ok: true, appLabel: 'Warp', ranCommand: 'claude' })
   })
 

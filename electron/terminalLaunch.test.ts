@@ -36,12 +36,12 @@ describe('warpLaunchConfigYaml', () => {
   it('runs the command in the project directory', () => {
     const yaml = warpLaunchConfigYaml('/tmp/my project', tabs('claude hello'))
     expect(yaml).toContain('cwd: "/tmp/my project"')
-    expect(execValue(yaml)).toBe('claude hello')
+    expect(execValue(yaml)).toBe('claude hello; exit')
   })
 
   it('keeps a prompt containing quotes, newlines and backslashes intact', () => {
     const yaml = warpLaunchConfigYaml('/tmp/project', tabs(AWKWARD_COMMAND))
-    expect(execValue(yaml)).toBe(AWKWARD_COMMAND)
+    expect(execValue(yaml)).toBe(`${AWKWARD_COMMAND}; exit`)
   })
 
   it('emits the exec on a single line so the YAML stays flat', () => {
@@ -54,18 +54,18 @@ describe('warpLaunchConfigYaml', () => {
     const yaml = warpLaunchConfigYaml('/tmp/project', tabs('claude one', 'codex two'))
     expect(yaml.split('\n').filter((line) => line.includes('- tabs:'))).toHaveLength(1)
     expect(yaml.split('\n').filter((line) => line.includes('- layout:'))).toHaveLength(2)
-    expect(yaml).toContain('- exec: "codex two"')
+    expect(yaml).toContain('- exec: "codex two; exit"')
   })
 
   // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close its tab.
-  it('ends a ticket tab with its agent, and leaves the orchestrator tab open', () => {
-    const ticketTab = { command: 'claude hello', title: '12-In-Dev', exitWithCommand: true }
+  it('ends every tab, ticket and orchestrator alike, with its agent', () => {
+    const ticketTab = { command: 'claude hello', title: '12-In-Dev' }
     const orchestrator = { command: 'claude watch', title: 'AUTORUN-ORCHESTRATOR-IN-DEV' }
     const execLines = warpLaunchConfigYaml('/tmp/project', [ticketTab, orchestrator])
       .split('\n')
       .filter((line) => line.includes('- exec: '))
     expect(execLines[0]).toContain('- exec: "claude hello; exit"')
-    expect(execLines[1]).toContain('- exec: "claude watch"')
+    expect(execLines[1]).toContain('- exec: "claude watch; exit"')
   })
 })
 
