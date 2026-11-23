@@ -20,7 +20,7 @@ Ownership check (two agents on one ticket can merge before the other's review fi
    - `SELECT agent_run_json FROM tickets WHERE project_path = '<main-checkout-path>' AND number = <N>;` → note `sessionId` + `startedAt`
    - `git rev-parse origin/<branch>`
 2. Just before approving/merging, `git fetch` and re-read both.
-   - Ticket's run `sessionId`/`startedAt` changed → another agent was launched on this ticket. Do not merge.
+   - Ticket's run `sessionId` changed (no `sessionId` → `startedAt` changed) → another agent was launched on this ticket. Do not merge. Same `sessionId` with a new `startedAt` is a Resume of this session, not a takeover.
    - `origin/<branch>` has commits this session didn't push (a foreign merge or fix) → do not merge.
    - Either case: leave the PR open, report what you found to the orchestrator and as an open question.
 

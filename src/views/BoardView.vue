@@ -70,6 +70,7 @@ import {
   ticketsToRun,
   splitRunnable,
   skippedRunsNotice,
+  joinNotices,
   toggleCardField,
   toggleLaneModalField,
   toggleLaneModalFieldInLane,
@@ -1448,7 +1449,7 @@ const confirmAutoRunLane = () => {
   const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
   const { runnable, skipped } = autoRunSplit(lane)
-  const skippedNotice = skipped.length > 0 ? skippedRunsNotice(skipped, lane.name) : null
+  const skippedNotice = skippedRunsNotice(skipped, lane.name)
   const launches = runnable.map((ticket) =>
     buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
   )
@@ -1480,8 +1481,9 @@ const confirmAutoRunLane = () => {
     useWorktrees,
     orchestrator
   )
-  void launch.then((launched) => {
-    if (launched && skippedNotice) store.notice = `${store.notice} ${skippedNotice}`
+  // Shown whether or not the launch went ahead: a refused second Auto Run is the case this notice is for.
+  void launch.then(() => {
+    if (skippedNotice) store.notice = joinNotices(store.notice, skippedNotice)
   })
 }
 

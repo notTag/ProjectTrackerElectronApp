@@ -2060,9 +2060,15 @@ export const splitRunnable = (
   return { runnable, skipped }
 }
 
-export const skippedRunsNotice = (skipped: Ticket[], laneName: string): string => {
+export const skippedRunsNotice = (skipped: Ticket[], laneName: string): string | null => {
+  if (skipped.length === 0) return null
   const ticketNumbers = skipped.map((ticket) => `#${ticket.number}`).join(', ')
   return `Skipped ${ticketNumbers}: agent already running in ${laneName}`
+}
+
+export const joinNotices = (...notices: (string | null)[]): string | null => {
+  const shown = notices.filter((notice): notice is string => Boolean(notice))
+  return shown.length > 0 ? shown.join(' ') : null
 }
 
 // Dragging a checked card carries every checked ticket the user can see;

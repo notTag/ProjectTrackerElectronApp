@@ -57,6 +57,7 @@ import {
   ticketsToRun,
   splitRunnable,
   skippedRunsNotice,
+  joinNotices,
   agentForTicket,
   availableAgents,
   DEFAULT_AGENT,
@@ -1016,6 +1017,16 @@ describe('splitRunnable', () => {
   it('names every skipped ticket in the notice', () => {
     const skipped = [{ number: 102 }, { number: 106 }] as Ticket[]
     expect(skippedRunsNotice(skipped, 'Merge Request')).toBe('Skipped #102, #106: agent already running in Merge Request')
+  })
+
+  it('has no notice when nothing was skipped', () => {
+    expect(skippedRunsNotice([], 'Merge Request')).toBeNull()
+  })
+
+  it('joins only the notices that are set', () => {
+    expect(joinNotices(null, 'Skipped #102')).toBe('Skipped #102')
+    expect(joinNotices('Auto Run opened 2 tabs.', 'Skipped #102')).toBe('Auto Run opened 2 tabs. Skipped #102')
+    expect(joinNotices(null, null)).toBeNull()
   })
 })
 

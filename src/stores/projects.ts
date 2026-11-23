@@ -21,6 +21,7 @@ import {
   runsToInterrupt,
   splitRunnable,
   skippedRunsNotice,
+  joinNotices,
   ticketTabTitle,
   type AgentRetryEvent,
   type AutoRunLaunchEntry,
@@ -641,15 +642,16 @@ export const useProjectsStore = defineStore('projects', {
           const skippedIds = new Set(skipped.map((ticket) => ticket.id))
           // Dropped, not deferred: the running agent owns the ticket.
           const laneHandoffs = groupedHandoffs.filter(({ ticket }) => !skippedIds.has(ticket.id))
-          const skippedNote = skipped.length > 0 ? ` ${skippedRunsNotice(skipped, toLane.name)}` : ''
+          const skippedNotice = skippedRunsNotice(skipped, toLane.name)
           if (laneHandoffs.length === 0) {
-            this.notice = skippedNote.trim()
+            this.notice = skippedNotice
             continue
           }
           const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
           if (this.autoRunning[autoRunKey(projectPath, toLane.id)]) {
             deferHandoffs(projectPath, laneHandoffs)
-            this.notice = `Full auto queued ${ticketNumbers}: ${toLane.name} Auto Run already running${skippedNote}`
+            const queuedNotice = `Full auto queued ${ticketNumbers}: ${toLane.name} Auto Run already running`
+            this.notice = joinNotices(queuedNotice, skippedNotice)
             continue
           }
           const agent = findAgent(agents, toLane.autoRunAgentId)
@@ -660,7 +662,7 @@ export const useProjectsStore = defineStore('projects', {
           )
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
-            if (launched) this.notice = `Full auto: ${ticketNumbers} → ${toLane.name}${skippedNote}`
+            if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
           })
         }
       }
