@@ -1225,7 +1225,8 @@ const renderOrchestratorPrompt = (
       `   Close this lane's tab only after the ticket query shows the ticket has left the ${lane.id} lane, never on a done message alone:`,
       '   re-run the ticket query first. Close handoff tabs only once the ticket is done: they are the next lane\'s running agents.',
       '   A merged ticket still in this lane keeps its tab: report it instead. Never close when more than one open tab matches the title.',
-      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit. Leave your own tab open.'
+      '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit only when nothing needs the user.',
+      '   Otherwise stay running with the open questions as the last thing on screen: in some terminals exiting closes your tab.'
     ].join('\n'),
     laneInstructionsSection(lane)
   ]

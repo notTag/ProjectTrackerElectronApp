@@ -20,6 +20,7 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 	- not `exec <cmd>`: resume commands start with `cd … &&`, `exec` can't prefix those
 	- Trade-off accepted: an agent that crashes at once takes its tab with it. The orchestrator already reports "tab gone while still in this lane" as Needs you, and the run is resumable
 - D2. Every Warp tab gets `; exit`: Auto Run ticket tabs, full auto handoff tabs, manual single-ticket opens, and the orchestrator tab (user decision, 2026-11-22). The orchestrator closes its own tab only when it has no open questions; that condition lives in the orchestrator prompt's close step, not in the launcher
+	- Generated orchestrator rule 5 (all terminals): print the final summary and exit only when nothing needs the user; otherwise stay running with the open questions on screen. Replaces "Leave your own tab open"
 	- Live V1 (user): a tab launched without `; exit` stays open after its agent is killed → `; exit` is required on every agent launch
 	- Mechanism: `warpTabYaml` always appends `; exit`. Other launchers don't read it → non-Warp output unchanged. No per-tab flag: every caller would set it
 - D3. Close = end the agent process: `kill -TERM <pid>`. The agent exits, `; exit` runs, Warp closes the tab

@@ -22,7 +22,7 @@ Loop:
    or its tab is gone while it is still in the in-dev lane.
 4. Ready = still in the in-dev lane and its PR is merged. A ticket that leaves the in-dev lane on its own is dropped from the batch; say so.
 5. When every remaining ticket is ready, run Release once for the whole batch.
-6. Print a final summary (each ticket: version, final lane, PR url and state) and exit. Leave your own tab open.
+6. Print a final summary (each ticket: version, final lane, PR url and state) and exit only when nothing needs the user. Otherwise stay running with the open questions as the last thing on screen: in some terminals exiting closes your tab.
 
 Release (once per batch — one minor version shared by every ticket):
 1. cd /Users/nicktag/Code/Projects/ProjectTracker/electron-app && git switch main && git pull --ff-only

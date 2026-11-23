@@ -1798,6 +1798,15 @@ describe('Auto Run orchestrator', () => {
       expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
     })
 
+    // Warp closes the tab when the orchestrator exits, so exiting with questions open would erase them.
+    it('exits only when nothing needs the user, in every terminal', () => {
+      for (const terminal of [context('warp', 'Warp'), context('ghostty', 'Ghostty')]) {
+        const prompt = orchestratorPrompt(inDev, entries, terminal)
+        expect(prompt).toContain('exit only when nothing needs the user')
+        expect(prompt).not.toContain('Leave your own tab open')
+      }
+    })
+
     it("appends the lane's orchestrator prompt after the generated rules", () => {
       const steered = { ...inDev, orchestratorPrompt: '  Poll every 2 minutes.\n' }
       const withInstructions = orchestratorPrompt(steered, entries, context('ghostty', 'Ghostty'))
