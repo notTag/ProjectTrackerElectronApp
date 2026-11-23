@@ -1384,6 +1384,11 @@ code {
   position: relative;
 }
 
+/* The drag ghost stays solid even when UI Demo fades the cards. */
+.ticket-drag-stack .ticket {
+  background: var(--color-surface);
+}
+
 .ticket-drag-layer {
   position: absolute;
   inset: 8px;
@@ -2328,7 +2333,9 @@ span.ticket-image-thumb {
 
 .ui-demo-panel {
   position: fixed;
-  z-index: 40;
+  /* Above the sticky titlebar (100) so the panel can't be dragged under its
+     window-drag region and lost; below modal backdrops (200). */
+  z-index: 150;
   width: 320px;
   border: 1px solid var(--color-border);
   border-radius: 8px;

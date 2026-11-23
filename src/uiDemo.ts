@@ -2,7 +2,7 @@ import { reactive, ref } from 'vue'
 
 // Live look-tuning knobs for the board. Each control owns one `--ui-*` CSS var on
 // :root; styles.css falls back to today's literals, so an unset var changes nothing.
-// ponytail: localStorage only — UI-only values, never synced to the DB.
+// localStorage only: these are per-machine look tweaks, deliberately kept out of the DB.
 
 type RangeControl = {
   kind: 'range'
@@ -123,8 +123,10 @@ const readStored = (): StoredUiDemo => {
 
 const readPosition = (stored: unknown): PanelPosition | null => {
   const candidate = stored as Partial<PanelPosition> | null
-  const isValid = Number.isFinite(candidate?.x) && Number.isFinite(candidate?.y)
-  return isValid ? { x: candidate!.x!, y: candidate!.y! } : null
+  const x = candidate?.x
+  const y = candidate?.y
+  const isValid = Number.isFinite(x) && Number.isFinite(y)
+  return isValid ? { x: x as number, y: y as number } : null
 }
 
 const initialStored = readStored()

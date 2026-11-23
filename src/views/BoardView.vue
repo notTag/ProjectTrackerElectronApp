@@ -720,6 +720,9 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     return
   }
   if (uiDemoPanelOpen.value) {
+    // Blur first so a half-typed number box commits through its change event
+    // before the panel unmounts.
+    ;(document.activeElement as HTMLElement | null)?.blur()
     uiDemoPanelOpen.value = false
     event.preventDefault()
     return

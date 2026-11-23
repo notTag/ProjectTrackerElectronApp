@@ -25,12 +25,16 @@ watch(
   { deep: true }
 )
 
-const clampIntoViewport = (x: number, y: number) => {
+const clampBetween = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+const clampIntoViewport =(x: number, y: number) => {
   const panelWidth = panel.value?.offsetWidth ?? 0
   const panelHeight = panel.value?.offsetHeight ?? 0
   const maxX = Math.max(0, window.innerWidth - panelWidth)
   const maxY = Math.max(0, window.innerHeight - panelHeight)
-  return { x: Math.min(maxX, Math.max(0, x)), y: Math.min(maxY, Math.max(0, y)) }
+  const clampedX = clampBetween(x, 0, maxX)
+  const clampedY = clampBetween(y, 0, maxY)
+  return { x: clampedX, y: clampedY }
 }
 
 const keepInViewport = () => {
@@ -44,6 +48,8 @@ let dragOffset: { x: number; y: number } | null = null
 
 const startDrag = (event: PointerEvent) => {
   // Buttons in the title bar (✕) keep their own click.
+  const isPrimaryButton = event.button === 0
+  if (!isPrimaryButton) return
   if ((event.target as HTMLElement).closest('button')) return
   const position = uiDemoPanelPosition.value ?? { x: 0, y: 0 }
   dragOffset = { x: event.clientX - position.x, y: event.clientY - position.y }
