@@ -22,14 +22,14 @@ Loop:
    or its tab is gone while it is still in the in-dev lane.
 4. Ready = still in the in-dev lane and its PR is merged. A ticket that leaves the in-dev lane on its own is dropped from the batch; say so.
 5. When every remaining ticket is ready, run Release once for the whole batch.
-6. Print a final summary (each ticket: version, final lane, PR url and state) and exit. Leave your own tab open.
+6. Print a final summary (each ticket: version, final lane, PR url and state) and exit only when nothing needs the user. Otherwise stay running with the open questions as the last thing on screen: in some terminals exiting closes your tab.
 
 Release (once per batch — one minor version shared by every ticket):
 1. cd /Users/nicktag/Code/Projects/ProjectTracker/electron-app && git switch main && git pull --ff-only
    Working tree must be clean (git status --porcelain empty). If not, stop and report it as needs you.
 2. Add each ticket's feature to feature-map.md, in the section where it lives on screen, with its source file references.
    git add feature-map.md && git commit -m "docs: feature map for #<N>, #<M>, ..."
-3. mise run release:minor
+3. Use users github account to publish with: mise run release:minor
    Bumps package.json, tags, publishes to GitHub Releases, pushes main + tag. If it fails, stop and report the error. Do not touch the tickets.
 4. VERSION=$(node -p "require('./package.json').version")
 5. Tag every ready ticket with the version and move it to Done (lane id in-production), in one write:

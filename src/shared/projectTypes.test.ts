@@ -55,6 +55,9 @@ import {
   ticketIdsToMove,
   carriedTicketIds,
   ticketsToRun,
+  splitRunnable,
+  skippedRunsNotice,
+  joinNotices,
   agentForTicket,
   availableAgents,
   DEFAULT_AGENT,
@@ -983,6 +986,50 @@ describe('ticketsToRun', () => {
   })
 })
 
+describe('splitRunnable', () => {
+  const runIn = (id: string, laneId: string, status: string) =>
+    ({ id, number: id.length, agentRun: { laneId, status } }) as unknown as Ticket
+  const idsOf = (tickets: Ticket[]) => tickets.map((ticket) => ticket.id)
+
+  it('skips a ticket whose agent is already running in this lane', () => {
+    const { runnable, skipped } = splitRunnable([runIn('a', 'in-pr', 'running'), { id: 'b' } as Ticket], 'in-pr')
+    expect(idsOf(skipped)).toEqual(['a'])
+    expect(idsOf(runnable)).toEqual(['b'])
+  })
+
+  it('runs a checked ticket even when its agent shows running', () => {
+    const { runnable, skipped } = splitRunnable([runIn('a', 'in-pr', 'running')], 'in-pr', new Set(['a']))
+    expect(idsOf(runnable)).toEqual(['a'])
+    expect(skipped).toEqual([])
+  })
+
+  it('runs a ticket whose running agent belongs to another lane', () => {
+    const { runnable } = splitRunnable([runIn('a', 'in-dev', 'running')], 'in-pr')
+    expect(idsOf(runnable)).toEqual(['a'])
+  })
+
+  it('runs tickets whose agent run has ended', () => {
+    const ended = ['done', 'failed', 'interrupted'].map((status) => runIn(status, 'in-pr', status))
+    const { runnable } = splitRunnable(ended, 'in-pr')
+    expect(idsOf(runnable)).toEqual(['done', 'failed', 'interrupted'])
+  })
+
+  it('names every skipped ticket in the notice', () => {
+    const skipped = [{ number: 102 }, { number: 106 }] as Ticket[]
+    expect(skippedRunsNotice(skipped, 'Merge Request')).toBe('Skipped #102, #106: agent already running in Merge Request')
+  })
+
+  it('has no notice when nothing was skipped', () => {
+    expect(skippedRunsNotice([], 'Merge Request')).toBeNull()
+  })
+
+  it('joins only the notices that are set', () => {
+    expect(joinNotices(null, 'Skipped #102')).toBe('Skipped #102')
+    expect(joinNotices('Auto Run opened 2 tabs.', 'Skipped #102')).toBe('Auto Run opened 2 tabs. Skipped #102')
+    expect(joinNotices(null, null)).toBeNull()
+  })
+})
+
 describe('ticketIdsToMove', () => {
   const tickets = [
     { id: 'a', laneId: 'idea' },
@@ -1041,6 +1088,27 @@ describe('carriedTicketIds', () => {
 })
 
 describe('ticketTabTitle', () => {
+  const sessionId = '1234abcd-0000-4000-8000-000000000000'
+
+  // #124: two runs of one ticket in one lane must not share a title.
+  it('appends the first 8 chars of the session id, outside the title budget', () => {
+    const lane = { id: 'prd', name: 'PRD' }
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, sessionId)).toBe('33-PRD-Short title · 1234abcd')
+    const longTitle = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane)
+    const longWithSession = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane, sessionId)
+    expect(longWithSession).toBe(`${longTitle} · 1234abcd`)
+    const emojiTicket = { number: 1, title: `${'a'.repeat(33)}🚀tail` }
+    const emojiAtCut = ticketTabTitle(emojiTicket, lane)
+    const emojiAtCutWithSession = ticketTabTitle(emojiTicket, lane, sessionId)
+    expect(emojiAtCutWithSession).toBe(`${emojiAtCut} · 1234abcd`)
+  })
+
+  it('keeps the old title without a session id', () => {
+    const lane = { id: 'prd', name: 'PRD' }
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, undefined)).toBe('33-PRD-Short title')
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, '')).toBe('33-PRD-Short title')
+  })
+
   const prd = { id: 'prd', name: 'PRD' }
 
   it('leads with the ticket number and lane', () => {
@@ -1256,75 +1324,13 @@ describe('full auto', () => {
       expect(sameLane.board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: false })
     })
 
-    describe('in a lane that waits for PR merge', () => {
-      const waitingMovesBetween = (before: Ticket, after: Ticket, alsoCompletedIds: string[] = []) =>
-        completionMoves(
-          boardWith([before], { waitsForPullRequestMerge: true }),
-          boardWith([after], { waitsForPullRequestMerge: true }),
-          alsoCompletedIds
-        )
-
-      it('holds a completed ticket armed while its PR is open', () => {
-        const open = { pullRequestState: 'open' as const }
-        const { board, moves } = waitingMovesBetween(armed(open), completed(open), ['ticket-1'])
-        expect(moves).toEqual([])
-        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: true })
-      })
-
-      it('moves and disarms once the PR merges, whatever the checklist says', () => {
-        const before = armed({ pullRequestState: 'open' })
-        const { board, moves } = waitingMovesBetween(before, armed({ pullRequestState: 'merged' }))
-        expect(moves.map((move) => move.toLane.id)).toEqual(['dev'])
-        expect(board.tickets[0]).toMatchObject({ laneId: 'dev', moveOnComplete: false })
-      })
-
-      it('holds a ticket with no PR yet', () => {
-        const { board, moves } = waitingMovesBetween(armed(), completed())
-        expect(moves).toEqual([])
-        expect(board.tickets[0]).toMatchObject({ laneId: 'prd', moveOnComplete: true })
-      })
-
-      it('moves at once when the PR was already merged and the checklist completes', () => {
-        const merged = { pullRequestState: 'merged' as const }
-        expect(waitingMovesBetween(armed(merged), completed(merged)).moves).toHaveLength(1)
-      })
-
-      it('still needs move rules to pass when the PR merges', () => {
-        const rules = { moveRules: 'Deployed', pullRequestState: 'open' as const }
-        const mergedUnconfirmed = { ...rules, pullRequestState: 'merged' as const }
-        expect(waitingMovesBetween(armed(rules), armed(mergedUnconfirmed)).moves).toEqual([])
-
-        const mergedConfirmed = { ...mergedUnconfirmed, moveRulesPassedLaneId: 'prd' }
-        expect(waitingMovesBetween(armed(rules), armed(mergedConfirmed)).moves).toHaveLength(1)
-      })
-
-      it('moves when the rules are confirmed after the merge, whatever the checklist says', () => {
-        const mergedUnconfirmed = { moveRules: 'Deployed', pullRequestState: 'merged' as const }
-        const mergedConfirmed = { ...mergedUnconfirmed, moveRulesPassedLaneId: 'prd' }
-        const { moves } = waitingMovesBetween(armed(mergedUnconfirmed), armed(mergedConfirmed))
-        expect(moves).toHaveLength(1)
-      })
-
-      it('shows no ready label while the PR is unmerged', () => {
-        const rulesPassed = { moveRules: 'Deployed', moveRulesPassedLaneId: 'prd', moveOnComplete: false }
-        const open = completed({ ...rulesPassed, pullRequestState: 'open' })
-        const merged = completed({ ...rulesPassed, pullRequestState: 'merged' })
-        const board = boardWith([open], { waitsForPullRequestMerge: true })
-        expect(isReadyToMove(open, board)).toBeUndefined()
-        expect(isReadyToMove(merged, boardWith([merged], { waitsForPullRequestMerge: true }))).toBe('dev')
-      })
-
-      it('leaves an unarmed ticket alone when its PR merges', () => {
-        const before = armed({ moveOnComplete: false, pullRequestState: 'open' })
-        const after = armed({ moveOnComplete: false, pullRequestState: 'merged' })
-        expect(waitingMovesBetween(before, after).moves).toEqual([])
-      })
-
-      it('ignores PR state in a lane without the flag', () => {
-        const open = { pullRequestState: 'open' as const }
-        expect(movesBetween(armed(open), completed(open)).moves).toHaveLength(1)
-        expect(movesBetween(armed(open), armed({ pullRequestState: 'merged' })).moves).toEqual([])
-      })
+    it('ignores PR state: completion alone moves an armed ticket', () => {
+      const openInPr = { pullRequestState: 'open' as const, laneId: 'in-pr' }
+      const inPrBoard = (entry: Ticket): ProjectBoard => ({ lanes: [lane('in-pr'), lane('dev')], tickets: [entry] })
+      const completedMoves = completionMoves(inPrBoard(armed(openInPr)), inPrBoard(completed(openInPr)), [])
+      expect(completedMoves.moves).toHaveLength(1)
+      const mergedOnlyMoves = completionMoves(inPrBoard(armed(openInPr)), inPrBoard(armed({ ...openInPr, pullRequestState: 'merged' })), [])
+      expect(mergedOnlyMoves.moves).toEqual([])
     })
 
     it('returns the next board itself when nothing completed', () => {
@@ -1505,10 +1511,28 @@ describe('full auto', () => {
     expect(launch.branchName).toBe('t7-existing')
     expect(launch.command).toContain('Branch: t7-existing')
     expect(launch.command).not.toContain('Worktree:')
-    expect(launch.title).toBe('7-DEV-Add the thing')
+    expect(launch.title).toMatch(/^7-DEV-Add the thing · [0-9a-f]{8}$/)
 
     const inPlace = buildAutoRunLaunch(placedTicket, lane('dev'), DEFAULT_AGENT, {}, false)
     expect(inPlace.launch.command).toContain('Worktree: /code/.worktrees/t7')
+  })
+
+  // #124
+  it('titles each launch with its own session id and tells the agent both', () => {
+    const first = buildAutoRunLaunch(ticket(), lane('dev'), DEFAULT_AGENT, {}, true)
+    const second = buildAutoRunLaunch(ticket(), lane('dev'), DEFAULT_AGENT, {}, true)
+    expect(first.launch.title).not.toBe(second.launch.title)
+    expect(first.launch.title?.endsWith(` · ${first.sessionId?.slice(0, 8)}`)).toBe(true)
+    expect(first.launch.command).toContain(`Your session id is ${first.sessionId}; your tab is`)
+    expect(first.launch.command).toContain('Include both in every message to the orchestrator.')
+  })
+
+  it('keeps the plain title and no session line for an agent that cannot resume', () => {
+    const noResume = { ...DEFAULT_AGENT, sessionArgs: undefined, resumeArgs: undefined }
+    const { launch, sessionId } = buildAutoRunLaunch(ticket(), lane('dev'), noResume, {}, true)
+    expect(sessionId).toBeUndefined()
+    expect(launch.title).toBe('7-DEV-Add the thing')
+    expect(launch.command).not.toContain('Your session id')
   })
 
   it('keeps worktrees on for a ticket that already has one, even when the lane has them off', () => {
@@ -1605,6 +1629,8 @@ describe('Auto Run orchestrator', () => {
   const entries = [ticket(12, 'First thing'), ticket(13, 'Second thing')].map((entry) =>
     buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
   )
+  const sessionPrefix = (index: number) => (entries[index].sessionId ?? '').slice(0, 8)
+  const AGENT_WITHOUT_RESUME = { ...DEFAULT_AGENT, sessionArgs: undefined, resumeArgs: undefined }
   const context = (terminalId: string, terminalLabel = terminalId) => ({
     projectPath: "/Users/me/Code/it's-mine",
     lanes: boardLanes,
@@ -1683,7 +1709,7 @@ describe('Auto Run orchestrator', () => {
     it('fills known tokens with launch data and leaves unknown ones', () => {
       const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
       const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
-      expect(filled).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
+      expect(filled).toContain(`- #12 First thing — session ${sessionPrefix(0)} — tab "12-In-Development-First thing · ${sessionPrefix(0)}" — branch t12-first-thing`)
       expect(filled).toContain('IN (12, 13)')
       expect(filled).toContain('- done — Done — agent work: no')
       expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
@@ -1694,7 +1720,7 @@ describe('Auto Run orchestrator', () => {
 
     it('follows the launch terminal in an edited prompt', () => {
       const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
-      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('kill -TERM <pid>')
     })
 
     it('does not expand a token that appears inside a ticket title', () => {
@@ -1715,14 +1741,25 @@ describe('Auto Run orchestrator', () => {
     const prompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
 
     it('lists every ticket with its title, tab title and branch', () => {
-      expect(prompt).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
-      expect(prompt).toContain('- #13 Second thing — tab "13-In-Development-Second thing" — branch t13-second-thing')
+      expect(prompt).toContain(`- #12 First thing — session ${sessionPrefix(0)} — tab "12-In-Development-First thing · ${sessionPrefix(0)}" — branch t12-first-thing`)
+      expect(prompt).toContain(`- #13 Second thing — session ${sessionPrefix(1)} — tab "13-In-Development-Second thing · ${sessionPrefix(1)}" — branch t13-second-thing`)
       expect(prompt).not.toContain('handoff tabs "')
+    })
+
+    // #124: a handoff's session id is picked at handoff, so only its title before " · <id>" is predicted.
+    it('predicts handoff tabs without their session suffix when runs have session ids', () => {
+      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
+      const ownTab = fullAutoEntries[0].launch.title
+      expect(fullAutoPrompt).toContain(`tab "${ownTab}" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"`)
+      expect(fullAutoPrompt).not.toContain('"14-In-Development-Third thing"')
+      expect(fullAutoPrompt).toContain('that title followed by " · " and an 8-character session id')
+      expect(fullAutoPrompt).toContain("json_extract(agent_run_json, '\\''$.tabTitle'\\'') AS tab_title, description")
     })
 
     it('lists the tabs a full auto ticket opens in later lanes, so they get closed too', () => {
       const fullAutoTicket = { ...ticket(14, 'Third thing'), fullAuto: true }
-      const fullAutoEntries = [buildAutoRunLaunch(fullAutoTicket, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoEntries = [buildAutoRunLaunch(fullAutoTicket, inDev, AGENT_WITHOUT_RESUME, {}, true)]
       const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
       expect(fullAutoPrompt).toContain('tab "14-In-Development-Third thing" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"')
     })
@@ -1772,7 +1809,7 @@ describe('Auto Run orchestrator', () => {
     it('gives each lane of one ticket its own tab title, and lists only later lanes as handoff tabs', () => {
       const sameTicket = { number: 14, title: 'Third thing' }
       expect(ticketTabTitle(sameTicket, inDev)).not.toBe(ticketTabTitle(sameTicket, boardLanes[1]))
-      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, AGENT_WITHOUT_RESUME, {}, true)]
       const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
       const promptLines = fullAutoPrompt.split('\n')
       const handoffLine = promptLines.find((line) => line.includes('— handoff tabs')) ?? ''
@@ -1781,11 +1818,38 @@ describe('Auto Run orchestrator', () => {
       expect(handoffTitles).not.toContain('14-In-Development-Third thing')
     })
 
-    it('tells the user to close Warp tabs by hand', () => {
+    it('watches and closes Warp tabs through their agent session id', () => {
       const warp = orchestratorPrompt(inDev, entries, context('warp', 'Warp'))
-      expect(warp).toContain('Warp cannot be queried')
-      expect(warp).toContain('close its tab by hand')
+      expect(warp).toContain("pgrep -f -- '--(session-id|resume) <SESSION>'")
+      expect(warp).toContain('kill -TERM <pid>')
+      expect(warp).toContain("json_extract(agent_run_json, '\\''$.sessionId'\\'')")
+      expect(warp).toContain(`First thing — session ${entries[0].sessionId} — tab `)
+      expect(warp).not.toContain('by hand')
       expect(warp).not.toContain('osascript')
+    })
+
+    it('gives non-Warp ticket lines only the short session suffix and keeps non-UUIDs off Warp ones', () => {
+      const ghosttyPrompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
+      expect(ghosttyPrompt).not.toContain(`— session ${entries[0].sessionId}`)
+      const forged = [{ ...entries[0], sessionId: "x'; rm -rf ~; '" }]
+      expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
+    })
+
+    it('leaves a Warp ticket with no session id to the user to close by hand', () => {
+      const noSession = [{ ...entries[0], sessionId: undefined }]
+      const ticketLine = orchestratorPrompt(inDev, noSession, context('warp', 'Warp'))
+        .split('\n')
+        .find((line) => line.startsWith('- #12 ')) ?? ''
+      expect(ticketLine).toContain('no session id: report its agent as unknown and tell the user to close its tab by hand')
+    })
+
+    // Warp closes the tab when the orchestrator exits, so exiting with questions open would erase them.
+    it('exits only when nothing needs the user, in every terminal', () => {
+      for (const terminal of [context('warp', 'Warp'), context('ghostty', 'Ghostty')]) {
+        const prompt = orchestratorPrompt(inDev, entries, terminal)
+        expect(prompt).toContain('exit only when nothing needs the user')
+        expect(prompt).not.toContain('Leave your own tab open')
+      }
     })
 
     it("appends the lane's orchestrator prompt after the generated rules", () => {

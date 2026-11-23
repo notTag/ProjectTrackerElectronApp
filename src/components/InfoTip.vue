@@ -12,13 +12,17 @@ const isHovered = () => Boolean(wrapper.value?.matches(':hover'))
 const hasKeyboardFocus = () => Boolean(button.value?.matches(':focus-visible'))
 const isShowing = () => !dismissed.value && (isHovered() || hasKeyboardFocus())
 
-// The board's window keydown handler closes the modal on Escape. Listening in the
-// capture phase lets the first Escape hide just the tip, whether hover or focus
-// showed it; once the tip is hidden, Escape passes through and closes the modal.
+// Capture phase so Escape always hides a showing tip, even when a handler below
+// would stop the event. Escape is claimed only when the tip button has keyboard
+// focus: then the first Escape hides just the tip and the modal stays open. A
+// mouse-clicked button focuses without :focus-visible, so it counts as hover. A
+// hover-only tip hides and lets Escape through, like a native tooltip, so inputs,
+// menus, drags and the modal still get it. A defaultPrevented Escape was already
+// handled by an earlier capture listener (Find bar), so the tip stays put.
 const dismissOnEscape = (event: KeyboardEvent) => {
-  if (event.key !== 'Escape' || !isShowing()) return
+  if (event.key !== 'Escape' || event.defaultPrevented || !isShowing()) return
   dismissed.value = true
-  event.stopPropagation()
+  if (hasKeyboardFocus()) event.stopPropagation()
 }
 
 const resetOnMouseLeave = () => {
