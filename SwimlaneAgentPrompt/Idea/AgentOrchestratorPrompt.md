@@ -8,8 +8,8 @@ Watch these tickets until each one is done:
 Board lanes (id — name — agent work):
 {{lanes}}
 
-Ticket state (read-only):
-sqlite3 -readonly "$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite" 'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets WHERE project_path = '\''/Users/nicktag/Code/Projects/ProjectTracker/electron-app'\'' AND number IN ({{ticket_numbers}});'
+Ticket state (read-only; <db> = the Project Tracker database path from your CLAUDE.md):
+sqlite3 -readonly "<db>" 'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets WHERE project_path = '\''/Users/nicktag/Code/Projects/ProjectTracker/electron-app'\'' AND number IN ({{ticket_numbers}});'
 
 PR state per ticket (use the branch_name from the database when it differs from the one above):
 gh pr list --head <branch> --state all --json number,url,state
