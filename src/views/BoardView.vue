@@ -98,7 +98,7 @@ import {
 
 // Bound as :text strings so they can carry \n line breaks for the bubble's pre-line (#112).
 const agentPromptTip =
-  'Instructions sent to the agent when a ticket enters this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
+  'Instructions given to the agent each time it starts on a ticket in this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
   "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
   "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
@@ -2233,9 +2233,10 @@ const runTicketAgent = (ticket: Ticket) => {
           <input
             type="checkbox"
             :checked="Boolean(openTicket.fullAuto)"
+            aria-labelledby="ticket-full-auto-label"
             @change="editTicket(openTicket, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
-          Full auto
+          <span id="ticket-full-auto-label">Full auto</span>
           <InfoTip text="Same as a lane's Full auto, but for this ticket in every lane it enters." />
         </label>
         <span v-if="!hidesModalField('fullAuto')" class="field-hint">
@@ -2469,11 +2470,12 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <label v-if="showsLaneField('agentPrompt', openLane.id)" for="lane-agent-prompt">
         <span class="label-with-tip">
-          Agent prompt
+          <span id="lane-agent-prompt-label">Agent prompt</span>
           <InfoTip :text="agentPromptTip" />
         </span>
         <textarea
           id="lane-agent-prompt"
+          aria-labelledby="lane-agent-prompt-label"
           class="agent-prompt"
           :value="laneMarkdownDraft.agent.prompt"
           placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
@@ -2508,11 +2510,12 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <label v-if="showsLaneField('orchestratorPrompt', openLane.id)" for="lane-orchestrator-prompt">
         <span class="label-with-tip">
-          Orchestrator prompt
+          <span id="lane-orchestrator-prompt-label">Orchestrator prompt</span>
           <InfoTip :text="orchestratorPromptTip" />
         </span>
         <textarea
           id="lane-orchestrator-prompt"
+          aria-labelledby="lane-orchestrator-prompt-label"
           class="agent-prompt orchestrator-prompt"
           :value="laneMarkdownDraft.orchestrator.prompt"
           spellcheck="false"
@@ -2664,10 +2667,13 @@ const runTicketAgent = (ticket: Ticket) => {
           <input
             type="checkbox"
             :checked="Boolean(openLane.fullAuto)"
+            aria-labelledby="lane-full-auto-label"
             @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
           />
-          <InfoTip text="When this lane's agent moves a ticket on, the next lane's agent starts on it automatically." />
-          Full auto: start the next lane's agent when this lane's agent moves a ticket on
+          <span id="lane-full-auto-label">Full auto: start the next lane's agent when this lane's agent moves a ticket on</span>
+          <InfoTip
+            text="Covers every ticket in this lane. A ticket's own Full auto turns it on for that ticket in every lane. Next Lane below sets where a ticket moves when its checklist is done."
+          />
         </label>
         <label v-if="showsLaneField('nextLane', openLane.id)">
           Next Lane
