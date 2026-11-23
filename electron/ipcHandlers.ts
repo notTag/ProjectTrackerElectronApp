@@ -7,8 +7,7 @@
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
@@ -19,7 +18,7 @@ import { openProjectIn } from './openIn.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import type { StateRepository } from './storage/stateRepository.js'
 import {
-  WARP_LAUNCH_CONFIG_NAME,
+  WARP_TAB_CONFIG_PREFIX,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
@@ -27,7 +26,7 @@ import {
   tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   usableTabTitle,
-  warpLaunchConfigYaml
+  warpTabConfigToml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
 import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicketImageBytes } from './ticketImages.js'
@@ -108,6 +107,9 @@ const openUri = (uri: string) =>
 // The timeout matters for Ghostty: its launches share one queue, so an osascript
 // stuck on an unanswered Automation prompt would otherwise block every later one.
 const OSASCRIPT_TIMEOUT_MS = 60_000
+
+// Warp reads a Tab Config within seconds of its URI, even on a cold start.
+const WARP_TAB_CONFIG_LIFETIME_MS = 60_000
 
 const run = (bin: string, args: string[]) =>
   new Promise<string>((resolve, reject) => {
@@ -290,50 +292,55 @@ const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
     (status === undefined || PROJECT_STATUSES.includes(status as ProjectStatus))
 }
 
-// Each launch gets its own file: with one shared file, two lanes started back to
-// back overwrote it before Warp read the first, so both windows opened the
-// second lane's tabs (#116).
-export const writeWarpLaunchConfig = (homeDirectory: string, projectPath: string, tabs: TerminalTab[]) => {
-  const configName = `${WARP_LAUNCH_CONFIG_NAME}-${randomUUID().slice(0, 8)}`
-  const configDirectory = path.join(homeDirectory, '.warp', 'launch_configurations')
-  const configPath = path.join(configDirectory, `${configName}.yaml`)
-  mkdirSync(configDirectory, { recursive: true })
-  writeFileSync(configPath, warpLaunchConfigYaml(configName, projectPath, tabs), 'utf8')
-  return { configName, configPath }
-}
-
-// The config is a hand-off, not a document worth keeping: removed once Warp has
-// had time to read it, so files don't pile up in the user's Warp directory.
-// ponytail: fixed delay; a launch Warp takes longer than this to read would miss
-// its file. A crash before the timer fires leaves one stray file behind.
-const WARP_CONFIG_LIFETIME_MS = 30_000
-
-// Warp drops one of two warp://launch URIs handed over at once (seen in the
-// #116 repro: only the second lane's window opened), so launches are queued the
-// same way Ghostty's are. A failed launch rejects to its caller without
-// stalling the queue.
+// Two lanes started back to back hand Warp two URIs at once, and Warp dropped
+// one of them in the #116 repro, so launches are queued the same way Ghostty's
+// are. A failed launch rejects to its caller without stalling the queue.
 let warpLaunchQueue: Promise<unknown> = Promise.resolve()
 
 export const createIpcHandlers = (dependencies: HandlerDependencies): Record<IpcChannel, IpcHandler> => {
+  // One Tab Config file per tab, each opened by its own warp://tab_config URI:
+  // Warp adds the tab to its focused window (a new window only when none is
+  // open). A launch configuration would always open a new window. Each file
+  // gets a unique stem so back-to-back launches never overwrite one another
+  // before Warp reads them, and is deleted a minute later: it's a hand-off, not
+  // a config the user keeps, and it shows in Warp's + menu while present. The
+  // sweep catches files whose timer never fired because the app quit.
+  //
   // This executes the command rather than pasting it. What makes that safe is the
   // single-quote wrapping applied in ticketShellCommand: ticket text — which can
   // arrive from a GitHub issue — lands as one literal argument to the agent, never
   // as shell code.
   const openWarpWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
     const launch = warpLaunchQueue.then(async () => {
-      const { configName, configPath } = writeWarpLaunchConfig(dependencies.homeDirectory, projectPath, tabs)
-      const removeConfig = () => rm(configPath, { force: true }).catch(() => {})
-      setTimeout(removeConfig, WARP_CONFIG_LIFETIME_MS).unref()
-      await openUri(`warp://launch/${configName}`)
+      const configDirectory = path.join(dependencies.homeDirectory, '.warp', 'tab_configs')
+      mkdirSync(configDirectory, { recursive: true })
+      const staleBefore = Date.now() - WARP_TAB_CONFIG_LIFETIME_MS
+      for (const fileName of readdirSync(configDirectory)) {
+        if (!fileName.startsWith(WARP_TAB_CONFIG_PREFIX) || !fileName.endsWith('.toml')) continue
+        const filePath = path.join(configDirectory, fileName)
+        const fileStats = statSync(filePath, { throwIfNoEntry: false })
+        if (fileStats && fileStats.mtimeMs < staleBefore) rmSync(filePath, { force: true })
+      }
+      for (const tab of tabs) {
+        const uniqueId = randomUUID().replaceAll('-', '_')
+        const stem = WARP_TAB_CONFIG_PREFIX + uniqueId
+        const configPath = path.join(configDirectory, `${stem}.toml`)
+        writeFileSync(configPath, warpTabConfigToml(projectPath, tab), 'utf8')
+        await openUri(`warp://tab_config/${stem}`)
+        // Started once `open` returns, so a slow hand-off can't delete the file
+        // before Warp reads it. A failed open leaves it for the next sweep.
+        setTimeout(() => rmSync(configPath, { force: true }), WARP_TAB_CONFIG_LIFETIME_MS).unref()
+      }
     })
     warpLaunchQueue = launch.catch(() => undefined)
     return launch
   }
 
   // Only the terminals can run a ticket's command; the editors in the allowlist
-  // have no shell to run it in and keep the clipboard hand-off. Ghostty adds its
-  // tabs to the window the app last opened while it is still open; the others
-  // open one new window per launch with a tab per command.
+  // have no shell to run it in and keep the clipboard hand-off. Warp adds its
+  // tabs to the focused Warp window; Ghostty to the window the app last opened
+  // while it is still open; Terminal and iTerm2 open one new window per launch
+  // with a tab per command.
   const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>> = {
     warp: openWarpWithCommands,
     terminal: openTerminalWithCommands,
