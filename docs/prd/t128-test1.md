@@ -31,3 +31,4 @@ None. If "test1" was meant as a real feature, replace the ticket description and
 
 ## Run log
 - 2026-11-22 PRD lane: PRD written, ticket moved to In Development
+- 2026-11-22 In Development lane: no app code; run-log line committed for Merge Request PR
