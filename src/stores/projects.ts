@@ -1037,6 +1037,8 @@ export const useProjectsStore = defineStore('projects', {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.error = message
+        // An earlier lane's success line would read as this lane's result.
+        this.notice = null
         // No tab ever ran, so there is no session to resume.
         const at = new Date().toISOString()
         await this.updateBoard(path, (board) => ({

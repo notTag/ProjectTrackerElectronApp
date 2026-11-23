@@ -98,22 +98,23 @@ const openWithApp = (appName: string, target: string) =>
     execFile('open', ['-a', appName, target], (error) => (error ? reject(error) : resolve()))
   })
 
+// The timeout matters for Ghostty and Warp: each one's launches share a queue,
+// so an osascript stuck on an unanswered Automation prompt, or an `open` Warp
+// never answers, would otherwise block every later launch.
+const LAUNCH_TIMEOUT_MS = 60_000
+
 // Hand a URI to Launch Services. Same arg-array exec as openWithApp — no shell.
 const openUri = (uri: string) =>
   new Promise<void>((resolve, reject) => {
-    execFile('open', [uri], (error) => (error ? reject(error) : resolve()))
+    execFile('open', [uri], { timeout: LAUNCH_TIMEOUT_MS }, (error) => (error ? reject(error) : resolve()))
   })
-
-// The timeout matters for Ghostty: its launches share one queue, so an osascript
-// stuck on an unanswered Automation prompt would otherwise block every later one.
-const OSASCRIPT_TIMEOUT_MS = 60_000
 
 // Warp reads a Tab Config within seconds of its URI, even on a cold start.
 const WARP_TAB_CONFIG_LIFETIME_MS = 60_000
 
 const run = (bin: string, args: string[]) =>
   new Promise<string>((resolve, reject) => {
-    execFile(bin, args, { timeout: OSASCRIPT_TIMEOUT_MS }, (error, stdout) =>
+    execFile(bin, args, { timeout: LAUNCH_TIMEOUT_MS }, (error, stdout) =>
       error ? reject(error) : resolve(stdout.trim())
     )
   })

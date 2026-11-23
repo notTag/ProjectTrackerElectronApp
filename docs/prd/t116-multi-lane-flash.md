@@ -49,5 +49,11 @@ BUG: The screen flashes when more than one swimlane is kicked off.
 - Terminal.app / iTerm2 / Ghostty launch paths (no shared file; Ghostty adds tabs to one window by design, #53)
 - Queuing toasts / multi-toast stack
 
+## Update after merging main (2026-11-23)
+- #122 replaced Warp launch configs with one Tab Config per tab under a unique stem (`warp://tab_config/<stem>`) → S3 shared-file race already gone; Fix step 2 and the `ipcHandlers` file test dropped
+- Shipped instead: Warp launches queued (`warpLaunchQueue`, `electron/ipcHandlers.ts`), since the repro showed Warp dropping one of two URIs handed over at once
+- `open` gets the 60 s launch timeout Ghostty's osascript has, so one stuck launch can't block the queue
+- Failed Auto Run clears the previous lane's notice (it would read as this lane's result)
+
 ## Open questions
 None

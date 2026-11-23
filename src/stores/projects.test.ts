@@ -902,6 +902,17 @@ describe('mid-session failure recovery', () => {
     expect(store.notice).toBe('Auto Run opened 0 tabs in Warp.')
   })
 
+  it("drops the previous lane's notice when the next lane's launch fails", async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+    store.notice = 'Auto Run opened 1 tab in Ghostty.'
+    api.autoRunLane.mockRejectedValue(new Error('Warp is not installed.'))
+
+    await store.autoRunLane(PROJECT_PATH, 'prd', 'warp', 'Warp', [], false)
+
+    expect(store.notice).toBeNull()
+  })
+
   it('marks a run whose tab is gone after a restart as interrupted, and says full auto paused', async () => {
     const store = useProjectsStore()
     const state = stateWithTicketIn('prd')
