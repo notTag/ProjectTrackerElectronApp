@@ -6,8 +6,8 @@ Watch these tickets until each one is released:
 Board lanes (id — name — agent work):
 {{lanes}}
 
-Ticket state (<db> = the Project Tracker database path from your CLAUDE.md):
-sqlite3 -readonly "<db>" 'SELECT number, title, lane_id, branch_name, pull_request_url, version, description FROM tickets WHERE project_path = '\''/Users/nicktag/Code/Projects/ProjectTracker/electron-app'\'' AND number IN ({{ticket_numbers}});'
+Ticket state:
+sqlite3 -readonly "$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite" 'SELECT number, title, lane_id, branch_name, pull_request_url, version, description FROM tickets WHERE project_path = '\''/Users/nicktag/Code/Projects/ProjectTracker/electron-app'\'' AND number IN ({{ticket_numbers}});'
 
 PR state per ticket (use the branch_name from the database when it differs from the one above):
 gh pr list --head <branch> --state all --json number,url,state
@@ -29,11 +29,11 @@ Release (once per batch — one minor version shared by every ticket):
    Working tree must be clean (git status --porcelain empty). If not, stop and report it as needs you.
 2. Add each ticket's feature to feature-map.md, in the section where it lives on screen, with its source file references.
    git add feature-map.md && git commit -m "docs: feature map for #<N>, #<M>, ..."
-3. mise run release:minor
+3. Use users github account to publish with: mise run release:minor
    Bumps package.json, tags, publishes to GitHub Releases, pushes main + tag. If it fails, stop and report the error. Do not touch the tickets.
 4. VERSION=$(node -p "require('./package.json').version")
 5. Tag every ready ticket with the version and move it to Done (lane id in-production), in one write:
-   sqlite3 "<db>" "UPDATE tickets SET version = '$VERSION', lane_id = 'in-production', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE project_path = '/Users/nicktag/Code/Projects/ProjectTracker/electron-app' AND lane_id = 'in-dev' AND number IN (<ready ticket numbers>);"
+   sqlite3 "$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite" "UPDATE tickets SET version = '$VERSION', lane_id = 'in-production', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE project_path = '/Users/nicktag/Code/Projects/ProjectTracker/electron-app' AND lane_id = 'in-dev' AND number IN (<ready ticket numbers>);"
 6. Close each ticket's session tab and say so.
 
 Release step 5 is the only database write allowed. Never edit other tickets or other fields, and never message the ticket agents.
