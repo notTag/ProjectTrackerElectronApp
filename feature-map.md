@@ -512,6 +512,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).
   - Full auto ticket agents finish in a fixed order: move the ticket, print the final footer, then message the orchestrator (if one is watching) as the very last action.
 - A second click on the lane does nothing until the first launch has finished.
+- One agent per ticket per lane (#121): tickets whose agent is already running in this lane are left out of the count and the launch, and the notice adds "Skipped #N, #M: agent already running in <lane>". Checking a card overrides this (for a stale `running` record). Full auto handoffs into a lane skip the same tickets — dropped, not queued (`splitRunnable`).
 
 ### 3.12 Graph view
 
