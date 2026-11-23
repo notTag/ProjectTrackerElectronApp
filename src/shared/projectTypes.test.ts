@@ -1041,6 +1041,27 @@ describe('carriedTicketIds', () => {
 })
 
 describe('ticketTabTitle', () => {
+  const sessionId = '1234abcd-0000-4000-8000-000000000000'
+
+  // #124: two runs of one ticket in one lane must not share a title.
+  it('appends the first 8 chars of the session id, outside the title budget', () => {
+    const lane = { id: 'prd', name: 'PRD' }
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, sessionId)).toBe('33-PRD-Short title · 1234abcd')
+    const longTitle = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane)
+    const longWithSession = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane, sessionId)
+    expect(longWithSession).toBe(`${longTitle} · 1234abcd`)
+    const emojiTicket = { number: 1, title: `${'a'.repeat(33)}🚀tail` }
+    const emojiAtCut = ticketTabTitle(emojiTicket, lane)
+    const emojiAtCutWithSession = ticketTabTitle(emojiTicket, lane, sessionId)
+    expect(emojiAtCutWithSession).toBe(`${emojiAtCut} · 1234abcd`)
+  })
+
+  it('keeps the old title without a session id', () => {
+    const lane = { id: 'prd', name: 'PRD' }
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, undefined)).toBe('33-PRD-Short title')
+    expect(ticketTabTitle({ number: 33, title: 'Short title' }, lane, '')).toBe('33-PRD-Short title')
+  })
+
   const prd = { id: 'prd', name: 'PRD' }
 
   it('leads with the ticket number and lane', () => {
@@ -1505,10 +1526,28 @@ describe('full auto', () => {
     expect(launch.branchName).toBe('t7-existing')
     expect(launch.command).toContain('Branch: t7-existing')
     expect(launch.command).not.toContain('Worktree:')
-    expect(launch.title).toBe('7-DEV-Add the thing')
+    expect(launch.title).toMatch(/^7-DEV-Add the thing · [0-9a-f]{8}$/)
 
     const inPlace = buildAutoRunLaunch(placedTicket, lane('dev'), DEFAULT_AGENT, {}, false)
     expect(inPlace.launch.command).toContain('Worktree: /code/.worktrees/t7')
+  })
+
+  // #124
+  it('titles each launch with its own session id and tells the agent both', () => {
+    const first = buildAutoRunLaunch(ticket(), lane('dev'), DEFAULT_AGENT, {}, true)
+    const second = buildAutoRunLaunch(ticket(), lane('dev'), DEFAULT_AGENT, {}, true)
+    expect(first.launch.title).not.toBe(second.launch.title)
+    expect(first.launch.title?.endsWith(` · ${first.sessionId?.slice(0, 8)}`)).toBe(true)
+    expect(first.launch.command).toContain(`Your session id is ${first.sessionId}; your tab is`)
+    expect(first.launch.command).toContain('Include both in every message to the orchestrator.')
+  })
+
+  it('keeps the plain title and no session line for an agent that cannot resume', () => {
+    const noResume = { ...DEFAULT_AGENT, sessionArgs: undefined, resumeArgs: undefined }
+    const { launch, sessionId } = buildAutoRunLaunch(ticket(), lane('dev'), noResume, {}, true)
+    expect(sessionId).toBeUndefined()
+    expect(launch.title).toBe('7-DEV-Add the thing')
+    expect(launch.command).not.toContain('Your session id')
   })
 
   it('keeps worktrees on for a ticket that already has one, even when the lane has them off', () => {
@@ -1605,6 +1644,8 @@ describe('Auto Run orchestrator', () => {
   const entries = [ticket(12, 'First thing'), ticket(13, 'Second thing')].map((entry) =>
     buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
   )
+  const sessionPrefix = (index: number) => (entries[index].sessionId ?? '').slice(0, 8)
+  const AGENT_WITHOUT_RESUME = { ...DEFAULT_AGENT, sessionArgs: undefined, resumeArgs: undefined }
   const context = (terminalId: string, terminalLabel = terminalId) => ({
     projectPath: "/Users/me/Code/it's-mine",
     lanes: boardLanes,
@@ -1683,7 +1724,7 @@ describe('Auto Run orchestrator', () => {
     it('fills known tokens with launch data and leaves unknown ones', () => {
       const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
       const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
-      expect(filled).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
+      expect(filled).toContain(`- #12 First thing — session ${sessionPrefix(0)} — tab "12-In-Development-First thing · ${sessionPrefix(0)}" — branch t12-first-thing`)
       expect(filled).toContain('IN (12, 13)')
       expect(filled).toContain('- done — Done — agent work: no')
       expect(filled).toContain('tell application "Ghostty" to get name of every tab of every window')
@@ -1715,14 +1756,25 @@ describe('Auto Run orchestrator', () => {
     const prompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
 
     it('lists every ticket with its title, tab title and branch', () => {
-      expect(prompt).toContain('- #12 First thing — tab "12-In-Development-First thing" — branch t12-first-thing')
-      expect(prompt).toContain('- #13 Second thing — tab "13-In-Development-Second thing" — branch t13-second-thing')
+      expect(prompt).toContain(`- #12 First thing — session ${sessionPrefix(0)} — tab "12-In-Development-First thing · ${sessionPrefix(0)}" — branch t12-first-thing`)
+      expect(prompt).toContain(`- #13 Second thing — session ${sessionPrefix(1)} — tab "13-In-Development-Second thing · ${sessionPrefix(1)}" — branch t13-second-thing`)
       expect(prompt).not.toContain('handoff tabs "')
+    })
+
+    // #124: a handoff's session id is picked at handoff, so only its title before " · <id>" is predicted.
+    it('predicts handoff tabs without their session suffix when runs have session ids', () => {
+      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
+      const ownTab = fullAutoEntries[0].launch.title
+      expect(fullAutoPrompt).toContain(`tab "${ownTab}" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"`)
+      expect(fullAutoPrompt).not.toContain('"14-In-Development-Third thing"')
+      expect(fullAutoPrompt).toContain('that title followed by " · " and an 8-character session id')
+      expect(fullAutoPrompt).toContain("json_extract(agent_run_json, '\\''$.tabTitle'\\'') AS tab_title, description")
     })
 
     it('lists the tabs a full auto ticket opens in later lanes, so they get closed too', () => {
       const fullAutoTicket = { ...ticket(14, 'Third thing'), fullAuto: true }
-      const fullAutoEntries = [buildAutoRunLaunch(fullAutoTicket, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoEntries = [buildAutoRunLaunch(fullAutoTicket, inDev, AGENT_WITHOUT_RESUME, {}, true)]
       const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
       expect(fullAutoPrompt).toContain('tab "14-In-Development-Third thing" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"')
     })
@@ -1772,7 +1824,7 @@ describe('Auto Run orchestrator', () => {
     it('gives each lane of one ticket its own tab title, and lists only later lanes as handoff tabs', () => {
       const sameTicket = { number: 14, title: 'Third thing' }
       expect(ticketTabTitle(sameTicket, inDev)).not.toBe(ticketTabTitle(sameTicket, boardLanes[1]))
-      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
+      const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, AGENT_WITHOUT_RESUME, {}, true)]
       const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
       const promptLines = fullAutoPrompt.split('\n')
       const handoffLine = promptLines.find((line) => line.includes('— handoff tabs')) ?? ''
@@ -1786,14 +1838,14 @@ describe('Auto Run orchestrator', () => {
       expect(warp).toContain("pgrep -f -- '--(session-id|resume) <SESSION>'")
       expect(warp).toContain('kill -TERM <pid>')
       expect(warp).toContain("json_extract(agent_run_json, '\\''$.sessionId'\\'')")
-      expect(warp).toContain(`— branch t12-first-thing — session ${entries[0].sessionId}`)
+      expect(warp).toContain(`First thing — session ${entries[0].sessionId} — tab `)
       expect(warp).not.toContain('by hand')
       expect(warp).not.toContain('osascript')
     })
 
-    it('keeps session ids off non-Warp ticket lines and non-UUIDs off Warp ones', () => {
+    it('gives non-Warp ticket lines only the short session suffix and keeps non-UUIDs off Warp ones', () => {
       const ghosttyPrompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
-      expect(ghosttyPrompt).not.toContain('— session ')
+      expect(ghosttyPrompt).not.toContain(`— session ${entries[0].sessionId}`)
       const forged = [{ ...entries[0], sessionId: "x'; rm -rf ~; '" }]
       expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
     })
