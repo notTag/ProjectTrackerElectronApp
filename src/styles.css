@@ -2348,8 +2348,10 @@ span.ticket-image-thumb {
 .ui-demo-panel {
   position: fixed;
   /* Above the sticky titlebar (100) so the panel can't be dragged under its
-     window-drag region and lost; below modal backdrops (200). */
-  z-index: 150;
+     window-drag region and lost, and above modal backdrops (200) so modal
+     knobs can be tuned live over an open modal; below message toasts (300)
+     and page find (1000). */
+  z-index: 250;
   width: 320px;
   border: 1px solid var(--color-border);
   border-radius: 8px;

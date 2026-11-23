@@ -326,7 +326,7 @@ From left to right:
 
 #### UI Demo panel (🎚 UI Demo) — `src/components/UiDemoPanel.vue`, `src/uiDemo.ts`
 
-- The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune.
+- The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first; the 🎚 button sits under a modal's backdrop.
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
 - Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
