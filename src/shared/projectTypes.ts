@@ -573,6 +573,14 @@ export interface TicketPromptContext {
   projectPath?: string
   // The DB the version instruction points at. Evals swap in a throwaway one.
   databasePath?: string
+  // This launch's session and tab, so the agent can name itself to the orchestrator (#124).
+  sessionId?: string
+  tabTitle?: string
+}
+
+const sessionIdentityInstruction = (context: TicketPromptContext): string => {
+  if (!context.sessionId || !context.tabTitle) return ''
+  return `Your session id is ${context.sessionId}; your tab is "${context.tabTitle}". Include both in every message to the orchestrator.`
 }
 
 // Only fields that carry a value become lines, so a bare ticket stays a short
@@ -686,10 +694,12 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const versionSection = lane.agentSetsVersion ? versionInstruction(ticket, context) : ''
   const fullAuto = isFullAuto(ticket, lane) ? FULL_AUTO_INSTRUCTION : ''
   const moveRules = moveRulesInstruction(ticket, context)
+  const sessionIdentity = sessionIdentityInstruction(context)
   const sections = [
     lanePrompt,
     laneFileReference,
     ticketMetadata,
+    sessionIdentity,
     ticketDescription,
     moveRules,
     versionSection,
@@ -935,10 +945,24 @@ export const ticketBranchName = (ticket: Ticket): string => {
 // which is why the number leads.
 const TAB_TITLE_MAX_CODE_POINTS = 40
 
+const TAB_SESSION_SUFFIX_LENGTH = 8
+
 // Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
-// whole at the cut. Only the ticket title is cut: the number-lane prefix is what
-// tells tabs apart.
+// whole at the cut. Only the ticket title is cut: the number-lane prefix and
+// the session suffix are what tell tabs apart. The suffix makes two runs of one
+// ticket in one lane distinguishable, so the orchestrator closes the right one (#124).
 export const ticketTabTitle = (
+  ticket: Pick<Ticket, 'number' | 'title'>,
+  lane: Pick<SwimLane, 'id' | 'name'>,
+  sessionId?: string
+): string => {
+  const baseTitle = ticketTabTitleWithoutSession(ticket, lane)
+  if (!sessionId) return baseTitle
+  const sessionSuffix = sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)
+  return `${baseTitle} · ${sessionSuffix}`
+}
+
+const ticketTabTitleWithoutSession = (
   ticket: Pick<Ticket, 'number' | 'title'>,
   lane: Pick<SwimLane, 'id' | 'name'>
 ): string => {
@@ -990,8 +1014,10 @@ export const buildAutoRunLaunch = (
   const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
   // Fresh per launch: the CLI refuses a session id that is already in use.
   const sessionId = newAgentSessionId(agent)
-  const command = ticketShellCommand(ticketAsRun, lane, agent, context, model, sessionId)
-  const launch = { number: ticket.number, branchName, command, title: ticketTabTitle(ticket, lane) }
+  const title = ticketTabTitle(ticket, lane, sessionId)
+  const contextWithSession = { ...context, sessionId, tabTitle: title }
+  const command = ticketShellCommand(ticketAsRun, lane, agent, contextWithSession, model, sessionId)
+  const launch = { number: ticket.number, branchName, command, title }
   return { ticket, launch, agentId: agent.id, sessionId }
 }
 
@@ -1100,7 +1126,8 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     `Open tab titles in ${context.terminalLabel}:`,
     recipes.listTabs,
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
-    'open new tabs titled with the later lane; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
+    'open new tabs titled with the later lane and a new session id; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
+    'A ticket\'s handoff tabs: every tab_title the ticket query has shown for it other than the one listed above, any handoff tabs listed above, and any tab title its agents report to you. Remember each one.',
     '',
     'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any title more than one open tab matches (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
@@ -1162,7 +1189,7 @@ const renderOrchestratorPrompt = (
   context: OrchestratorPromptContext
 ): string => {
   const ticketSql = [
-    'SELECT number, title, lane_id, branch_name, pull_request_url, description FROM tickets',
+    "SELECT number, title, lane_id, branch_name, pull_request_url, description, json_extract(agent_run_json, '$.tabTitle') AS tab_title FROM tickets",
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
@@ -1212,11 +1239,14 @@ const orchestratorPromptParts = (
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
   const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
-  const ticketLines = entries.map(({ ticket, launch }) => {
+  const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}`
+    const sessionPart = sessionId ? ` — session ${sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)}` : ''
+    const line = `- #${launch.number} ${ticket.title}${sessionPart} — tab "${tabTitle}" — branch ${launch.branchName}`
     const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
-    if (!handsOff) return line
+    // A handoff's session id is picked at handoff, so its title can't be
+    // predicted: the orchestrator learns it from tab_title and agent messages.
+    if (!handsOff || sessionId) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
     const handoffTitles = context.lanes
       .filter(laneHasAgentWork)
