@@ -1050,8 +1050,10 @@ describe('ticketTabTitle', () => {
     const longTitle = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane)
     const longWithSession = ticketTabTitle({ number: 33, title: 'Auto-run should attempt to set a title per new tab created.' }, lane, sessionId)
     expect(longWithSession).toBe(`${longTitle} · 1234abcd`)
-    const emojiAtCut = ticketTabTitle({ number: 1, title: `${'a'.repeat(33)}🚀tail` }, lane)
-    expect(ticketTabTitle({ number: 1, title: `${'a'.repeat(33)}🚀tail` }, lane, sessionId)).toBe(`${emojiAtCut} · 1234abcd`)
+    const emojiTicket = { number: 1, title: `${'a'.repeat(33)}🚀tail` }
+    const emojiAtCut = ticketTabTitle(emojiTicket, lane)
+    const emojiAtCutWithSession = ticketTabTitle(emojiTicket, lane, sessionId)
+    expect(emojiAtCutWithSession).toBe(`${emojiAtCut} · 1234abcd`)
   })
 
   it('keeps the old title without a session id', () => {
@@ -1759,13 +1761,15 @@ describe('Auto Run orchestrator', () => {
       expect(prompt).not.toContain('handoff tabs "')
     })
 
-    // #124: a handoff's session id is picked at handoff, so its tab is learned, not predicted.
-    it('reads handoff tabs from the ticket query instead of predicting them when runs have session ids', () => {
+    // #124: a handoff's session id is picked at handoff, so only its title before " · <id>" is predicted.
+    it('predicts handoff tabs without their session suffix when runs have session ids', () => {
       const fullAutoEntries = [buildAutoRunLaunch({ ...ticket(14, 'Third thing'), fullAuto: true }, inDev, DEFAULT_AGENT, {}, true)]
       const fullAutoPrompt = orchestratorPrompt(inDev, fullAutoEntries, context('ghostty', 'Ghostty'))
-      expect(fullAutoPrompt).not.toContain('handoff tabs "')
-      expect(fullAutoPrompt).toContain("json_extract(agent_run_json, '\\''$.tabTitle'\\'') AS tab_title")
-      expect(fullAutoPrompt).toContain('every tab_title the ticket query has shown for it')
+      const ownTab = fullAutoEntries[0].launch.title
+      expect(fullAutoPrompt).toContain(`tab "${ownTab}" — branch t14-third-thing — handoff tabs "14-Merge-Request-Third thing"`)
+      expect(fullAutoPrompt).not.toContain('"14-In-Development-Third thing"')
+      expect(fullAutoPrompt).toContain('that title followed by " · " and an 8-character session id')
+      expect(fullAutoPrompt).toContain("json_extract(agent_run_json, '\\''$.tabTitle'\\'') AS tab_title, description")
     })
 
     it('lists the tabs a full auto ticket opens in later lanes, so they get closed too', () => {

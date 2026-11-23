@@ -947,6 +947,8 @@ const TAB_TITLE_MAX_CODE_POINTS = 40
 
 const TAB_SESSION_SUFFIX_LENGTH = 8
 
+const tabSessionSuffix = (sessionId: string): string => sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)
+
 // Counting code points rather than UTF-16 units keeps an emoji's surrogate pair
 // whole at the cut. Only the ticket title is cut: the number-lane prefix and
 // the session suffix are what tell tabs apart. The suffix makes two runs of one
@@ -958,8 +960,7 @@ export const ticketTabTitle = (
 ): string => {
   const baseTitle = ticketTabTitleWithoutSession(ticket, lane)
   if (!sessionId) return baseTitle
-  const sessionSuffix = sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)
-  return `${baseTitle} · ${sessionSuffix}`
+  return `${baseTitle} · ${tabSessionSuffix(sessionId)}`
 }
 
 const ticketTabTitleWithoutSession = (
@@ -1127,7 +1128,7 @@ const tabSection = (context: OrchestratorPromptContext): string => {
     recipes.listTabs,
     'A ticket\'s agent is running while a tab with exactly its tab title (listed above) exists. Full auto handoffs',
     'open new tabs titled with the later lane and a new session id; only the title listed above counts. Match the whole title: other projects reuse ticket numbers.',
-    'A ticket\'s handoff tabs: every tab_title the ticket query has shown for it other than the one listed above, any handoff tabs listed above, and any tab title its agents report to you. Remember each one.',
+    'A ticket\'s handoff tabs: open tabs titled with a handoff tab listed above, or that title followed by " · " and an 8-character session id, plus any tab_title the ticket query shows and any tab title its agents report to you. Close each by the exact title the tab list shows.',
     '',
     'Close this lane\'s tab once the ticket has left this lane, and its handoff tabs only once the ticket is done; skip any title more than one open tab matches (replace <TAB> with its tab title, " written as \\" and \' as \'\\\'\'; rerun until it is gone):',
     recipes.closeTab
@@ -1189,7 +1190,7 @@ const renderOrchestratorPrompt = (
   context: OrchestratorPromptContext
 ): string => {
   const ticketSql = [
-    "SELECT number, title, lane_id, branch_name, pull_request_url, description, json_extract(agent_run_json, '$.tabTitle') AS tab_title FROM tickets",
+    "SELECT number, title, lane_id, branch_name, pull_request_url, json_extract(agent_run_json, '$.tabTitle') AS tab_title, description FROM tickets",
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
   const pollMinutes = orchestratorPollMinutes(lane)
@@ -1241,17 +1242,16 @@ const orchestratorPromptParts = (
   const fullAutoLanes = context.lanes.filter((boardLane) => boardLane.fullAuto)
   const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    const sessionPart = sessionId ? ` — session ${sessionId.slice(0, TAB_SESSION_SUFFIX_LENGTH)}` : ''
+    const sessionPart = sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
     const line = `- #${launch.number} ${ticket.title}${sessionPart} — tab "${tabTitle}" — branch ${launch.branchName}`
     const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
-    // A handoff's session id is picked at handoff, so its title can't be
-    // predicted: the orchestrator learns it from tab_title and agent messages.
-    if (!handsOff || sessionId) return line
+    if (!handsOff) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
     const handoffTitles = context.lanes
       .filter(laneHasAgentWork)
       .map((boardLane) => ticketTabTitle(ticket, boardLane))
-      .filter((title) => title !== tabTitle)
+      // A handoff's session id is picked at handoff, so only the part before " · <id>" is predictable (#124).
+      .filter((title) => title !== tabTitle && !tabTitle.startsWith(`${title} · `))
     if (handoffTitles.length === 0) return line
     const quotedHandoffTitles = handoffTitles.map((title) => `"${title}"`).join(', ')
     return `${line} — handoff tabs ${quotedHandoffTitles}`

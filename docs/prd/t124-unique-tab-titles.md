@@ -33,16 +33,16 @@
 	- with session id → `<today's title> · <first 8 chars of sessionId>`
 	- suffix added after the 40-code-point cut, never cut itself
 	- no / empty session id → today's title, byte for byte
-2. `buildAutoRunLaunch` passes its `sessionId` → `launch.title` unique per launch (covers Auto Run, ⌁ Run in, full auto handoff).
+2. `buildAutoRunLaunch` passes its `sessionId` → `launch.title` unique per launch (covers Auto Run, full auto handoff; ⌁ Run in / Open in shell use `ticketShellCommand` directly and keep the plain title).
 3. ⏯ Resume: title = `ticketTabTitle(ticket, ticketLane, run.sessionId)` → resumed tab carries the same suffix as the run it resumes (old tab of that run is dead/finished by definition of Resume).
-4. Liveness fallback (`projects.ts:1172`) passes `run.sessionId` too. Stored `run.tabTitle` still wins.
+4. Liveness: stored `run.tabTitle` wins; the fallback stays suffix-less (only pre-`tabTitle` runs reach it, and their tabs never had a suffix).
 5. Ticket agent prompt: when the launch has a session id, add
 	- `Your session id is <id>; your tab is "<tab title>". Include both in every message to the orchestrator.`
 	- needs the tab title in `TicketPromptContext` (or as an arg) — build it once in `buildAutoRunLaunch`, pass it to `ticketShellCommand`
 6. Orchestrator:
 	- ticket line: `— session <8-char id> — tab "<unique title>"` for the launched run
-	- ticket query adds `json_extract(agent_run_json, '$.tabTitle') AS tab_title` → current run's tab, incl. handoff runs started after launch
-	- handoff tabs: drop the predicted `ticketTabTitle` list; instead "remember every `tab_title` the query has shown for a ticket, plus any tab title an agent reports to you; close those once the ticket is done"
+	- ticket query adds `json_extract(agent_run_json, '$.tabTitle') AS tab_title` (before `description`) → current run's tab, incl. handoff runs started after launch
+	- handoff tabs: keep the predicted `ticketTabTitle` list (suffix-less); orchestrator matches open tabs titled with it or it + ` · <8-char id>`, plus observed `tab_title`s and agent-reported titles. Predicting survives lane prompt overrides (no `tab_title` in their SQL) and handoffs that start and finish between two polls
 	- keep "more than one open tab matches → don't close" (now only hit by pre-change tabs)
 7. No session id path (agents without resume support) → behaviour identical to today, incl. predicted handoff titles fallback when the run has no stored `tabTitle`.
 
@@ -51,7 +51,7 @@
 - Title ends with ` · <8-char session prefix>`; ticket title part still cut at 40 code points; `<N>-<Lane>` prefix unchanged.
 - Launches without a session id keep today's title.
 - Ticket agent prompt states session id + tab title and asks to include them in orchestrator messages.
-- Orchestrator prompt lists each ticket's session id + unique tab title; ticket query returns `tab_title`; handoff tabs closed by observed/reported titles.
+- Orchestrator prompt lists each ticket's session id + unique tab title; ticket query returns `tab_title`; handoff tabs matched by predicted prefix + observed/reported titles.
 - `runsToInterrupt` gets liveness for the unique stored title → old duplicate tab no longer keeps a new run "running".
 - Manual (Ghostty): two runs of one ticket+lane open → orchestrator closes the finished one, fresh one stays.
 
