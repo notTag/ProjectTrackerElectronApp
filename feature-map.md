@@ -497,7 +497,7 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.11 Auto Run (▶ on a lane)
 
 - Opens **one new terminal window with one tab per visible ticket** in the lane. Active filters decide which tickets count.
-- Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind.
+- Each tab `cd`s into the project and runs that ticket's agent command, then leaves an open shell behind — except in Warp, where the command is `<agent>; exit`, so the tab closes when its agent ends (#123).
 - Tab titles are `<N>-<Lane>-<title>` (`ticketTabTitle`), e.g. `99-Merge-Request-Fix the thing`, the same for ⌁ Run in, Open in shell and Resume. The lane is the display name, dashed (`laneTitleToken`); No status reads `Unassigned`. Only the title part is cut, to 40 code points + `…`.
 - Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given.
 - Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
@@ -510,6 +510,8 @@ In graph view this opens as a side panel instead of a centered modal.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
   - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).
+  - In Warp (no tab scripting) it finds each agent by its `--session-id`/`--resume` UUID with `pgrep -f` and closes the tab with `kill -TERM <pid>`; a session id matching more than one pid is skipped. Handoff session ids come from `agent_run_json.sessionId` (#123).
+  - It exits only when nothing needs the user; otherwise it stays running with open questions on screen, since in Warp exiting closes its tab.
   - Full auto ticket agents finish in a fixed order: move the ticket, print the final footer, then message the orchestrator (if one is watching) as the very last action.
 - A second click on the lane does nothing until the first launch has finished.
 
