@@ -126,6 +126,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
             :value="uiDemoValues[control.key]"
             @input="setRange(control, $event)"
           />
+          <!-- Esc commits here, before the board's window handler unmounts the panel;
+               the blur that follows doesn't fire change. -->
           <input
             type="number"
             :min="control.min"
@@ -133,6 +135,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
             :value="uiDemoValues[control.key]"
             :aria-label="`${control.label} value`"
             @change="commitNumber(control, $event)"
+            @keydown.esc="commitNumber(control, $event)"
           />
         </template>
         <select v-else :value="uiDemoValues[control.key]" @change="setChoice(control, $event)">
