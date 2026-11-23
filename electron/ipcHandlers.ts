@@ -510,7 +510,11 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const orchestratorTabs = orchestratorLaunch ? [orchestratorLaunch] : []
 
       if (useWorktrees !== true) {
-        const ticketTabs = tickets.map((ticket) => ({ command: ticket.command, title: usableTabTitle(ticket.title) }))
+        const ticketTabs = tickets.map((ticket) => ({
+          command: ticket.command,
+          title: usableTabTitle(ticket.title),
+          exitWithCommand: true
+        }))
         await runCommands(normalized, [...ticketTabs, ...orchestratorTabs])
         return { worktreePaths: [] }
       }
@@ -526,7 +530,8 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       }
       const tabsInWorktrees = tickets.map((ticket, index) => ({
         command: `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`,
-        title: usableTabTitle(ticket.title)
+        title: usableTabTitle(ticket.title),
+        exitWithCommand: true
       }))
       await runCommands(normalized, [...tabsInWorktrees, ...orchestratorTabs])
       return { worktreePaths }

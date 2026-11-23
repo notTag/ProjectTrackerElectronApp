@@ -48,6 +48,7 @@ const yamlDoubleQuoted = (value: string) => JSON.stringify(value)
 // A tab's `title` sits beside its `layout`, so a titled tab opens its list
 // entry with the title instead.
 const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
+  const command = tab.exitWithCommand ? `${tab.command}; exit` : tab.command
   const tabHeader = tab.title
     ? [`      - title: ${yamlDoubleQuoted(tab.title)}`, '        layout:']
     : ['      - layout:']
@@ -55,7 +56,7 @@ const warpTabYaml = (projectPath: string, tab: TerminalTab) => {
     ...tabHeader,
     `          cwd: ${yamlDoubleQuoted(projectPath)}`,
     '          commands:',
-    `            - exec: ${yamlDoubleQuoted(tab.command)}`
+    `            - exec: ${yamlDoubleQuoted(command)}`
   ]
 }
 

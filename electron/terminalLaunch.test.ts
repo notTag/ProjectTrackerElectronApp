@@ -56,6 +56,17 @@ describe('warpLaunchConfigYaml', () => {
     expect(yaml.split('\n').filter((line) => line.includes('- layout:'))).toHaveLength(2)
     expect(yaml).toContain('- exec: "codex two"')
   })
+
+  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close its tab.
+  it('ends a ticket tab with its agent, and leaves the orchestrator tab open', () => {
+    const ticketTab = { command: 'claude hello', title: '12-In-Dev', exitWithCommand: true }
+    const orchestrator = { command: 'claude watch', title: 'AUTORUN-ORCHESTRATOR-IN-DEV' }
+    const execLines = warpLaunchConfigYaml('/tmp/project', [ticketTab, orchestrator])
+      .split('\n')
+      .filter((line) => line.includes('- exec: '))
+    expect(execLines[0]).toContain('- exec: "claude hello; exit"')
+    expect(execLines[1]).toContain('- exec: "claude watch"')
+  })
 })
 
 describe('terminalOsascriptArgs', () => {

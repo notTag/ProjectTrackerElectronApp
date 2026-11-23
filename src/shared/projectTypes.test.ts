@@ -1694,7 +1694,7 @@ describe('Auto Run orchestrator', () => {
 
     it('follows the launch terminal in an edited prompt', () => {
       const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
-      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('Warp cannot be queried')
+      expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('kill -TERM <pid>')
     })
 
     it('does not expand a token that appears inside a ticket title', () => {
@@ -1781,11 +1781,21 @@ describe('Auto Run orchestrator', () => {
       expect(handoffTitles).not.toContain('14-In-Development-Third thing')
     })
 
-    it('tells the user to close Warp tabs by hand', () => {
+    it('watches and closes Warp tabs through their agent session id', () => {
       const warp = orchestratorPrompt(inDev, entries, context('warp', 'Warp'))
-      expect(warp).toContain('Warp cannot be queried')
-      expect(warp).toContain('close its tab by hand')
+      expect(warp).toContain("pgrep -f -- '--(session-id|resume) <SESSION>'")
+      expect(warp).toContain('kill -TERM <pid>')
+      expect(warp).toContain("json_extract(agent_run_json, '\\''$.sessionId'\\'')")
+      expect(warp).toContain(`— branch t12-first-thing — session ${entries[0].sessionId}`)
+      expect(warp).not.toContain('by hand')
       expect(warp).not.toContain('osascript')
+    })
+
+    it('keeps session ids off non-Warp ticket lines and non-UUIDs off Warp ones', () => {
+      const ghosttyPrompt = orchestratorPrompt(inDev, entries, context('ghostty', 'Ghostty'))
+      expect(ghosttyPrompt).not.toContain('— session ')
+      const forged = [{ ...entries[0], sessionId: "x'; rm -rf ~; '" }]
+      expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
     })
 
     it("appends the lane's orchestrator prompt after the generated rules", () => {
