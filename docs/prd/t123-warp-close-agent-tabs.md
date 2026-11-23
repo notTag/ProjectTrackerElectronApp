@@ -19,14 +19,15 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 	- `; exit`, not `&& exit`: SIGTERM exits nonzero (143), and `&&` would leave the tab open
 	- not `exec <cmd>`: resume commands start with `cd … &&`, `exec` can't prefix those
 	- Trade-off accepted: an agent that crashes at once takes its tab with it. The orchestrator already reports "tab gone while still in this lane" as Needs you, and the run is resumable
-- D2. Only orchestrator-watched ticket tabs get `; exit` (Auto Run tabs + full auto handoff tabs). The orchestrator tab does not: its prompt says "Leave your own tab open" and its final summary must stay on screen. Manual single-ticket terminal opens are unchanged
+- D2. Every ticket agent tab gets `; exit` (Auto Run tabs, full auto handoff tabs, manual single-ticket opens via `openProjectIn`). The orchestrator tab does not: its prompt says "Leave your own tab open" and its final summary must stay on screen
+	- Live V1 (user): a tab launched without `; exit` stays open after its agent is killed → `; exit` is required on every agent launch
 	- Mechanism: optional `exitWithCommand?: boolean` on `TerminalTab`. `warpTabYaml` appends `; exit` when set. Other launchers ignore it → non-Warp output unchanged
 - D3. Close = end the agent process: `kill -TERM <pid>`. The agent exits, `; exit` runs, Warp closes the tab
 - D4. Liveness = the process exists. Replaces "report every agent as unknown"
 - D5. Rejected: System Events ⌘W on Warp. It only hits the front tab, steals focus, needs Accessibility, and can't target a tab by title
 
 ## Requirements
-- R1. `TerminalTab` (`projectTypes.ts:956`) adds `exitWithCommand?: boolean`. Auto Run ticket launches and full auto handoff launches set it. The orchestrator tab never does
+- R1. `TerminalTab` (`projectTypes.ts:956`) adds `exitWithCommand?: boolean`. Auto Run ticket launches, full auto handoff launches and manual ticket opens set it. The orchestrator tab never does
 - R2. `warpTabYaml`: `exec` = `` `${tab.command}; exit` `` when `exitWithCommand`, else unchanged
 - R3. Orchestrator `{{tickets}}` line: Warp only, append ` — session <uuid>` from the launch entry's `sessionId` (`orchestratorPromptParts`, `projectTypes.ts:1215`). Non-Warp lines unchanged (snapshots)
 - R4. `tabSection` Warp recipe (new `TERMINAL_TAB_RECIPES.warp` entry, or a Warp branch; the comment at `:1051` is updated either way):

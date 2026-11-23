@@ -48,7 +48,7 @@ export const openProjectIn = async (payload: unknown, dependencies: OpenInDepend
     if (ticketCommand && runCommand) {
       // A bad title is dropped, never rejected: it must not block the command.
       const tabTitle = usableTabTitle(title)
-      await runCommand(normalized, [{ command: ticketCommand, title: tabTitle }])
+      await runCommand(normalized, [{ command: ticketCommand, title: tabTitle, exitWithCommand: true }])
       return { ok: true, appLabel: target.label, ranCommand: ticketCommand }
     }
     await dependencies.openFolder(target.appName, normalized)
