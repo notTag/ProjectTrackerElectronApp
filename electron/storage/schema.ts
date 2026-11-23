@@ -5,8 +5,6 @@
 export const SCHEMA_VERSION = 6
 // First version with closing lanes; opening an older file seeds and backfills them once.
 export const CLOSING_LANES_SCHEMA_VERSION = 5
-// First version with lanes that wait for PR merge; older files seed in-pr once.
-export const WAITING_LANES_SCHEMA_VERSION = 6
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -71,6 +69,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   -- it is flagged here rather than living in the ordered lane list.
   is_unassigned INTEGER NOT NULL DEFAULT 0,
   agent_sets_version INTEGER NOT NULL DEFAULT 0,
+  -- Dormant since #127: no longer read or written; kept because migrations are additive only.
   waits_for_pull_request_merge INTEGER NOT NULL DEFAULT 0,
   orchestrator_poll_minutes INTEGER NOT NULL DEFAULT 2,
   orchestrator_poll_active INTEGER NOT NULL DEFAULT 1,

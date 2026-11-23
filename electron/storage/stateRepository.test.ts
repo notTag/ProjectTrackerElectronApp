@@ -1098,29 +1098,24 @@ describe('closed_at triggers (#27)', () => {
     cli.close()
   })
 
-  it('upgrading an older file seeds the waiting lane once, and the flag round-trips', () => {
+  it('leaves the retired waits_for_pull_request_merge column dormant', () => {
     const { userDataPath, projectPath, cli } = setUp()
     cli
       .prepare(
-        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position) VALUES ('in-pr', ?, 'In PR', '', '', 98)`
+        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, waits_for_pull_request_merge) VALUES ('in-pr', ?, 'In PR', '', '', 98, 0), ('legacy', ?, 'Legacy', '', '', 99, 1)`
       )
-      .run(projectPath)
+      .run(projectPath, projectPath)
     cli.exec('UPDATE schema_meta SET version = 5')
-
-    new StateRepository(userDataPath)
-    const seeded = cli.prepare('SELECT id FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all().map((row) => row.id)
-    expect(seeded).toEqual(['in-pr'])
 
     const repository = new StateRepository(userDataPath)
     const inPr = repository.getState().boards![projectPath].lanes.find((entry) => entry.id === 'in-pr')
-    expect(inPr?.waitsForPullRequestMerge).toBe(true)
-    repository.updateSwimLane(projectPath, 'in-dev', { waitsForPullRequestMerge: true })
-    repository.updateSwimLane(projectPath, 'in-pr', { waitsForPullRequestMerge: false })
+    expect(inPr).toBeDefined()
+    expect(inPr).not.toHaveProperty('waitsForPullRequestMerge')
+    repository.updateSwimLane(projectPath, 'legacy', { name: 'Old Merge Request' })
 
-    // Already at the current version: the user's choices survive a reopen.
-    const reopened = reopenedBoard(userDataPath, projectPath).lanes
-    expect(reopened.find((entry) => entry.id === 'in-dev')?.waitsForPullRequestMerge).toBe(true)
-    expect(reopened.find((entry) => entry.id === 'in-pr')?.waitsForPullRequestMerge).toBe(false)
+    // in-pr staying 0 proves the old seed is gone; legacy staying 1 proves updates leave the column alone.
+    const flags = cli.prepare('SELECT id, waits_for_pull_request_merge AS flag FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all()
+    expect(flags).toEqual([{ id: 'legacy', flag: 1 }])
     cli.close()
   })
 
