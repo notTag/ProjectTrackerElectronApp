@@ -1,6 +1,6 @@
 # PRD — #130 UI Demo title ⓘ "auto-saves" note
 
-Branch `t130-add-a-save` · Worktree `~/Code/Projects/ProjectTracker/electron-app/.worktrees/t130`
+Branch `t130-add-a-save`
 
 ## Problem
 Original ask (t126 follow-up): a Save button on the 🎚 UI Demo panel. Dropped, because the panel already saves every change: the deep `watch(uiDemoValues)` calls `applyUiDemo()` + `saveUiDemo()`, and the position saves on drag end (`endDrag`). The real gap is that users don't know it auto-saves. Fix: add an ⓘ note on the title.
@@ -16,7 +16,7 @@ Original ask (t126 follow-up): a Save button on the 🎚 UI Demo panel. Dropped,
     <InfoTip text="Changes save automatically as you edit, on this machine only. Reset restores the defaults." />
   </span>
   ```
-- Leave `startDrag` alone: `closest('button')` already skips the ⓘ button
+- `startDrag`: skip `closest('button, .info-tip')` so pressing ⓘ or its bubble text never starts a drag
 
 ### 2. `src/styles.css`: two gotchas found while checking the code
 - **Button style bleed.** `.ui-demo-titlebar button { min-height: 28px; padding: 0 10px; }` (l.2371) has specificity 0,1,1 and beats `.info-tip-button` (0,1,0). Without a fix, ⓘ becomes a 28px-tall padded button. Fix: narrow the selector to the ✕ only, e.g. `.ui-demo-titlebar > button`. The ✕ is a direct child of the header; ⓘ sits inside spans
@@ -26,7 +26,7 @@ Original ask (t126 follow-up): a Save button on the 🎚 UI Demo panel. Dropped,
   .ui-demo-titlebar .info-tip { position: static; }  /* bubble anchors to titlebar */
   ```
   The bubble then starts at the panel's left edge, just below the titlebar. 280px is less than 320px, so it fits. Its z-index of 10 inside the panel puts it above the body rows, which aren't positioned
-- Optional nit: the bubble inherits `cursor: move`, and pressing on the bubble text starts a drag because the bubble isn't a button. Fine to leave. If wanted: `closest('button, .info-tip')` in `startDrag`
+- `.ui-demo-titlebar .info-tip { cursor: default; }`: the bubble would otherwise inherit the titlebar's `cursor: move`
 
 ### 3. `feature-map.md`, UI Demo panel section (l.327–336)
 - Add to the Reset/localStorage bullet (l.336): "An ⓘ next to the title says this: changes save automatically, this machine only."
@@ -48,7 +48,7 @@ Original ask (t126 follow-up): a Save button on the 🎚 UI Demo panel. Dropped,
 
 ## Tests
 - If `UiDemoPanel` has a component test, add one assertion: the titlebar renders an `.info-tip` with the note text. Escape and hover behavior are already covered by InfoTip's own tests (#102). Don't duplicate them
-- Manual check in the running app (see the run-app-before-merge memory): hover, Tab to focus + Escape twice, drag from the title and from ⓘ, panel at the right edge
+- Manual check in the running app: hover, Tab to focus + Escape twice, drag from the title and from ⓘ, panel at the right edge
 
 ## Out of scope
 - Save button or explicit-commit save mode
