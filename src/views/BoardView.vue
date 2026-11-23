@@ -11,6 +11,8 @@ import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
+import UiDemoPanel from '@/components/UiDemoPanel.vue'
+import { uiDemoPanelOpen } from '@/uiDemo'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -714,6 +716,11 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   }
   if (laneFilterMenuOpen.value) {
     laneFilterMenuOpen.value = false
+    event.preventDefault()
+    return
+  }
+  if (uiDemoPanelOpen.value) {
+    uiDemoPanelOpen.value = false
     event.preventDefault()
     return
   }
@@ -1556,8 +1563,13 @@ const runTicketAgent = (ticket: Ticket) => {
       <button class="secondary" title="Choose what ticket cards show" @click="boardSettingsOpen = true">
         ⚙ Display
       </button>
+      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="uiDemoPanelOpen = !uiDemoPanelOpen">
+        🎚 UI Demo
+      </button>
     </div>
   </header>
+
+  <UiDemoPanel v-if="uiDemoPanelOpen" />
 
   <main class="app-shell board-shell">
     <MessageBanners />
