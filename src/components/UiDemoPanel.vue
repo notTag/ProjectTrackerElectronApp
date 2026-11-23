@@ -13,6 +13,8 @@ import {
   type UiDemoControl
 } from '@/uiDemo'
 
+import InfoTip from './InfoTip.vue'
+
 const DEFAULT_OFFSET_FROM_EDGE = 24
 const panel = ref<HTMLElement | null>(null)
 
@@ -47,10 +49,10 @@ const keepInViewport = () => {
 let dragOffset: { x: number; y: number } | null = null
 
 const startDrag = (event: PointerEvent) => {
-  // Buttons in the title bar (✕) keep their own click.
+  // Title bar buttons (✕) keep their own click; the ⓘ tip (button + bubble) isn't a drag handle.
   const isPrimaryButton = event.button === 0
   if (!isPrimaryButton) return
-  if ((event.target as HTMLElement).closest('button')) return
+  if ((event.target as HTMLElement).closest('button, .info-tip')) return
   const position = uiDemoPanelPosition.value ?? { x: 0, y: 0 }
   dragOffset = { x: event.clientX - position.x, y: event.clientY - position.y }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -110,7 +112,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
       @pointerup="endDrag"
       @pointercancel="endDrag"
     >
-      <strong>🎚 UI Demo</strong>
+      <span class="label-with-tip">
+        <strong>🎚 UI Demo</strong>
+        <InfoTip text="Changes save automatically as you edit, on this machine only. Reset restores the defaults." />
+      </span>
       <button class="secondary" title="Close (Esc)" aria-label="Close UI Demo" @click="uiDemoPanelOpen = false">
         ✕
       </button>

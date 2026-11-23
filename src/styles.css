@@ -2358,6 +2358,7 @@ span.ticket-image-thumb {
 }
 
 .ui-demo-titlebar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2368,7 +2369,14 @@ span.ticket-image-thumb {
   touch-action: none;
 }
 
-.ui-demo-titlebar button {
+/* Static so the bubble anchors to the titlebar's left edge and fits the 320px panel. */
+.ui-demo-titlebar .info-tip {
+  position: static;
+  cursor: default;
+}
+
+/* Direct child only: the ✕. A descendant selector would bleed onto the ⓘ button. */
+.ui-demo-titlebar > button {
   min-height: 28px;
   padding: 0 10px;
 }

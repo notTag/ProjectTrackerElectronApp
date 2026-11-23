@@ -333,7 +333,7 @@ From left to right:
   - Opacity 0–100%: modals, swimlanes, ticket cards. Fades the background only, text stays solid.
   - Card text justify (left / center / right) and card content align (top / middle / bottom).
 - Each knob writes one `--ui-*` CSS variable on `:root`; `styles.css` falls back to the original values, so defaults look unchanged in every theme. Button and modal radius also reach the Dashboard, since those styles are shared.
-- **Reset** restores every default. Values and panel position are saved to `localStorage` key `project-tracker-ui-demo` (this machine only, not the DB) and applied before the app first paints.
+- **Reset** restores every default. Values and panel position are saved to `localStorage` key `project-tracker-ui-demo` (this machine only, not the DB) and applied before the app first paints. An ⓘ next to the title says this: changes save automatically, this machine only.
 
 ### 3.6 New ticket modal
 
