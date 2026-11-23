@@ -312,15 +312,18 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     for (const fileName of readdirSync(configDirectory)) {
       if (!fileName.startsWith(WARP_TAB_CONFIG_PREFIX) || !fileName.endsWith('.toml')) continue
       const filePath = path.join(configDirectory, fileName)
-      const modifiedAt = statSync(filePath, { throwIfNoEntry: false })?.mtimeMs ?? Infinity
-      if (modifiedAt < staleBefore) rmSync(filePath, { force: true })
+      const fileStats = statSync(filePath, { throwIfNoEntry: false })
+      if (fileStats && fileStats.mtimeMs < staleBefore) rmSync(filePath, { force: true })
     }
     for (const tab of tabs) {
-      const stem = WARP_TAB_CONFIG_PREFIX + randomUUID().replaceAll('-', '_')
+      const uniqueId = randomUUID().replaceAll('-', '_')
+      const stem = WARP_TAB_CONFIG_PREFIX + uniqueId
       const configPath = path.join(configDirectory, `${stem}.toml`)
       writeFileSync(configPath, warpTabConfigToml(projectPath, tab), 'utf8')
-      setTimeout(() => rmSync(configPath, { force: true }), WARP_TAB_CONFIG_LIFETIME_MS).unref()
       await openUri(`warp://tab_config/${stem}`)
+      // Started once `open` returns, so a slow hand-off can't delete the file
+      // before Warp reads it. A failed open leaves it for the next sweep.
+      setTimeout(() => rmSync(configPath, { force: true }), WARP_TAB_CONFIG_LIFETIME_MS).unref()
     }
   }
 

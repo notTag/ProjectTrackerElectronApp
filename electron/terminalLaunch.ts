@@ -43,12 +43,18 @@ export const orchestratorTab = (value: unknown): TerminalTab | undefined => {
 
 // JSON's string syntax is a subset of a TOML basic string, so this carries the
 // newlines and quotes of a ticket prompt through intact without pulling in a
-// TOML serializer for four fields. A lone surrogate is the one exception: JSON
-// escapes it (\ud800) but TOML rejects it, so it becomes U+FFFD first.
+// TOML serializer for four fields. Two exceptions: a lone surrogate, which JSON
+// escapes (\ud800) but TOML rejects, becomes U+FFFD first; and DEL, which JSON
+// leaves raw but TOML requires escaped, is escaped after.
 // ponytail: regex rather than String.prototype.toWellFormed, which is ES2024
 // and outside this build's ES2022 lib.
 const LONE_SURROGATE = /\p{Surrogate}/gu
-const doubleQuotedString = (value: string) => JSON.stringify(value.replace(LONE_SURROGATE, '\uFFFD'))
+const RAW_DELETE = /\x7f/g
+const doubleQuotedString = (value: string) => {
+  const wellFormed = value.replace(LONE_SURROGATE, '\uFFFD')
+  const jsonString = JSON.stringify(wellFormed)
+  return jsonString.replace(RAW_DELETE, '\\u007f')
+}
 
 // One Tab Config per tab: warp://tab_config/<stem> opens a single tab, in the
 // focused Warp window when there is one.

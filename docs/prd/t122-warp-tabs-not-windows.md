@@ -38,10 +38,10 @@
 	directory = "<projectPath>"
 	commands = ["<tab.command>"]
 	```
-- Rename `yamlDoubleQuoted` → `doubleQuotedString`: `JSON.stringify(value.toWellFormed())`
+- Rename `yamlDoubleQuoted` → `doubleQuotedString`: `JSON.stringify` with two fix-ups
 	- JSON string ⊂ TOML basic string (`\"`, `\\`, `\n`, `\uXXXX` all valid TOML)
-	- `.toWellFormed()` first: lone surrogate is a valid JSON escape (`\ud800`) but invalid TOML
-	- check `toWellFormed` is in the TS `lib` target; if not, bump lib or replace lone surrogates with `�` by regex
+	- before: lone surrogates → `U+FFFD` by `\p{Surrogate}` regex — valid JSON escape (`\ud800`) but invalid TOML; `toWellFormed` is ES2024, outside the ES2022 lib
+	- after: raw DEL (`U+007F`) → `\u007f` — JSON leaves it raw, TOML requires it escaped
 - `WARP_LAUNCH_CONFIG_NAME` → `WARP_TAB_CONFIG_PREFIX = 'project_tracker_ticket_'`
 - Header comment: Warp reads a Tab Config file per tab
 

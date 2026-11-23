@@ -44,13 +44,20 @@ describe('warpTabConfigToml', () => {
   })
 
   it('keeps a prompt containing quotes, newlines and backslashes intact', () => {
-    expect(commandValue(warpTabConfigToml('/tmp/project', { command: AWKWARD_COMMAND }))).toBe(AWKWARD_COMMAND)
+    const toml = warpTabConfigToml('/tmp/project', { command: AWKWARD_COMMAND })
+    expect(commandValue(toml)).toBe(AWKWARD_COMMAND)
   })
 
   it('emits a multi-line command on a single line', () => {
     const toml = warpTabConfigToml('/tmp/project', { command: 'claude one\ntwo' })
     expect(toml.split('\n').filter((line) => line.startsWith('commands = '))).toHaveLength(1)
     expect(commandValue(toml)).toBe('claude one\ntwo')
+  })
+
+  it('escapes DEL, which JSON leaves raw but TOML forbids', () => {
+    const toml = warpTabConfigToml('/tmp/project', { command: 'claude a\x7fb' })
+    expect(toml).not.toContain('\x7f')
+    expect(commandValue(toml)).toBe('claude a\x7fb')
   })
 
   it('replaces a lone surrogate, which TOML rejects, and keeps paired ones', () => {
