@@ -971,7 +971,6 @@ export const useProjectsStore = defineStore('projects', {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
-      this.notice = null
       // Recorded before any tab opens, so a session that dies straight away
       // still leaves its id behind to resume from.
       const startedAt = new Date().toISOString()
@@ -1038,6 +1037,8 @@ export const useProjectsStore = defineStore('projects', {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.error = message
+        // An earlier lane's success line would read as this lane's result.
+        this.notice = null
         // No tab ever ran, so there is no session to resume.
         const at = new Date().toISOString()
         await this.updateBoard(path, (board) => ({
