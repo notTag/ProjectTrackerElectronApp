@@ -16,7 +16,8 @@
     "set-version": "node --disable-warning=ExperimentalWarning scripts/set-ticket-version.mjs",
     "start:prod": "node scripts/open-packaged-app.mjs",
     "start:dev": "electron .",
-    "web": "vite build --mode web && tsc -p tsconfig.electron.json && node out/main/electron/web/server.js"
+    "web": "vite build --mode web && tsc -p tsconfig.electron.json && node out/main/electron/web/server.js",
+    "scale-test": "node scripts/scale-test.mjs"
   },
   "dependencies": {
     "@nick_tag_tech/themes": "^0.1.2",
