@@ -1102,19 +1102,20 @@ describe('closed_at triggers (#27)', () => {
     const { userDataPath, projectPath, cli } = setUp()
     cli
       .prepare(
-        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, waits_for_pull_request_merge) VALUES ('in-pr', ?, 'In PR', '', '', 98, 1)`
+        `INSERT INTO swim_lanes (id, project_path, name, agent_prompt, agent_file_path, position, waits_for_pull_request_merge) VALUES ('in-pr', ?, 'In PR', '', '', 98, 0), ('legacy', ?, 'Legacy', '', '', 99, 1)`
       )
-      .run(projectPath)
+      .run(projectPath, projectPath)
     cli.exec('UPDATE schema_meta SET version = 5')
 
     const repository = new StateRepository(userDataPath)
     const inPr = repository.getState().boards![projectPath].lanes.find((entry) => entry.id === 'in-pr')
     expect(inPr).toBeDefined()
     expect(inPr).not.toHaveProperty('waitsForPullRequestMerge')
-    repository.updateSwimLane(projectPath, 'in-pr', { name: 'Merge Request' })
+    repository.updateSwimLane(projectPath, 'legacy', { name: 'Old Merge Request' })
 
+    // in-pr staying 0 proves the old seed is gone; legacy staying 1 proves updates leave the column alone.
     const flags = cli.prepare('SELECT id, waits_for_pull_request_merge AS flag FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all()
-    expect(flags).toEqual([{ id: 'in-pr', flag: 1 }])
+    expect(flags).toEqual([{ id: 'legacy', flag: 1 }])
     cli.close()
   })
 

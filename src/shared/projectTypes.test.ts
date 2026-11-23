@@ -1325,9 +1325,12 @@ describe('full auto', () => {
     })
 
     it('ignores PR state: completion alone moves an armed ticket', () => {
-      const open = { pullRequestState: 'open' as const }
-      expect(movesBetween(armed(open), completed(open)).moves).toHaveLength(1)
-      expect(movesBetween(armed(open), armed({ pullRequestState: 'merged' })).moves).toEqual([])
+      const openInPr = { pullRequestState: 'open' as const, laneId: 'in-pr' }
+      const inPrBoard = (entry: Ticket): ProjectBoard => ({ lanes: [lane('in-pr'), lane('dev')], tickets: [entry] })
+      const completedMoves = completionMoves(inPrBoard(armed(openInPr)), inPrBoard(completed(openInPr)), [])
+      expect(completedMoves.moves).toHaveLength(1)
+      const mergedOnlyMoves = completionMoves(inPrBoard(armed(openInPr)), inPrBoard(armed({ ...openInPr, pullRequestState: 'merged' })), [])
+      expect(mergedOnlyMoves.moves).toEqual([])
     })
 
     it('returns the next board itself when nothing completed', () => {
