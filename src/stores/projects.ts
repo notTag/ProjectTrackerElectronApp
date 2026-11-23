@@ -1165,6 +1165,7 @@ export const useProjectsStore = defineStore('projects', {
       const livenessByTicketId: Record<string, TabLiveness> = {}
       for (const [terminalId, tickets] of ticketsByTerminal) {
         // The title the tab opened with: a ticket renamed since would match nothing.
+        // Only runs from before tabTitle was stored fall back, and their tabs never had a session suffix.
         const titles = tickets.map((ticket) => {
           const run = ticket.agentRun
           if (run?.tabTitle) return run.tabTitle
@@ -1229,7 +1230,7 @@ export const useProjectsStore = defineStore('projects', {
         const command = agentResumeCommand(agent, run, RESUME_PROMPT)
         const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
         const ticketLane = currentLaneOf(getBoard(this.state, projectPath), ticket)
-        const tabTitle = ticketTabTitle(ticket, ticketLane)
+        const tabTitle = ticketTabTitle(ticket, ticketLane, run.sessionId)
         const ranInTab = await this.openIn(projectPath, terminal.id, command, tabTitle)
         if (!ranInTab) return
         const startedAt = new Date().toISOString()
