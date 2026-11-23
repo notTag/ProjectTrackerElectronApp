@@ -19,6 +19,9 @@ import {
   RESUME_PROMPT,
   runningAgentRuns,
   runsToInterrupt,
+  splitRunnable,
+  skippedRunsNotice,
+  joinNotices,
   ticketTabTitle,
   type AgentRetryEvent,
   type AutoRunLaunchEntry,
@@ -632,12 +635,23 @@ export const useProjectsStore = defineStore('projects', {
       const agents = availableAgents(this.state)
       const pickerTargetId = useOpenInStore().selectedId
       for (const { projectPath, handoffs } of projectHandoffs) {
-        for (const laneHandoffs of groupByLaunch(handoffs)) {
-          const toLane = laneHandoffs[0].toLane
+        for (const groupedHandoffs of groupByLaunch(handoffs)) {
+          const toLane = groupedHandoffs[0].toLane
+          const groupTickets = groupedHandoffs.map(({ ticket }) => ticket)
+          const { skipped } = splitRunnable(groupTickets, toLane.id)
+          const skippedIds = new Set(skipped.map((ticket) => ticket.id))
+          // Dropped, not deferred: the running agent owns the ticket.
+          const laneHandoffs = groupedHandoffs.filter(({ ticket }) => !skippedIds.has(ticket.id))
+          const skippedNotice = skippedRunsNotice(skipped, toLane.name)
+          if (laneHandoffs.length === 0) {
+            this.notice = skippedNotice
+            continue
+          }
           const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
           if (this.autoRunning[autoRunKey(projectPath, toLane.id)]) {
             deferHandoffs(projectPath, laneHandoffs)
-            this.notice = `Full auto queued ${ticketNumbers}: ${toLane.name} Auto Run already running`
+            const queuedNotice = `Full auto queued ${ticketNumbers}: ${toLane.name} Auto Run already running`
+            this.notice = joinNotices(queuedNotice, skippedNotice)
             continue
           }
           const agent = findAgent(agents, toLane.autoRunAgentId)
@@ -648,7 +662,7 @@ export const useProjectsStore = defineStore('projects', {
           )
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
-            if (launched) this.notice = `Full auto: ${ticketNumbers} → ${toLane.name}`
+            if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
           })
         }
       }
@@ -971,7 +985,6 @@ export const useProjectsStore = defineStore('projects', {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
       this.autoRunning[runKey] = true
-      this.notice = null
       // Recorded before any tab opens, so a session that dies straight away
       // still leaves its id behind to resume from.
       const startedAt = new Date().toISOString()
@@ -1038,6 +1051,8 @@ export const useProjectsStore = defineStore('projects', {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.error = message
+        // An earlier lane's success line would read as this lane's result.
+        this.notice = null
         // No tab ever ran, so there is no session to resume.
         const at = new Date().toISOString()
         await this.updateBoard(path, (board) => ({
@@ -1164,6 +1179,7 @@ export const useProjectsStore = defineStore('projects', {
       const livenessByTicketId: Record<string, TabLiveness> = {}
       for (const [terminalId, tickets] of ticketsByTerminal) {
         // The title the tab opened with: a ticket renamed since would match nothing.
+        // Only runs from before tabTitle was stored fall back, and their tabs never had a session suffix.
         const titles = tickets.map((ticket) => {
           const run = ticket.agentRun
           if (run?.tabTitle) return run.tabTitle
@@ -1228,7 +1244,7 @@ export const useProjectsStore = defineStore('projects', {
         const command = agentResumeCommand(agent, run, RESUME_PROMPT)
         const terminal = resolveAutoRunTerminal(run.terminalId, useOpenInStore().selectedId)
         const ticketLane = currentLaneOf(getBoard(this.state, projectPath), ticket)
-        const tabTitle = ticketTabTitle(ticket, ticketLane)
+        const tabTitle = ticketTabTitle(ticket, ticketLane, run.sessionId)
         const ranInTab = await this.openIn(projectPath, terminal.id, command, tabTitle)
         if (!ranInTab) return
         const startedAt = new Date().toISOString()
