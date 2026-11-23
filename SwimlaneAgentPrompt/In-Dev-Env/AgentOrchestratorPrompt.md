@@ -29,7 +29,7 @@ Release (once per batch — one minor version shared by every ticket):
    Working tree must be clean (git status --porcelain empty). If not, stop and report it as needs you.
 2. Add each ticket's feature to feature-map.md, in the section where it lives on screen, with its source file references.
    git add feature-map.md && git commit -m "docs: feature map for #<N>, #<M>, ..."
-3. mise run release:minor
+3. Use users github account to publish with: mise run release:minor
    Bumps package.json, tags, publishes to GitHub Releases, pushes main + tag. If it fails, stop and report the error. Do not touch the tickets.
 4. VERSION=$(node -p "require('./package.json').version")
 5. Tag every ready ticket with the version and move it to Done (lane id in-production), in one write:
