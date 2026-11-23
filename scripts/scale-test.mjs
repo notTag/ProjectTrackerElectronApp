@@ -16,6 +16,7 @@ export const THRESHOLD_SECONDS = 5
 export const TICKET_CAP = 20_000
 export const WALL_CAP_MS = 60 * 60 * 1000
 export const SAMPLES_PER_CHECKPOINT = 3
+export const STOP_FILE = 't118-scaling-stop.json'
 export const CSV_HEADER = 'checkpoint,ticket_count,sample,creation_s,access_s,fill_s,iso_time'
 
 export function* checkpoints() {
@@ -83,7 +84,8 @@ const connectCdp = async (port) => {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
-      const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
+      const response = await fetch(`http://127.0.0.1:${port}/json`)
+      const targets = await response.json()
       const page = targets.find((target) => target.type === 'page' && target.url.includes('index.html'))
       if (page) return openCdpSession(page.webSocketDebuggerUrl)
     } catch {
@@ -145,6 +147,12 @@ const PAGE_HELPERS = `
   }
   const buttonByText = (text, scope = document) =>
     [...scope.querySelectorAll('button')].find((button) => button.textContent.trim() === text)
+  // Modals close only when the press also started on the backdrop (#117), so send both halves.
+  const closeModal = () => {
+    const backdrop = document.querySelector('.modal-backdrop')
+    backdrop?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    backdrop?.click()
+  }
 `
 const inPage = (body) => `async (arg) => { ${PAGE_HELPERS} ${body} }`
 
@@ -203,6 +211,7 @@ const timeSample = (cdp, title) =>
         await raf()
         creationSeconds = (performance.now() - createStartedAt) / 1000
       } catch (error) {
+        closeModal()
         return { creationSeconds: null, accessSeconds: null, error: String(error) }
       }
 
@@ -219,10 +228,11 @@ const timeSample = (cdp, title) =>
         await raf()
         accessSeconds = (performance.now() - accessStartedAt) / 1000
       } catch (error) {
+        closeModal()
         return { creationSeconds, accessSeconds: null, error: String(error) }
       }
 
-      document.querySelector('.modal-backdrop').click()
+      closeModal()
       await waitFor(() => !document.querySelector('.modal.ticket-modal'), timeout, 'modal closed')
       return { creationSeconds, accessSeconds, number }
     `),
@@ -272,7 +282,13 @@ const boardOf = async (cdp, projectDir) => {
   return state.boards?.[projectDir]
 }
 
-const formatSeconds = (seconds) => (Number.isFinite(seconds) ? seconds.toFixed(3) : 'timeout')
+export const formatSeconds = (seconds) => (Number.isFinite(seconds) ? seconds.toFixed(3) : 'timeout')
+
+// Both count as over threshold; 'error' keeps a crash from reading as slowness in the CSV.
+const formatSample = (seconds, error) => {
+  if (seconds !== null) return formatSeconds(seconds)
+  return error?.includes('timeout waiting') ? 'timeout' : 'error'
+}
 
 const parseArgs = (argv) => ({
   keep: argv.includes('--keep'),
@@ -305,6 +321,9 @@ const run = async () => {
   const runStartedAt = Date.now()
   const csvRows = [CSV_HEADER]
   const csvPath = path.join(options.outDir, 't118-scaling-raw.csv')
+  fs.mkdirSync(options.outDir, { recursive: true })
+  fs.rmSync(csvPath, { force: true })
+  let stopCause = null
   let cdp
   try {
     cdp = await connectCdp(options.port)
@@ -339,38 +358,49 @@ const run = async () => {
       const creationTimes = []
       for (let sample = 1; sample <= SAMPLES_PER_CHECKPOINT; sample += 1) {
         const result = await timeSample(cdp, `Sample c${target} k${sample}`)
-        const creationSeconds = result.creationSeconds ?? Infinity
-        const accessSeconds = result.accessSeconds ?? Infinity
-        creationTimes.push(creationSeconds)
-        ticketCount += 1
-        const row = [target, target, sample, formatSeconds(creationSeconds), formatSeconds(accessSeconds), fillSeconds.toFixed(1), new Date().toISOString()]
+        creationTimes.push(result.creationSeconds ?? Infinity)
+        const creationCell = formatSample(result.creationSeconds, result.error)
+        const accessCell = formatSample(result.accessSeconds, result.error)
+        const row = [target, target, sample, creationCell, accessCell, fillSeconds.toFixed(1), new Date().toISOString()]
         csvRows.push(row.join(','))
         if (result.error) log(`  sample ${sample}: ${result.error}`)
       }
-      fs.mkdirSync(options.outDir, { recursive: true })
+      // A failed sample may or may not have saved its ticket, so trust the DB.
+      ticketCount = ticketCountOf(copyDb) - baseDbCount
       fs.writeFileSync(csvPath, csvRows.join('\n') + '\n')
 
       const medianCreationSeconds = median(creationTimes)
       log(`${target} tickets: median creation ${formatSeconds(medianCreationSeconds)}s, fill ${fillSeconds.toFixed(1)}s`)
-      const reason = stopReason({ medianCreationSeconds, ticketCount: target, elapsedMs: Date.now() - runStartedAt })
-      if (reason) {
-        log(`stopping: ${reason}`)
+      stopCause = stopReason({ medianCreationSeconds, ticketCount: target, elapsedMs: Date.now() - runStartedAt })
+      if (stopCause) {
+        log(`stopping: ${stopCause}`)
         break
       }
     }
 
     const finalBoardCount = ticketCountOf(copyDb) - baseDbCount
     log(`scratch board holds ${finalBoardCount} tickets; live DB count now ${ticketCountOf(LIVE_DB)} (was ${backup.ticketCount})`)
+  } catch (error) {
+    stopCause = `crashed: ${error.message}`
+    throw error
   } finally {
     cdp?.close()
     app.kill()
+    writeReport({ electronBin, csvPath, outDir: options.outDir, stopCause, elapsedMs: Date.now() - runStartedAt })
+    // The scratch dir holds a full copy of the live DB: never leave it behind by accident.
+    if (!options.keep) fs.rmSync(scratch, { recursive: true, force: true })
   }
+}
 
+const writeReport = ({ electronBin, csvPath, outDir, stopCause, elapsedMs }) => {
+  if (!fs.existsSync(csvPath)) return
+  const stopPath = path.join(outDir, STOP_FILE)
+  const stopRecord = { reason: stopCause ?? 'interrupted', elapsedMinutes: elapsedMs / 60_000 }
+  fs.writeFileSync(stopPath, JSON.stringify(stopRecord, null, 2) + '\n')
   const reportScript = path.resolve('scripts/scale-report.mjs')
-  const pdfPath = path.join(options.outDir, 't118-scaling-report.pdf')
+  const pdfPath = path.join(outDir, 't118-scaling-report.pdf')
   execFileSync(electronBin, [reportScript, csvPath, pdfPath], { stdio: 'inherit' })
-  log(`wrote ${csvPath} and ${pdfPath}`)
-  if (!options.keep) fs.rmSync(scratch, { recursive: true, force: true })
+  log(`wrote ${csvPath}, ${stopPath} and ${pdfPath}`)
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])

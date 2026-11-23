@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { THRESHOLD_SECONDS, median, stopReason } from './scale-test.mjs'
+import { STOP_FILE, THRESHOLD_SECONDS, formatSeconds, median } from './scale-test.mjs'
 
 export const parseCsv = (text) => {
   const [header, ...lines] = text.trim().split('\n')
@@ -16,7 +16,7 @@ export const parseCsv = (text) => {
   return lines.map((line) => {
     const values = line.split(',')
     const row = Object.fromEntries(columns.map((column, index) => [column, values[index]]))
-    const asSeconds = (value) => (value === 'timeout' ? Infinity : Number(value))
+    const asSeconds = (value) => (value === 'timeout' || value === 'error' ? Infinity : Number(value))
     return {
       ...row,
       ticket_count: Number(row.ticket_count),
@@ -47,17 +47,19 @@ const STOP_TEXT = {
   'time-cap': 'safety cap reached: 60 min wall time'
 }
 
-const describeStop = (checkpoints) => {
+// The harness writes why it stopped; no stop file means it was killed before it could.
+const describeStop = (checkpoints, stopRecord) => {
   const last = checkpoints.at(-1)
-  const first = checkpoints[0]
-  const runStartMs = Date.parse(first.finishedAt) - first.fillSeconds * 1000
-  const elapsedMs = Date.parse(last.finishedAt) - runStartMs
-  const reason = stopReason({ medianCreationSeconds: last.medianCreation, ticketCount: last.ticketCount, elapsedMs })
-  const text = STOP_TEXT[reason] ?? 'run stopped manually before any stop rule fired'
-  return { text, last, elapsedMinutes: elapsedMs / 60_000 }
+  if (!stopRecord) return { text: 'run killed before the harness recorded a stop reason', last, elapsedMinutes: null }
+  const text = STOP_TEXT[stopRecord.reason] ?? `run ended early: ${stopRecord.reason}`
+  return { text, last, elapsedMinutes: stopRecord.elapsedMinutes }
 }
 
-const fmt = (seconds) => (Number.isFinite(seconds) ? seconds.toFixed(3) : 'timeout')
+const readStopRecord = (csvPath) => {
+  const stopPath = path.join(path.dirname(csvPath), STOP_FILE)
+  if (!fs.existsSync(stopPath)) return null
+  return JSON.parse(fs.readFileSync(stopPath, 'utf8'))
+}
 const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`)
 
 // Log x axis: checkpoints step 10 then 100, so a linear axis would crush 10–100 into one pixel column.
@@ -74,8 +76,8 @@ const renderChart = (checkpoints) => {
     .flatMap((checkpoint) => [checkpoint.medianCreation, checkpoint.medianAccess])
     .filter(Number.isFinite)
   const yMax = Math.ceil(Math.max(THRESHOLD_SECONDS + 1, ...finiteTimes) * 1.1)
-  const xOf = (count) => margin.left + ((Math.log10(count) - minLog) / (maxLog - minLog)) * plotWidth
-  const yOf = (seconds) => margin.top + plotHeight - (Math.min(seconds, yMax) / yMax) * plotHeight
+  const xForTicketCount = (count) => margin.left + ((Math.log10(count) - minLog) / (maxLog - minLog)) * plotWidth
+  const yForSeconds = (seconds) => margin.top + plotHeight - (Math.min(seconds, yMax) / yMax) * plotHeight
 
   const xTicks = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].filter(
     (tick) => Math.log10(tick) >= minLog - 1e-9 && Math.log10(tick) <= maxLog + 1e-9
@@ -84,7 +86,7 @@ const renderChart = (checkpoints) => {
   const yTicks = Array.from({ length: Math.floor(yMax / yStep) + 1 }, (_, index) => index * yStep)
 
   const series = (key, cssVar) => {
-    const points = checkpoints.map((checkpoint) => [xOf(checkpoint.ticketCount), yOf(checkpoint[key])])
+    const points = checkpoints.map((checkpoint) => [xForTicketCount(checkpoint.ticketCount), yForSeconds(checkpoint[key])])
     const pathData = points.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('')
     const dots = points
       .map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="var(${cssVar})" stroke="var(--surface-1)" stroke-width="1"/>`)
@@ -94,14 +96,14 @@ const renderChart = (checkpoints) => {
 
   const last = checkpoints.at(-1)
   const label = (key, text) =>
-    `<text x="${xOf(last.ticketCount) - 6}" y="${yOf(last[key]) - 10}" text-anchor="end" class="direct">${text}</text>`
+    `<text x="${xForTicketCount(last.ticketCount) - 6}" y="${yForSeconds(last[key]) - 10}" text-anchor="end" class="direct">${text}</text>`
 
   return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Ticket creation and access time vs ticket count">
-    ${yTicks.map((tick) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${yOf(tick)}" y2="${yOf(tick)}" class="grid"/><text x="${margin.left - 8}" y="${yOf(tick) + 4}" text-anchor="end" class="tick">${tick}</text>`).join('')}
-    ${xTicks.map((tick) => `<text x="${xOf(tick)}" y="${height - margin.bottom + 18}" text-anchor="middle" class="tick">${tick.toLocaleString('en-US')}</text>`).join('')}
-    <line x1="${margin.left}" x2="${width - margin.right}" y1="${yOf(0)}" y2="${yOf(0)}" class="axis"/>
-    <line x1="${margin.left}" x2="${width - margin.right}" y1="${yOf(THRESHOLD_SECONDS)}" y2="${yOf(THRESHOLD_SECONDS)}" class="threshold"/>
-    <text x="${margin.left + 6}" y="${yOf(THRESHOLD_SECONDS) - 6}" class="direct">${THRESHOLD_SECONDS}s threshold</text>
+    ${yTicks.map((tick) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(tick)}" y2="${yForSeconds(tick)}" class="grid"/><text x="${margin.left - 8}" y="${yForSeconds(tick) + 4}" text-anchor="end" class="tick">${tick}</text>`).join('')}
+    ${xTicks.map((tick) => `<text x="${xForTicketCount(tick)}" y="${height - margin.bottom + 18}" text-anchor="middle" class="tick">${tick.toLocaleString('en-US')}</text>`).join('')}
+    <line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(0)}" y2="${yForSeconds(0)}" class="axis"/>
+    <line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(THRESHOLD_SECONDS)}" y2="${yForSeconds(THRESHOLD_SECONDS)}" class="threshold"/>
+    <text x="${margin.left + 6}" y="${yForSeconds(THRESHOLD_SECONDS) - 6}" class="direct">${THRESHOLD_SECONDS}s threshold</text>
     ${series('medianCreation', '--series-1')}
     ${series('medianAccess', '--series-2')}
     ${label('medianCreation', 'Creation')}
@@ -123,16 +125,17 @@ const machineInfo = () => {
   ]
 }
 
-export const renderReportHtml = (rows) => {
+export const renderReportHtml = (rows, stopRecord) => {
   const checkpoints = summarizeCheckpoints(rows)
-  const stop = describeStop(checkpoints)
+  const stop = describeStop(checkpoints, stopRecord)
+  const elapsedText = stop.elapsedMinutes === null ? '' : ` Run took ${stop.elapsedMinutes.toFixed(1)} min.`
   const tableRows = checkpoints
     .map((checkpoint) => {
       const over = checkpoint.medianCreation > THRESHOLD_SECONDS ? ' class="over"' : ''
       const samples = rows.filter((row) => row.ticket_count === checkpoint.ticketCount)
       return `<tr${over}><td>${checkpoint.ticketCount.toLocaleString('en-US')}</td>
-        <td>${samples.map((sample) => fmt(sample.creation_s)).join(' / ')}</td><td>${fmt(checkpoint.medianCreation)}</td>
-        <td>${samples.map((sample) => fmt(sample.access_s)).join(' / ')}</td><td>${fmt(checkpoint.medianAccess)}</td>
+        <td>${samples.map((sample) => formatSeconds(sample.creation_s)).join(' / ')}</td><td>${formatSeconds(checkpoint.medianCreation)}</td>
+        <td>${samples.map((sample) => formatSeconds(sample.access_s)).join(' / ')}</td><td>${formatSeconds(checkpoint.medianAccess)}</td>
         <td>${checkpoint.fillSeconds.toFixed(1)}</td></tr>`
     })
     .join('')
@@ -160,7 +163,7 @@ export const renderReportHtml = (rows) => {
     <h1>Ticket #118 — single-board scaling report</h1>
     <p class="lede">Ticket Creation Time and Ticket Access Time as one board grows, measured through the real UI on an isolated copy of the database.</p>
     <p class="stop"><strong>Stopped at ${stop.last.ticketCount.toLocaleString('en-US')} tickets:</strong> ${escapeHtml(stop.text)}.
-      Last checkpoint medians: creation ${fmt(stop.last.medianCreation)}s, access ${fmt(stop.last.medianAccess)}s. Run took ${stop.elapsedMinutes.toFixed(1)} min.</p>
+      Last checkpoint medians: creation ${formatSeconds(stop.last.medianCreation)}s, access ${formatSeconds(stop.last.medianAccess)}s.${elapsedText}</p>
     <div class="legend"><span style="--swatch:var(--series-1)">Ticket Creation Time</span><span style="--swatch:var(--series-2)">Ticket Access Time</span><span class="dashed">${THRESHOLD_SECONDS}s threshold</span></div>
     ${renderChart(checkpoints)}
 
@@ -191,7 +194,8 @@ export const renderReportHtml = (rows) => {
 const writePdf = async (csvPath, pdfPath) => {
   const { app, BrowserWindow } = await import('electron')
   await app.whenReady()
-  const html = renderReportHtml(parseCsv(fs.readFileSync(csvPath, 'utf8')))
+  const rows = parseCsv(fs.readFileSync(csvPath, 'utf8'))
+  const html = renderReportHtml(rows, readStopRecord(csvPath))
   const window = new BrowserWindow({ show: false, width: 900, height: 1200 })
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   const pdf = await window.webContents.printToPDF({ printBackground: true, pageSize: 'Letter' })
