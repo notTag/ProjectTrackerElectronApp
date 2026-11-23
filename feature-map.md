@@ -504,7 +504,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given.
 - Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
 - How each terminal does it:
-  - **Warp**: writes `~/.warp/launch_configurations/project-tracker-ticket.yaml` and opens `warp://launch/...`.
+  - **Warp**: writes one Tab Config per tab to `~/.warp/tab_configs/project_tracker_ticket_<id>.toml` and opens `warp://tab_config/<stem>`. Tabs land in the focused Warp window; a new window opens only when Warp has none. Each file is deleted after ~60 s, so none linger in Warp's `+` menu.
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
