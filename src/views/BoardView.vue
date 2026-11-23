@@ -2672,17 +2672,6 @@ const runTicketAgent = (ticket: Ticket) => {
           </select>
           <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
         </label>
-        <template v-if="showsLaneField('waitsForPullRequestMerge', openLane.id)">
-          <label class="checkbox-label">
-            <input
-              type="checkbox"
-              :checked="Boolean(openLane.waitsForPullRequestMerge)"
-              @change="editLane(openLane, { waitsForPullRequestMerge: ($event.target as HTMLInputElement).checked })"
-            />
-            Wait for PR merge before moving on
-          </label>
-          <span class="field-hint">Armed tickets here move to the Next Lane when their PR merges, not when their checklist completes.</span>
-        </template>
         <template v-if="showsLaneField('agentSetsVersion', openLane.id)">
           <label class="checkbox-label">
             <input
