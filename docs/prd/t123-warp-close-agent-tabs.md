@@ -1,5 +1,7 @@
 # PRD — Ticket #123: Agents can't close Warp tabs after their task is done
 
+> Since #122 Warp launches through per-tab TOML Tab Configs (`warpTabConfigToml`, `~/.warp/tab_configs`, `commands = [...]`), not the YAML launch config below. `; exit` moved there unchanged.
+
 ## Problem
 - Auto Run / full auto in Warp → finished ticket agents' tabs pile up, nothing closes them
 - `TERMINAL_TAB_RECIPES` (`src/shared/projectTypes.ts:1052`) has list/close recipes for Ghostty, iTerm2, Terminal only. Warp has no AppleScript dictionary, so no recipe
@@ -22,14 +24,14 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 - D2. Every Warp tab gets `; exit`: Auto Run ticket tabs, full auto handoff tabs, manual single-ticket opens, and the orchestrator tab (user decision, 2026-11-22). The orchestrator closes its own tab only when it has no open questions; that condition lives in the orchestrator prompt's close step, not in the launcher
 	- Generated orchestrator rule 5 (all terminals): print the final summary and exit only when nothing needs the user; otherwise stay running with the open questions on screen. Replaces "Leave your own tab open"
 	- Live V1 (user): a tab launched without `; exit` stays open after its agent is killed → `; exit` is required on every agent launch
-	- Mechanism: `warpTabYaml` always appends `; exit`. Other launchers don't read it → non-Warp output unchanged. No per-tab flag: every caller would set it
+	- Mechanism: `warpTabConfigToml` (was `warpTabYaml`) always appends `; exit`. Other launchers don't read it → non-Warp output unchanged. No per-tab flag: every caller would set it
 - D3. Close = end the agent process: `kill -TERM <pid>`. The agent exits, `; exit` runs, Warp closes the tab
 - D4. Liveness = the process exists. Replaces "report every agent as unknown"
 - D5. Rejected: System Events ⌘W on Warp. It only hits the front tab, steals focus, needs Accessibility, and can't target a tab by title
 
 ## Requirements
 - R1. Every Warp tab exits with its agent; `TerminalTab` is unchanged
-- R2. `warpTabYaml`: `exec` = `` `${tab.command}; exit` ``
+- R2. `warpTabConfigToml`: `commands` = `` `${tab.command}; exit` ``
 - R3. Orchestrator `{{tickets}}` line: Warp only, append ` — session <uuid>` from the launch entry's `sessionId` (`orchestratorPromptParts`, `projectTypes.ts:1215`). Non-Warp lines unchanged (snapshots)
 - R4. `tabSection` Warp recipe (new `TERMINAL_TAB_RECIPES.warp` entry, or a Warp branch; the comment at `:1051` is updated either way):
 	- Session id: the launch line's `session <uuid>` for this lane's tab; `agent_run_json` → `$.sessionId` for a handoff (only when `$.laneId` is the handoff lane)
@@ -49,7 +51,7 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 - [ ] The orchestrator's Warp tab closes when its agent exits (its prompt exits only with no open questions)
 - [ ] Non-Warp terminals unchanged (`evals/static` snapshots change only for Warp)
 - [ ] Unit tests (`electron/terminalLaunch.test.ts`, `src/shared/projectTypes.test.ts`):
-	- Warp YAML `exec` ends in `; exit` for a ticket tab, and not for the orchestrator tab
+	- the Warp tab command ends in `; exit` for ticket and orchestrator tabs alike (D2)
 	- the Warp `tabSection` has the pgrep/kill recipe and no "by hand"
 	- the Warp ticket line carries `session <uuid>`; the Ghostty line does not
 
@@ -57,7 +59,7 @@ In Warp, the orchestrator closes a done ticket's tab under the same rules as the
 - V1. Warp closes the tab with no confirm dialog when the shell exits after `exec`. Not run live here: it would open a Warp window on the user's screen mid-run. Test with a throwaway launch config (`exec: "sleep 2; exit"`). If Warp keeps the tab, check Warp's "confirm before closing" / session-exit settings. If no setting fixes it, stop and add an open question
 - V2. `kill -TERM` on Claude Code exits cleanly and `claude --resume <uuid>` still works afterwards. Claude writes its transcript as it goes, so this is expected [~85% confidence — needs a live kill + resume]
 - V3. Full auto handoff runs record `sessionId` + `laneId` on `agent_run_json` for terminal mode (from #63) [~80% confidence — trace the handoff launch in `src/stores/projects.ts`]. If not, record it there; it is the handoff's only stable key
-- V4. `ps` shows the agent's full argv with `--session-id <uuid>` (Claude runs as `node …/claude …`)
+- V4. `ps` shows the agent's full argv with `--session-id <uuid>`. Verified 2026-11-23: one pid per live session (native `claude` binary, no wrapper); BSD `pgrep` skips its own ancestors, so an agent can't match itself
 
 ## Out of scope
 - Closing tabs for manual (non–Auto Run) terminal opens

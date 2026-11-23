@@ -1798,6 +1798,14 @@ describe('Auto Run orchestrator', () => {
       expect(orchestratorPrompt(inDev, forged, context('warp', 'Warp'))).not.toContain('— session ')
     })
 
+    it('leaves a Warp ticket with no session id to the user to close by hand', () => {
+      const noSession = [{ ...entries[0], sessionId: undefined }]
+      const ticketLine = orchestratorPrompt(inDev, noSession, context('warp', 'Warp'))
+        .split('\n')
+        .find((line) => line.startsWith('- #12 ')) ?? ''
+      expect(ticketLine).toContain('no session id: report its agent as unknown and tell the user to close its tab by hand')
+    })
+
     // Warp closes the tab when the orchestrator exits, so exiting with questions open would erase them.
     it('exits only when nothing needs the user, in every terminal', () => {
       for (const terminal of [context('warp', 'Warp'), context('ghostty', 'Ghostty')]) {

@@ -1094,6 +1094,10 @@ const sqlStringLiteral = (value: string): string => `'${value.split("'").join("'
 // lanes, so no title or ticket number can match the wrong agent. The regex
 // form keeps pgrep from matching the shell that runs it, whose argv holds the
 // pattern rather than the plain `--session-id <uuid>`.
+// An agent without session args (anything but Claude Code) can't be found in
+// Warp, so its ticket keeps the old hands-off rule.
+const WARP_NO_SESSION_NOTE = ' — no session id: report its agent as unknown and tell the user to close its tab by hand'
+
 const warpTabSection = (context: OrchestratorPromptContext, ticketNumbers: string): string => {
   const handoffSql = [
     "SELECT number, json_extract(agent_run_json, '$.laneId'), json_extract(agent_run_json, '$.sessionId') FROM tickets",
@@ -1102,7 +1106,7 @@ const warpTabSection = (context: OrchestratorPromptContext, ticketNumbers: strin
   const handoffQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(handoffSql)}`
   return [
     'Warp tabs are found by their agent\'s session id, not by tab title. Each ticket tab closes itself when its agent exits.',
-    'This lane\'s session id is the "session <uuid>" on the ticket\'s line above. A handoff tab\'s session id (number, lane id, session id; use it only when that lane id is not this lane):',
+    'This lane\'s session id is the "session <uuid>" on the ticket\'s line above. A handoff tab\'s session id (number, lane id, session id; use it only when that lane id is not this lane). Each new handoff overwrites the last one\'s, so note every handoff session id the first time you see it:',
     handoffQuery,
     '',
     'A ticket\'s agent is running while exactly one pid matches its session id (replace <SESSION> with it):',
@@ -1244,7 +1248,7 @@ const orchestratorPromptParts = (
   const watchesSessions = context.terminalId === 'warp'
   const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
-    const sessionNote = watchesSessions && isUuid(sessionId) ? ` — session ${sessionId}` : ''
+    const sessionNote = !watchesSessions ? '' : isUuid(sessionId) ? ` — session ${sessionId}` : WARP_NO_SESSION_NOTE
     const line = `- #${launch.number} ${ticket.title} — tab "${tabTitle}" — branch ${launch.branchName}${sessionNote}`
     const handsOff = ticket.fullAuto || fullAutoLanes.length > 0
     if (!handsOff) return line
