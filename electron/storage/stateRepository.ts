@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
@@ -8,6 +9,8 @@ import {
   createUnassignedLane,
   DEFAULT_USER_ID,
   DEFAULT_USER_NAME,
+  DEFAULT_WORKFLOW_ID,
+  DEFAULT_WORKFLOW_NAME,
   orchestratorPollActive,
   orchestratorPollMinutes,
   orderedIds,
@@ -611,6 +614,106 @@ export class StateRepository {
     }))
   }
 
+  // One transaction: snapshot the live lanes into the active workflow, replace
+  // them with the target's, then switch. Tickets are never touched (R5): one
+  // whose lane the target lacks shows in No status until it swaps back.
+  // The insert trigger only fills a NULL closed_at, so swaps never re-date one.
+  activateWorkflow(projectPath: string, workflowId: string): ProjectTrackerState {
+    this.transaction(() => {
+      const activeId = this.ensureActiveWorkflow(projectPath)
+      if (workflowId === activeId) return
+      const [target] = this.select('SELECT lanes_json FROM workflows WHERE project_path = ? AND id = ?', [
+        projectPath,
+        workflowId
+      ])
+      if (!target) throw new Error(`Workflow ${workflowId} does not exist.`)
+      this.snapshotLanesInto(projectPath, activeId)
+      this.run('DELETE FROM swim_lanes WHERE project_path = ?', [projectPath])
+      this.insertLaneRows(projectPath, String(target.lanes_json))
+      // The insert trigger closes tickets in the target's closing lanes; this
+      // is the unflag half, matching swim_lanes_closed_at_on_flag.
+      this.run(
+        `UPDATE tickets SET closed_at = NULL
+         WHERE project_path = ? AND closed_at IS NOT NULL
+           AND lane_id IN (SELECT id FROM swim_lanes WHERE project_path = ? AND closes_ticket = 0)`,
+        [projectPath, projectPath]
+      )
+      this.run('UPDATE projects SET active_workflow_id = ? WHERE path = ?', [workflowId, projectPath])
+    })
+    return this.getState()
+  }
+
+  // A copy of the active workflow under the same lane ids, so every ticket
+  // stays in its lane. The live rows don't change; only the active id does.
+  createWorkflow(projectPath: string, name: string): ProjectTrackerState {
+    const trimmedName = name.trim()
+    if (!trimmedName) throw new Error('A workflow needs a name.')
+    this.transaction(() => {
+      const activeId = this.ensureActiveWorkflow(projectPath)
+      const nameTaken = this.select('SELECT 1 FROM workflows WHERE project_path = ? AND lower(name) = lower(?)', [
+        projectPath,
+        trimmedName
+      ])
+      if (nameTaken.length > 0) throw new Error(`A workflow named "${trimmedName}" already exists on this board.`)
+      const lanesJson = this.snapshotLanesInto(projectPath, activeId)
+      const workflowId = randomUUID()
+      this.insertWorkflowRow(projectPath, workflowId, trimmedName, lanesJson)
+      this.run('UPDATE projects SET active_workflow_id = ? WHERE path = ?', [workflowId, projectPath])
+    })
+    return this.getState()
+  }
+
+  // Stores the virtual Default on first use, and recreates the active row if an
+  // outside writer removed it, so a snapshot never has nowhere to go.
+  private ensureActiveWorkflow(projectPath: string): string {
+    const [project] = this.select('SELECT active_workflow_id FROM projects WHERE path = ?', [projectPath])
+    if (!project) throw new Error(`Project ${projectPath} does not exist.`)
+    const activeId = asText(project.active_workflow_id) ?? DEFAULT_WORKFLOW_ID
+    const activeRow = this.select('SELECT 1 FROM workflows WHERE project_path = ? AND id = ?', [projectPath, activeId])
+    if (activeRow.length === 0) {
+      const isDefault = activeId === DEFAULT_WORKFLOW_ID
+      const recoveredName = isDefault ? DEFAULT_WORKFLOW_NAME : `Recovered ${activeId.slice(0, 8)}`
+      this.insertWorkflowRow(projectPath, activeId, recoveredName, this.laneRowsJson(projectPath))
+    }
+    this.run('UPDATE projects SET active_workflow_id = ? WHERE path = ?', [activeId, projectPath])
+    return activeId
+  }
+
+  private insertWorkflowRow(projectPath: string, workflowId: string, name: string, lanesJson: string) {
+    this.run(
+      `INSERT INTO workflows (id, project_path, name, position, lanes_json)
+       VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM workflows WHERE project_path = ?), ?)`,
+      [workflowId, projectPath, name, projectPath, lanesJson]
+    )
+  }
+
+  private laneRowsJson(projectPath: string): string {
+    const rows = this.select('SELECT * FROM swim_lanes WHERE project_path = ? ORDER BY position, id', [projectPath])
+    return JSON.stringify(rows)
+  }
+
+  private snapshotLanesInto(projectPath: string, workflowId: string): string {
+    const lanesJson = this.laneRowsJson(projectPath)
+    this.run('UPDATE workflows SET lanes_json = ? WHERE project_path = ? AND id = ?', [lanesJson, projectPath, workflowId])
+    return lanesJson
+  }
+
+  // Columns come from the snapshot's keys, so only real swim_lanes columns are
+  // let into the SQL: lanes_json is plain text an outside writer could edit.
+  private insertLaneRows(projectPath: string, lanesJson: string) {
+    // ponytail: JSON.parse throws on corrupt text, rolling the swap back instead of emptying the board.
+    const rows = JSON.parse(lanesJson) as Row[]
+    if (!Array.isArray(rows)) throw new Error('Workflow lanes are not a list.')
+    const tableColumns = this.select('PRAGMA table_info(swim_lanes)').map((column) => String(column.name))
+    for (const row of rows) {
+      const laneRow: Row = { ...row, project_path: projectPath }
+      const columns = tableColumns.filter((column) => column in laneRow)
+      const placeholders = columns.map(() => '?').join(', ')
+      const values = columns.map((column) => laneRow[column] as SQLInputValue)
+      this.run(`INSERT INTO swim_lanes (${columns.join(', ')}) VALUES (${placeholders})`, values)
+    }
+  }
+
   // Only the hand-edited fields: everything else on the row belongs to the scanner.
   updateProject(projectPath: string, patch: ProjectWritePatch): ProjectRecord {
     const updated = this.transaction(() => {
@@ -831,6 +934,21 @@ export class StateRepository {
     }
 
     for (const row of ticketRows) boardFor(String(row.project_path)).tickets.push(ticketFromRow(row))
+
+    const workflowRows = this.select(
+      `SELECT project_path, id, name FROM workflows WHERE project_path IN (${visibleProjects}) ORDER BY project_path, position`,
+      [this.userId]
+    )
+    for (const row of workflowRows) {
+      const board = boardFor(String(row.project_path))
+      board.workflows ??= []
+      board.workflows.push({ id: String(row.id), name: String(row.name) })
+    }
+    const activeRows = this.select(
+      `SELECT path, active_workflow_id FROM projects WHERE active_workflow_id IS NOT NULL AND path IN (${visibleProjects})`,
+      [this.userId]
+    )
+    for (const row of activeRows) boardFor(String(row.path)).activeWorkflowId = String(row.active_workflow_id)
 
     return boards
   }

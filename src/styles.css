@@ -1122,6 +1122,28 @@ code {
   overflow: auto;
 }
 
+.workflow-label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workflow-divider {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.workflow-create {
+  display: flex;
+  gap: 6px;
+}
+
+.workflow-create input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Mask = shape only; colour comes from the theme so the ✕ follows every theme. */
 .filter-query::-webkit-search-cancel-button {
   -webkit-appearance: none;
