@@ -273,6 +273,7 @@ Projects, swim lanes and tickets are stored as shared rows, so every member sees
 | `projects` | keyed by absolute path |
 | `project_members` | who can see a project; scanning a project adds membership |
 | `swim_lanes` | ordered by `position`; `is_unassigned` flags the undeletable No status column |
+| `workflows` | named lane sets per board; the active one (`projects.active_workflow_id`) lives in `swim_lanes`, the rest as full lane rows in `lanes_json` |
 | `tickets` | `assignee_id` is nullable and `ON DELETE SET NULL`, so removing a user releases their tickets rather than deleting the work |
 | `project_paths` | hidden / third-party classification, shared like the project |
 | `user_paths` | scan directories specific to each machine, never shared |

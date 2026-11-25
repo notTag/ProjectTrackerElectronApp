@@ -6,6 +6,7 @@ import {
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
+  keepParkedLaneIds,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
@@ -344,6 +345,27 @@ describe('normalizeBoard', () => {
       ]
     }
     expect(normalizeBoard(orphaned).tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
+  })
+
+  it('writes no lane change for a ticket parked in another workflow’s lane', () => {
+    const parked: ProjectBoard = {
+      lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],
+      tickets: [
+        { id: 'a', number: 1, laneId: 'qa', title: 'A', description: '', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'b', number: 2, laneId: 'qa', title: 'B', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
+      ]
+    }
+    const normalized = normalizeBoard(parked)
+    const edited = {
+      ...normalized,
+      tickets: normalized.tickets.map((ticket) => (ticket.id === 'a' ? { ...ticket, title: 'A2' } : { ...ticket, laneId: 'idea' }))
+    }
+    const kept = keepParkedLaneIds(parked, edited)
+    expect(kept.tickets.map((ticket) => ticket.laneId)).toEqual(['qa', 'idea'])
+    expect(boardWrites(parked, kept).map((write) => write.kind === 'ticket:update' && write.patch)).toEqual([
+      { title: 'A2', updatedAt: undefined },
+      { laneId: 'idea', updatedAt: undefined }
+    ])
   })
 
   it('leaves a board whose tickets all have real lanes untouched', () => {

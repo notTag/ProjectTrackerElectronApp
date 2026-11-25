@@ -41,6 +41,7 @@ import {
   githubErrorMessage,
   isGithubUnreachableError,
   isPullRequestSettled,
+  keepParkedLaneIds,
   mergeScannedProjects,
   moveLaneInBoard,
   removeLaneFromBoard,
@@ -124,7 +125,8 @@ const withCompletionMoves = (
     const nextBoard = getBoard(after, projectPath)
     const result = completionMoves(getBoard(before, projectPath), nextBoard, alsoCompletedIds)
     if (result.board === nextBoard) continue
-    state = { ...state, boards: { ...state.boards, [projectPath]: result.board } }
+    const movedBoard = keepParkedLaneIds(after.boards?.[projectPath], result.board)
+    state = { ...state, boards: { ...state.boards, [projectPath]: movedBoard } }
     if (result.moves.length > 0) moved.push({ projectPath, moves: result.moves })
   }
   return { state, moved }
@@ -218,7 +220,8 @@ type StateUpdate = (currentState: ProjectTrackerState) => ProjectTrackerState
 const boardUpdate =
   (projectPath: string, mutate: (board: ProjectBoard) => ProjectBoard): StateUpdate =>
   (currentState) => {
-    const nextBoard = mutate(getBoard(currentState, projectPath))
+    const editedBoard = mutate(getBoard(currentState, projectPath))
+    const nextBoard = keepParkedLaneIds(currentState.boards?.[projectPath], editedBoard)
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
 
@@ -371,6 +374,42 @@ export const useProjectsStore = defineStore('projects', {
 
     async removeLane(projectPath: string, laneId: string) {
       await this.updateBoard(projectPath, (board) => removeLaneFromBoard(board, laneId))
+    },
+
+    // True while anything launched from this board is still running: a lane
+    // mid-launch, or a ticket agent (which an orchestrator dispatches). A swap
+    // then would pull lanes out from under it.
+    boardAgentsRunning(projectPath: string): boolean {
+      const laneLaunching = Object.entries(this.autoRunning).some(
+        ([runKey, running]) => running && runKey.startsWith(`${projectPath}\n`)
+      )
+      if (laneLaunching) return true
+      const tickets = getBoard(this.state, projectPath).tickets
+      return tickets.some((ticket) => this.agentRunning[ticket.id] || ticket.agentRun?.status === 'running')
+    },
+
+    async activateWorkflow(projectPath: string, workflowId: string) {
+      return this.writeWorkflow(projectPath, () => projectTrackerApi.activateWorkflow(projectPath, workflowId))
+    },
+
+    async createWorkflow(projectPath: string, name: string) {
+      return this.writeWorkflow(projectPath, () => projectTrackerApi.createWorkflow(projectPath, name))
+    },
+
+    // The identity board write first stores a never-saved board's default
+    // lanes, so the workflow snapshot has lanes to copy. The swap returns a
+    // fresh read, which main also took as its diff baseline.
+    async writeWorkflow(projectPath: string, send: () => Promise<ProjectTrackerState>) {
+      return this.persist(async () => {
+        await this.writeBoard(projectPath, boardUpdate(projectPath, (board) => board))
+        saveQueue = saveQueue
+          .catch(() => undefined)
+          .then(async () => {
+            this.state = await send()
+          })
+        await saveQueue
+        return []
+      })
     },
 
     async addTicket(

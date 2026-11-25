@@ -449,6 +449,18 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       repository.deleteSwimLane(normalizePath(projectPath), laneId)
     },
 
+    'workflow:activate': (payload, { repository }) => {
+      const { projectPath, workflowId } = (payload ?? {}) as { projectPath?: unknown; workflowId?: unknown }
+      if (typeof projectPath !== 'string' || typeof workflowId !== 'string') throw new Error('Invalid workflow activate payload.')
+      return toPlainJson(repository.activateWorkflow(normalizePath(projectPath), workflowId))
+    },
+
+    'workflow:create': (payload, { repository }) => {
+      const { projectPath, name } = (payload ?? {}) as { projectPath?: unknown; name?: unknown }
+      if (typeof projectPath !== 'string' || typeof name !== 'string') throw new Error('Invalid workflow create payload.')
+      return toPlainJson(repository.createWorkflow(normalizePath(projectPath), name))
+    },
+
     'project:update': (payload, { repository }) => {
       const { path: projectPath, patch } = (payload ?? {}) as { path?: unknown; patch?: unknown }
       if (typeof projectPath !== 'string' || !isProjectPatch(patch)) throw new Error('Invalid project update payload.')
