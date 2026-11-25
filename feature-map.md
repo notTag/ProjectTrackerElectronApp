@@ -326,7 +326,7 @@ From left to right:
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
-#### UI Demo panel (🎚 UI Demo) — `src/components/UiDemoPanel.vue`, `src/uiDemo.ts`
+#### UI Demo panel (🎚 UI Demo) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
 - The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first: the 🎚 button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
