@@ -145,6 +145,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
   PRIMARY KEY (user_id, key)
 );
 
+-- A board's named lane sets. The active one's lanes are the live swim_lanes
+-- rows; lanes_json holds the full swim_lanes rows of every other one, and is
+-- refreshed from the live rows whenever the board swaps away from it.
+CREATE TABLE IF NOT EXISTS workflows (
+  id TEXT NOT NULL,
+  project_path TEXT NOT NULL REFERENCES projects(path) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  lanes_json TEXT NOT NULL,
+  PRIMARY KEY (project_path, id)
+);
+
 CREATE INDEX IF NOT EXISTS tickets_by_board ON tickets (project_path, lane_id);
 CREATE INDEX IF NOT EXISTS tickets_by_assignee ON tickets (assignee_id);
 CREATE INDEX IF NOT EXISTS tickets_by_external_id ON tickets (external_id);
@@ -189,7 +201,9 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_rules_passed_lane_id', definition: 'TEXT' },
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' }
+  { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
+  // NULL until the board's first workflow swap or create materializes "Default".
+  { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]
 
 // closed_at lives in triggers, not app code, because agents move tickets by

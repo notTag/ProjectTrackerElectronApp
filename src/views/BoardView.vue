@@ -9,6 +9,7 @@ import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
+import WorkflowPicker from '@/components/WorkflowPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
@@ -19,6 +20,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal, type OpenInTarget } from '@/shared/openInTargets'
 import {
+  activeWorkflow,
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
   TICKET_CARD_FIELDS,
@@ -118,6 +120,7 @@ const projectPath = computed(() => decodeURIComponent(String(route.params.projec
 const project = computed(() => store.projects.find((entry) => entry.path === projectPath.value))
 const projectTitle = computed(() => project.value?.name ?? projectPath.value.split('/').pop() ?? 'Board')
 const board = computed(() => store.board(projectPath.value))
+const activeWorkflowName = computed(() => activeWorkflow(board.value).name)
 const githubUrl = computed(() => project.value?.githubUrl)
 const pullingIssues = computed(() => Boolean(store.githubLoading[projectPath.value]))
 
@@ -1582,6 +1585,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <OfflineBadge />
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
       <MetricsPanel :project-paths="[projectPath]" scope="board" />
+      <WorkflowPicker :project-path="projectPath" />
       <OpenInPicker />
       <button
         class="secondary"
@@ -1625,6 +1629,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <MessageBanners />
 
     <section class="board-filters">
+      <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
       <input
         ref="filterQueryInput"
         v-model="filterQuery"

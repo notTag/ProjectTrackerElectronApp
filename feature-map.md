@@ -242,6 +242,7 @@ From left to right:
 |---------|----------|
 | **Project name** title | The project's folder name, or the last part of its path |
 | **← Projects** | Back to the Dashboard. Escape does the same when no modal is open |
+| **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Default**). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
 | **Open In** picker | See 1.6 |
 | **⌁ Open** | Opens the project folder in the Open In app |
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
@@ -264,6 +265,7 @@ See 1.7. Board notices include:
 
 From left to right:
 
+- The active workflow's name (3.1 Workflow picker), as a bold label.
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)

@@ -1548,6 +1548,28 @@ export interface ProjectBoard {
   // can carry an agent prompt like any other lane while staying undeletable —
   // it is the fallback every orphaned ticket lands in.
   unassignedLane?: SwimLane
+  // Read-only here: written only through the workflow:* channels, never diffed.
+  workflows?: WorkflowSummary[]
+  activeWorkflowId?: string
+}
+
+export interface WorkflowSummary {
+  id: string
+  name: string
+}
+
+// A board that never swapped or created a workflow has no workflow rows; it is
+// shown as this one, and the first swap or create stores it under this id.
+export const DEFAULT_WORKFLOW_ID = 'default'
+export const DEFAULT_WORKFLOW_NAME = 'Default'
+
+export const boardWorkflows = (board: ProjectBoard): WorkflowSummary[] =>
+  board.workflows?.length ? board.workflows : [{ id: DEFAULT_WORKFLOW_ID, name: DEFAULT_WORKFLOW_NAME }]
+
+export const activeWorkflow = (board: ProjectBoard): WorkflowSummary => {
+  const workflows = boardWorkflows(board)
+  const activeId = board.activeWorkflowId ?? DEFAULT_WORKFLOW_ID
+  return workflows.find((workflow) => workflow.id === activeId) ?? workflows[0]
 }
 
 const DEFAULT_LANE_NAMES = ['Idea', 'PRD', 'In Development', 'In PR', 'In Dev', 'In QA', 'In Production']
@@ -1646,7 +1668,8 @@ export const nextTicketNumber = (board: ProjectBoard) => highestTicketNumber(boa
 
 // Repairs a board on read: tickets whose lane no longer exists fall back to the
 // unassigned column rather than rendering nowhere, and tickets saved before
-// numbers existed are backfilled. Saving afterwards persists the repair.
+// numbers existed are backfilled. Saving afterwards persists the number repair;
+// the lane fallback is display-only (see keepParkedLaneIds).
 export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
   const knownLaneIds = new Set([...board.lanes.map((lane) => lane.id), UNASSIGNED_LANE_ID])
   const hasOrphans = board.tickets.some((ticket) => !knownLaneIds.has(ticket.laneId))
@@ -1661,6 +1684,24 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
     return { ...ticket, laneId, number }
   })
   return { ...board, tickets }
+}
+
+// A ticket whose lane belongs to another workflow is parked: it shows in No
+// status, but keeps its stored lane so swapping back puts it where it was.
+// Undoes normalizeBoard's fallback on an edited board before it is written,
+// for every ticket the edit itself left in No status.
+export const keepParkedLaneIds = (stored: ProjectBoard | undefined, edited: ProjectBoard): ProjectBoard => {
+  if (!stored) return edited
+  const storedLaneIds = new Set([...stored.lanes.map((lane) => lane.id), UNASSIGNED_LANE_ID])
+  const parkedTickets = stored.tickets.filter((ticket) => !storedLaneIds.has(ticket.laneId))
+  const parkedLaneById = new Map(parkedTickets.map((ticket) => [ticket.id, ticket.laneId]))
+  if (parkedLaneById.size === 0) return edited
+  const tickets = edited.tickets.map((ticket) => {
+    const parkedLaneId = parkedLaneById.get(ticket.id)
+    const isStillParked = parkedLaneId !== undefined && ticket.laneId === UNASSIGNED_LANE_ID
+    return isStillParked ? { ...ticket, laneId: parkedLaneId } : ticket
+  })
+  return { ...edited, tickets }
 }
 
 export const addTicketToBoard = (
@@ -1696,9 +1737,12 @@ export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): Projec
     lanes,
     ...(board.unassignedLane && { unassignedLane: withoutNextLane(board.unassignedLane, laneId) })
   }
+  // Another workflow may still hold this lane, so with several workflows its
+  // tickets are parked like on a swap: No status now, back in it on swap back.
+  const parksTickets = boardWorkflows(board).length > 1
   const tickets = board.tickets.map((ticket) => {
     const targetBefore = effectiveNextLaneId(ticket, boardLaneById(board, ticket.laneId))
-    const fixed = withoutLane(ticket, laneId)
+    const fixed = parksTickets ? ticket : withoutLane(ticket, laneId)
     const targetAfter = effectiveNextLaneId(fixed, boardLaneById(laneBoard, fixed.laneId))
     return targetAfter === targetBefore ? fixed : { ...fixed, moveOnComplete: false }
   })
