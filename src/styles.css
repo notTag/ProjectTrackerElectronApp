@@ -70,11 +70,28 @@ body {
   -webkit-app-region: drag;
 }
 
-/* The title takes only leftover width and ellipsizes, so the action buttons
-   never get squeezed into wrapping. No tooltip: the title sits in the drag
-   region, which receives no hover events. */
+/* The lead group (title + Open In + ⌁ Open) flattens into the titlebar row so
+   only the title shrinks (ellipsizes); its buttons keep their width and can't
+   spill over the right cluster. The auto margin leaves the gap before the
+   right cluster as a drag handle. */
+.titlebar-lead {
+  display: contents;
+}
+
+.titlebar-lead > .titlebar-actions {
+  flex-shrink: 0;
+  margin-right: auto;
+}
+
+/* Opens rightward: leftward would run under the traffic lights. */
+.titlebar-lead .filter-popover {
+  left: 0;
+  right: auto;
+}
+
+/* No tooltip: the title sits in the drag region, which receives no hover events. */
 .titlebar-title {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -109,9 +126,10 @@ body {
   white-space: nowrap;
 }
 
-/* Measured in-app: the board actions need ~850px, so with a ~225px project
-   title (e.g. "ProjectTracker/electron-app") the title stops fitting below
-   ~1180px. Tighten the buttons to win back title width before it ellipsizes. */
+/* Measured in-app: the Dashboard actions need ~850px, so with a ~225px title
+   the title stops fitting below ~1180px. The board needs less (~540px right
+   cluster + ~200px Open In/⌁ Open beside its title, so ~1070px). Tighten the
+   buttons to win back title width before it ellipsizes. */
 @media (max-width: 1180px) {
   .titlebar-actions {
     gap: 4px;
@@ -2258,6 +2276,34 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
+/* Settings modal (#137): Metrics renders inline so the modal grows instead of
+   clipping an absolute popover. */
+.settings-modal {
+  width: auto;
+  min-width: min(420px, 100%);
+  max-width: 100%;
+  align-items: flex-start;
+}
+
+.settings-modal .modal-actions {
+  align-self: stretch;
+}
+
+.settings-modal .metrics-menu {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.settings-modal .metrics-popover {
+  position: static;
+  max-width: 100%;
+  box-shadow: none;
+}
+
+/* The titlebar selector is for the Dashboard header's Metrics popover. */
+.settings-modal .metrics-popover-header button,
 .titlebar-actions .metrics-popover-header button {
   min-width: 28px;
   padding: 0 8px;

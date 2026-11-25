@@ -142,6 +142,17 @@ const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
+const settingsOpen = ref(false)
+// Swap, never stack: Display replaces Settings rather than opening over it.
+const openDisplaySettings = () => {
+  settingsOpen.value = false
+  boardSettingsOpen.value = true
+}
+// The UI panel has no backdrop, so it opens once Settings closes and the board stays live.
+const openUiSettingsPanel = () => {
+  settingsOpen.value = false
+  uiDemoPanelOpen.value = true
+}
 
 // nextLaneId stays null until the user picks one, so the field follows the
 // Status lane's default as Status changes. Images wait as Files until Save,
@@ -190,7 +201,9 @@ const anyModalOpen = computed(
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
         lanePendingDeletion.value
-    ) || boardSettingsOpen.value
+    ) ||
+    boardSettingsOpen.value ||
+    settingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -686,6 +699,7 @@ const closeModals = () => {
   ticketDraft.value = null
   laneDraftName.value = null
   boardSettingsOpen.value = false
+  settingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -1581,20 +1595,23 @@ const runTicketAgent = (ticket: Ticket) => {
 
 <template>
   <header class="titlebar">
-    <span class="titlebar-title">{{ projectTitle }}</span>
+    <div class="titlebar-lead">
+      <span class="titlebar-title">{{ projectTitle }}</span>
+      <div class="titlebar-actions">
+        <OpenInPicker />
+        <button
+          class="secondary"
+          :title="`Open in ${openInStore.selectedTarget.label}`"
+          @click="store.openIn(projectPath, openInStore.selectedId)"
+        >
+          ⌁ Open
+        </button>
+      </div>
+    </div>
     <div class="titlebar-actions">
       <OfflineBadge />
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
-      <MetricsPanel :project-paths="[projectPath]" scope="board" />
       <WorkflowPicker :project-path="projectPath" />
-      <OpenInPicker />
-      <button
-        class="secondary"
-        :title="`Open in ${openInStore.selectedTarget.label}`"
-        @click="store.openIn(projectPath, openInStore.selectedId)"
-      >
-        ⌁ Open
-      </button>
       <button
         class="secondary"
         title="What you want to build"
@@ -1615,12 +1632,7 @@ const runTicketAgent = (ticket: Ticket) => {
         {{ pullingIssues ? 'Pulling…' : '⇣ Pull issues' }}
       </button>
       <button class="secondary" title="Create swim lane" @click="laneDraftName = ''">+ Swim lane</button>
-      <button class="secondary button-with-icon" title="Choose what ticket cards show" @click="boardSettingsOpen = true">
-        <EyeOffIcon /> Display
-      </button>
-      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="uiDemoPanelOpen = !uiDemoPanelOpen">
-        ⚙ Settings
-      </button>
+      <button class="secondary" title="Board and UI settings" @click="settingsOpen = true">⚙ Settings</button>
     </div>
   </header>
 
@@ -1958,6 +1970,24 @@ const runTicketAgent = (ticket: Ticket) => {
 
       <div class="modal-actions">
         <button @click="boardSettingsOpen = false">Done</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
+    <section class="modal lane-modal settings-modal">
+      <p class="eyebrow">Board Settings</p>
+      <MetricsPanel :project-paths="[projectPath]" scope="board" />
+      <button class="secondary button-with-icon" title="Choose what ticket cards show" @click="openDisplaySettings">
+        <EyeOffIcon /> Display
+      </button>
+      <hr />
+      <p class="eyebrow">UI Settings</p>
+      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="openUiSettingsPanel">
+        🎚 UI Settings
+      </button>
+      <div class="modal-actions">
+        <button @click="settingsOpen = false">Done</button>
       </div>
     </section>
   </div>

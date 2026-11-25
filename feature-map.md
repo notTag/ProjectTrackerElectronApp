@@ -240,16 +240,15 @@ From left to right:
 
 | Control | Behavior |
 |---------|----------|
-| **Project name** title | The project's folder name, or the last part of its path |
+| **Project name** title | The project's folder name, or the last part of its path. Ellipsizes when long |
+| **Open In** picker | Right of the title; its menu opens rightward. See 1.6 |
+| **⌁ Open** | Right of Open In. Opens the project folder in the Open In app |
 | **← Projects** | Back to the Dashboard. Escape does the same when no modal is open |
 | **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Default**). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
-| **Open In** picker | See 1.6 |
-| **⌁ Open** | Opens the project folder in the Open In app |
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Display** | Opens the Display settings modal (3.5) |
-| **📊 Metrics** | The same popover as the Dashboard's (2.1), for this project only |
+| **⚙ Settings** | Opens the Settings modal. Its **Board Settings** section holds **📊 Metrics** (the Dashboard's panel (2.1) for this project only, shown inline in the modal) and **⚙ Display** (closes Settings, opens the Display settings modal (3.5)). Its **UI Settings** section holds **🎚 UI Settings** (closes Settings, opens the UI tuning panel). Escape or a backdrop click closes it |
 
 ### 3.2 Notices and errors
 
@@ -326,9 +325,9 @@ From left to right:
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
-#### UI Demo panel (🎚 UI Demo) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
+#### UI Settings panel (⚙ Settings → 🎚 UI Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first: the 🎚 button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- **🎚 UI Settings** in the Settings modal closes the modal and opens a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
 - Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
