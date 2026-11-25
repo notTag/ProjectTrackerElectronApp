@@ -320,8 +320,8 @@ export const useProjectsStore = defineStore('projects', {
       await this.save((currentState) => ({ ...currentState, themeId }))
     },
 
-    async addLane(projectPath: string, name: string) {
-      const lane: SwimLane = { id: crypto.randomUUID(), name, agentPrompt: '', agentFilePath: '' }
+    async addLane(projectPath: string, name: string, fields: Partial<Omit<SwimLane, 'id' | 'name'>> = {}) {
+      const lane: SwimLane = { id: crypto.randomUUID(), name, agentPrompt: '', agentFilePath: '', ...fields }
       await this.updateBoard(projectPath, (board) => ({ ...board, lanes: [...board.lanes, lane] }))
     },
 

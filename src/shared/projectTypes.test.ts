@@ -6,6 +6,8 @@ import {
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
+  graphPositionRightOf,
+  laneGraphPosition,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
@@ -2271,5 +2273,31 @@ describe('githubErrorMessage', () => {
   it('passes other errors through', () => {
     expect(githubErrorMessage(new Error('Repository not found on GitHub.'))).toBe('Repository not found on GitHub.')
     expect(githubErrorMessage('boom')).toBe('boom')
+  })
+})
+
+describe('graph positions', () => {
+  const lane = (id: string, graphPosition?: { x: number; y: number }) => ({ id, name: id, agentPrompt: '', agentFilePath: '', graphPosition })
+
+  it('puts a lane with no saved position in its row slot', () => {
+    expect(laneGraphPosition(lane('a'), 0)).toEqual({ x: 50, y: 70 })
+    expect(laneGraphPosition(lane('c'), 2)).toEqual({ x: 490, y: 70 })
+  })
+
+  it('keeps a saved position', () => {
+    expect(laneGraphPosition(lane('a', { x: 5, y: 300 }), 3)).toEqual({ x: 5, y: 300 })
+  })
+
+  it('treats a malformed saved position as unset', () => {
+    const malformedPositions = [[10, 20], { x: '5', y: 5 }, { x: 5 }, null]
+    for (const malformed of malformedPositions) {
+      const malformedLane = { ...lane('b'), graphPosition: malformed as unknown as { x: number; y: number } }
+      expect(laneGraphPosition(malformedLane, 1)).toEqual({ x: 270, y: 70 })
+    }
+  })
+
+  it('places a new node one column right of the rightmost node', () => {
+    expect(graphPositionRightOf([{ x: 50, y: 70 }, { x: 900, y: 400 }, { x: 270, y: 70 }])).toEqual({ x: 1120, y: 70 })
+    expect(graphPositionRightOf([])).toEqual({ x: 50, y: 70 })
   })
 })

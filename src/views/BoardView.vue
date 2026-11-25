@@ -94,6 +94,7 @@ import {
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
   type SwimLane,
+  type GraphPosition,
   type Ticket,
   type TicketPatch,
   plural,
@@ -157,6 +158,11 @@ watch(ticketDraft, (_draft, previousDraft) => {
   previousDraft?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
 const laneDraftName = ref<string | null>(null)
+// Set when the graph's "+ Add swim lane" opened the prompt: where the new node lands.
+const laneDraftGraphPosition = ref<GraphPosition>()
+watch(laneDraftName, (name) => {
+  if (name === null) laneDraftGraphPosition.value = undefined
+})
 const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
@@ -871,8 +877,9 @@ const saveTicketDraft = async () => {
 const saveLaneDraft = async () => {
   const name = (laneDraftName.value ?? '').trim()
   if (!name) return
+  const graphPosition = laneDraftGraphPosition.value
   laneDraftName.value = null
-  await store.addLane(projectPath.value, name)
+  await store.addLane(projectPath.value, name, graphPosition ? { graphPosition } : {})
 }
 
 const deleteLane = async (lane: SwimLane) => {
@@ -1680,7 +1687,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" @edit-lane="editLane" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>

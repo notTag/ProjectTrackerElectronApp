@@ -275,6 +275,26 @@ describe('StateRepository', () => {
     expect(reopened.lanes[1].nextLaneId).toBeUndefined()
   })
 
+  it('adds the graph position column to a database created before it existed, then round-trips it', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN graph_position_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const board = repository.getState().boards![projectPath]
+    expect(board.lanes.map((lane) => lane.graphPosition)).toEqual(board.lanes.map(() => undefined))
+    const movedLaneId = board.lanes[0].id
+    repository.updateSwimLane(projectPath, movedLaneId, { graphPosition: { x: 310, y: 140 } })
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[0].graphPosition).toEqual({ x: 310, y: 140 })
+    expect(reopened.lanes[1].graphPosition).toBeUndefined()
+
+    new StateRepository(userDataPath).updateSwimLane(projectPath, movedLaneId, { graphPosition: null })
+    expect(reopenedBoard(userDataPath, projectPath).lanes[0].graphPosition).toBeUndefined()
+  })
+
   it('adds the agent model columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
