@@ -318,13 +318,13 @@ From left to right:
 
 ### 3.5 Display settings modal (⚙ Display)
 
-- **Ticket card display**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
+- **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (Agent prompt, Output, Orchestrator prompt/file/poll, Auto Run pickers and checkboxes). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
-#### UI Demo panel (🎚 UI Demo) — `src/components/UiDemoPanel.vue`, `src/uiDemo.ts`
+#### UI Demo panel (🎚 UI Demo) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
 - The **🎚 UI Demo** button right of ⚙ Display toggles a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first: the 🎚 button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
