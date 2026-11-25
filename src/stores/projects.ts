@@ -99,7 +99,11 @@ interface ProjectHandoffs {
 // wrote) and a fresh read was moved by someone else: an agent writing to the
 // DB. Moves made in this window are already in `before`, so they never count.
 const handoffsBetween = (before: ProjectTrackerState, after: ProjectTrackerState): ProjectHandoffs[] => {
-  const projectPaths = Object.keys(after.boards ?? {})
+  // A workflow swap by another writer reshuffles which tickets sit in real
+  // lanes; that is not a move, so it must not start Full auto lanes.
+  const sameWorkflow = (projectPath: string) =>
+    before.boards?.[projectPath]?.activeWorkflowId === after.boards?.[projectPath]?.activeWorkflowId
+  const projectPaths = Object.keys(after.boards ?? {}).filter(sameWorkflow)
   const perProject = projectPaths.map((projectPath) => ({
     projectPath,
     handoffs: fullAutoHandoffs(getBoard(before, projectPath), getBoard(after, projectPath))
@@ -405,7 +409,12 @@ export const useProjectsStore = defineStore('projects', {
         saveQueue = saveQueue
           .catch(() => undefined)
           .then(async () => {
-            this.state = await send()
+            try {
+              this.state = await send()
+            } catch (error) {
+              await this.reloadAfterFailedWrite()
+              throw error
+            }
           })
         await saveQueue
         return []

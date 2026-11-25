@@ -347,6 +347,16 @@ describe('normalizeBoard', () => {
     expect(normalizeBoard(orphaned).tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
   })
 
+  it('parks a deleted lane’s tickets when another workflow may still hold the lane', () => {
+    const board: ProjectBoard = {
+      lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],
+      tickets: [{ id: 'a', number: 1, laneId: 'idea', title: 'A', description: '', createdAt: '2026-01-01T00:00:00.000Z' }]
+    }
+    const withWorkflows = { ...board, workflows: [{ id: 'default', name: 'Default' }, { id: 'w2', name: 'Hotfix' }] }
+    expect(removeLaneFromBoard(board, 'idea').tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
+    expect(removeLaneFromBoard(withWorkflows, 'idea').tickets[0].laneId).toBe('idea')
+  })
+
   it('writes no lane change for a ticket parked in another workflow’s lane', () => {
     const parked: ProjectBoard = {
       lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],

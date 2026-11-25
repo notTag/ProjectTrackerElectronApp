@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { activeWorkflow, boardWorkflows } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
@@ -68,6 +68,11 @@ const closeOnOutsideClick = (event: PointerEvent) => {
   if (rootRef.value?.contains(event.target as Node)) return
   close()
 }
+
+// The open list stays clickable after the trigger disables, so shut it too.
+watch(agentsRunning, (running) => {
+  if (running) close()
+})
 
 onMounted(() => window.addEventListener('pointerdown', closeOnOutsideClick))
 onBeforeUnmount(() => window.removeEventListener('pointerdown', closeOnOutsideClick))

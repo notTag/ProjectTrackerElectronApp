@@ -420,6 +420,25 @@ describe('row-level writes', () => {
     expect(reopenedBoard(userDataPath, projectPath).activeWorkflowId).toBe('default')
   })
 
+  it('un-closes tickets when a swap lands them in a lane that no longer closes', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const closedCount = () =>
+      database.prepare('SELECT COUNT(*) AS n FROM tickets WHERE project_path = ? AND closed_at IS NOT NULL').get(projectPath)?.n
+    const created = repository.createWorkflow(projectPath, 'Closing')
+    const closingId = created.boards?.[projectPath]?.activeWorkflowId ?? ''
+    repository.updateSwimLane(projectPath, 'idea', { closesTicket: true })
+    const closedInClosing = closedCount()
+    expect(closedInClosing).toBeGreaterThan(0)
+
+    repository.activateWorkflow(projectPath, 'default')
+    expect(closedCount()).toBe(0)
+    repository.activateWorkflow(projectPath, closingId)
+    expect(closedCount()).toBe(closedInClosing)
+    database.close()
+  })
+
   it('refuses to create a lane whose id is already stored, keeping its config', () => {
     const userDataPath = freshUserDataPath()
     const { repository, projectPath } = seededRepository(userDataPath)

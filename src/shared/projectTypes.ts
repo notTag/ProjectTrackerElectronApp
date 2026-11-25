@@ -1691,9 +1691,8 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
 export const keepParkedLaneIds = (stored: ProjectBoard | undefined, edited: ProjectBoard): ProjectBoard => {
   if (!stored) return edited
   const storedLaneIds = new Set([...stored.lanes.map((lane) => lane.id), UNASSIGNED_LANE_ID])
-  const parkedLaneById = new Map(
-    stored.tickets.filter((ticket) => !storedLaneIds.has(ticket.laneId)).map((ticket) => [ticket.id, ticket.laneId])
-  )
+  const parkedTickets = stored.tickets.filter((ticket) => !storedLaneIds.has(ticket.laneId))
+  const parkedLaneById = new Map(parkedTickets.map((ticket) => [ticket.id, ticket.laneId]))
   if (parkedLaneById.size === 0) return edited
   const tickets = edited.tickets.map((ticket) => {
     const parkedLaneId = parkedLaneById.get(ticket.id)
@@ -1736,9 +1735,12 @@ export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): Projec
     lanes,
     ...(board.unassignedLane && { unassignedLane: withoutNextLane(board.unassignedLane, laneId) })
   }
+  // Another workflow may still hold this lane, so with several workflows its
+  // tickets are parked like on a swap: No status now, back in it on swap back.
+  const parksTickets = boardWorkflows(board).length > 1
   const tickets = board.tickets.map((ticket) => {
     const targetBefore = effectiveNextLaneId(ticket, boardLaneById(board, ticket.laneId))
-    const fixed = withoutLane(ticket, laneId)
+    const fixed = parksTickets ? ticket : withoutLane(ticket, laneId)
     const targetAfter = effectiveNextLaneId(fixed, boardLaneById(laneBoard, fixed.laneId))
     return targetAfter === targetBefore ? fixed : { ...fixed, moveOnComplete: false }
   })

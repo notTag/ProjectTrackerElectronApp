@@ -629,6 +629,14 @@ export class StateRepository {
       this.snapshotLanesInto(projectPath, activeId)
       this.run('DELETE FROM swim_lanes WHERE project_path = ?', [projectPath])
       this.insertLaneRows(projectPath, String(target.lanes_json))
+      // The insert trigger closes tickets in the target's closing lanes; this
+      // is the unflag half, matching swim_lanes_closed_at_on_flag.
+      this.run(
+        `UPDATE tickets SET closed_at = NULL
+         WHERE project_path = ? AND closed_at IS NOT NULL
+           AND lane_id IN (SELECT id FROM swim_lanes WHERE project_path = ? AND closes_ticket = 0)`,
+        [projectPath, projectPath]
+      )
       this.run('UPDATE projects SET active_workflow_id = ? WHERE path = ?', [workflowId, projectPath])
     })
     return this.getState()
@@ -662,7 +670,9 @@ export class StateRepository {
     const activeId = asText(project.active_workflow_id) ?? DEFAULT_WORKFLOW_ID
     const activeRow = this.select('SELECT 1 FROM workflows WHERE project_path = ? AND id = ?', [projectPath, activeId])
     if (activeRow.length === 0) {
-      this.insertWorkflowRow(projectPath, activeId, DEFAULT_WORKFLOW_NAME, this.laneRowsJson(projectPath))
+      const isDefault = activeId === DEFAULT_WORKFLOW_ID
+      const recoveredName = isDefault ? DEFAULT_WORKFLOW_NAME : `Recovered ${activeId.slice(0, 8)}`
+      this.insertWorkflowRow(projectPath, activeId, recoveredName, this.laneRowsJson(projectPath))
     }
     this.run('UPDATE projects SET active_workflow_id = ? WHERE path = ?', [activeId, projectPath])
     return activeId
@@ -690,7 +700,8 @@ export class StateRepository {
   // Columns come from the snapshot's keys, so only real swim_lanes columns are
   // let into the SQL: lanes_json is plain text an outside writer could edit.
   private insertLaneRows(projectPath: string, lanesJson: string) {
-    const rows = parseJson<Row[]>(lanesJson, [])
+    // ponytail: JSON.parse throws on corrupt text, rolling the swap back instead of emptying the board.
+    const rows = JSON.parse(lanesJson) as Row[]
     if (!Array.isArray(rows)) throw new Error('Workflow lanes are not a list.')
     const tableColumns = this.select('PRAGMA table_info(swim_lanes)').map((column) => String(column.name))
     for (const row of rows) {
