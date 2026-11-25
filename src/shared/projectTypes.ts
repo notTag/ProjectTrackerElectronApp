@@ -1867,25 +1867,26 @@ export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
 // Display-only, like TICKET_MODAL_FIELDS: a hidden lane setting keeps its value
 // and the agent still gets it. The lane name always shows.
 export const LANE_MODAL_FIELDS = [
-  { id: 'agentPrompt', label: 'Agent prompt' },
-  { id: 'agentFile', label: 'Agent markdown file' },
-  { id: 'output', label: 'Output' },
-  { id: 'orchestratorPrompt', label: 'Orchestrator prompt' },
-  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file' },
-  { id: 'orchestratorPoll', label: 'Orchestrator poll' },
-  { id: 'autoRunAgent', label: 'Agent' },
-  { id: 'autoRunShell', label: 'Shell' },
-  { id: 'autoRunModel', label: 'Model' },
-  { id: 'orchestratorAgent', label: 'Orchestrator agent' },
-  { id: 'orchestratorModel', label: 'Orchestrator model' },
-  { id: 'worktrees', label: 'Worktree and branch per ticket' },
-  { id: 'fullAuto', label: 'Full auto' },
-  { id: 'nextLane', label: 'Next Lane' },
-  { id: 'agentSetsVersion', label: 'Agent sets semantic version' },
-  { id: 'closesTicket', label: 'Counts as closed' }
+  { id: 'agentPrompt', label: 'Agent prompt', section: 'agent' },
+  { id: 'agentFile', label: 'Agent markdown file', section: 'agent' },
+  { id: 'output', label: 'Output', section: 'agent' },
+  { id: 'orchestratorPrompt', label: 'Orchestrator prompt', section: 'orchestrator' },
+  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file', section: 'orchestrator' },
+  { id: 'orchestratorPoll', label: 'Orchestrator poll', section: 'orchestrator' },
+  { id: 'orchestratorAgent', label: 'Orchestrator agent', section: 'orchestrator' },
+  { id: 'orchestratorModel', label: 'Orchestrator model', section: 'orchestrator' },
+  { id: 'autoRunAgent', label: 'Agent', section: 'autoRun' },
+  { id: 'autoRunShell', label: 'Shell', section: 'autoRun' },
+  { id: 'autoRunModel', label: 'Model', section: 'autoRun' },
+  { id: 'worktrees', label: 'Worktree and branch per ticket', section: 'autoRun' },
+  { id: 'fullAuto', label: 'Full auto', section: 'autoRun' },
+  { id: 'nextLane', label: 'Next Lane', section: 'autoRun' },
+  { id: 'agentSetsVersion', label: 'Agent sets semantic version', section: 'autoRun' },
+  { id: 'closesTicket', label: 'Counts as closed', section: 'autoRun' }
 ] as const
 
 export type LaneModalField = (typeof LANE_MODAL_FIELDS)[number]['id']
+export type LaneModalSection = (typeof LANE_MODAL_FIELDS)[number]['section']
 
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
