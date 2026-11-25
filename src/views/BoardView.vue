@@ -1902,6 +1902,12 @@ const runTicketAgent = (ticket: Ticket) => {
         <InfoTip text="Show/Hide Ticket Card fields" />
       </span>
       <ul class="card-field-list">
+        <li>
+          <label>
+            <input type="checkbox" checked disabled />
+            Title
+          </label>
+        </li>
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
             <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
