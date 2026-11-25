@@ -325,7 +325,7 @@ From left to right:
 
 #### UI Settings panel (⚙ Settings → 🎚 UI Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **🎚 UI Settings** in the Settings modal closes the modal and opens a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first: the 🎚 button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- **🎚 UI Settings** in the Settings modal closes the modal and opens a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
 - Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.

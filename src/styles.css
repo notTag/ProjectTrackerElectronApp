@@ -70,15 +70,17 @@ body {
   -webkit-app-region: drag;
 }
 
-/* The lead group (title + Open In + ⌁ Open) takes only leftover width; the
-   title inside it ellipsizes so its buttons never get pushed off. The empty
-   rest of the group stays a drag handle. */
+/* The lead group (title + Open In + ⌁ Open) flattens into the titlebar row so
+   only the title shrinks (ellipsizes); its buttons keep their width and can't
+   spill over the right cluster. The auto margin leaves the gap before the
+   right cluster as a drag handle. */
 .titlebar-lead {
-  display: flex;
-  flex: 1 1 0;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+  display: contents;
+}
+
+.titlebar-lead > .titlebar-actions {
+  flex-shrink: 0;
+  margin-right: auto;
 }
 
 /* Opens rightward: leftward would run under the traffic lights. */
@@ -124,9 +126,10 @@ body {
   white-space: nowrap;
 }
 
-/* Measured in-app: the board actions need ~850px, so with a ~225px project
-   title (e.g. "ProjectTracker/electron-app") the title stops fitting below
-   ~1180px. Tighten the buttons to win back title width before it ellipsizes. */
+/* Measured in-app: the Dashboard actions need ~850px, so with a ~225px title
+   the title stops fitting below ~1180px. The board needs less (~540px right
+   cluster + ~200px Open In/⌁ Open beside its title, so ~1070px). Tighten the
+   buttons to win back title width before it ellipsizes. */
 @media (max-width: 1180px) {
   .titlebar-actions {
     gap: 4px;
@@ -2207,6 +2210,7 @@ span.ticket-image-thumb {
   box-shadow: none;
 }
 
+/* The titlebar selector is for the Dashboard header's Metrics popover. */
 .settings-modal .metrics-popover-header button,
 .titlebar-actions .metrics-popover-header button {
   min-width: 28px;

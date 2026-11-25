@@ -3,7 +3,7 @@
 Branch `t137-header-menu-bar` · worktree `.worktrees/t137`
 
 ## Problem
-Board header (`src/views/BoardView.vue:1563-1604`) holds 10 controls in one right-aligned cluster: ← Projects, 📊 Metrics, Open In, ⌁ Open, + Ticket, ⇣ Pull issues, + Swim lane, ⚙ Display, 🎚 UI Demo. Too crowded. Fix: move Metrics + Display into a Settings modal, put Open In + ⌁ Open next to the project title.
+Board header (`src/views/BoardView.vue:1563-1604`) holds 10 controls in one right-aligned cluster: ← Projects, 📊 Metrics, Open In, ⌁ Open, + Ticket, ⇣ Pull issues, + Swim lane, ⚙ Display, ⚙ Settings (UI panel, was 🎚 UI Demo). Too crowded. Fix: move Metrics + Display into a Settings modal, put Open In + ⌁ Open next to the project title.
 
 ## Current state (verified)
 - No app-level "Settings modal" exists. The only board-wide modal is the ⚙ Display modal (`boardSettingsOpen`, `BoardView.vue:138`, template l.1878-1924: card fields, lane settings fields, columns)
@@ -14,13 +14,14 @@ Board header (`src/views/BoardView.vue:1563-1604`) holds 10 controls in one righ
 
 ## Decisions (defaults taken, full auto)
 - D1. New header button `⚙ Settings` (replaces `⚙ Display` slot) opens a new Settings modal (`settingsOpen` ref). The Settings modal is the "Settings modal" the ticket names
-- D2. Settings modal has one section, eyebrow "Board Settings", holding:
+- D2. Settings modal has two sections. Eyebrow "Board Settings" holds:
 	- `<MetricsPanel :project-paths="[projectPath]" scope="board" />` — popover renders inline inside the modal: `.settings-modal .metrics-popover { position: static; }` → no clipping, modal grows
 	- `⚙ Display` button → `settingsOpen = false; boardSettingsOpen = true` (swap, never stacked modals)
+- D2b. Eyebrow "UI Settings" (added on merge with main #173, whose UI panel button was also named `⚙ Settings`): `🎚 UI Settings` → `settingsOpen = false; uiDemoPanelOpen = true` (same swap)
 - D3. Display modal itself unchanged (rename of `boardSettingsOpen` not needed)
 - D4. Left group: wrap title + Open In + ⌁ Open in `<div class="titlebar-lead">`
-	- `.titlebar-lead { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 8px; }`
-	- `.titlebar-title` → `flex: 0 1 auto` (still ellipsizes); the empty rest of `.titlebar-lead` stays a drag handle
+	- `.titlebar-lead { display: contents; }` → title + buttons sit in the titlebar row; only the title shrinks, so buttons never overlap the right cluster
+	- `.titlebar-title` → `flex: 0 1 auto` (still ellipsizes); lead buttons get `margin-right: auto`, the gap after them stays a drag handle
 	- Open In + ⌁ Open wrapped in `<div class="titlebar-actions">` reuse (no-drag + button sizing) — or new `.titlebar-lead-actions` with `-webkit-app-region: no-drag; flex-shrink: 0`
 	- Open In popover: `.titlebar-lead .filter-popover { left: 0; right: auto; }` → opens rightward, not over the traffic lights
 - D5. Order left→right: `<title> | Open In ▾ | ⌁ Open`
@@ -49,5 +50,5 @@ Board header (`src/views/BoardView.vue:1563-1604`) holds 10 controls in one righ
 
 ## Out of scope
 - Dashboard header
-- Moving other header buttons (+ Ticket, Pull issues, + Swim lane, UI Demo) into Settings
+- Moving other header buttons (+ Ticket, Pull issues, + Swim lane) into Settings
 - Restyling the Display modal content
