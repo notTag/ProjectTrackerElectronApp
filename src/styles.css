@@ -1578,6 +1578,49 @@ code {
   gap: 12px;
 }
 
+/* Wrapper div, not flex on <details>: flex on <details> needs a recent Chromium.
+   Declared before .ticket-agent so the Auto Run body keeps its 8px gap. */
+.lane-settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.lane-settings-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.lane-settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.lane-settings-section > summary::before {
+  content: '›';
+  transition: transform 120ms ease;
+}
+
+.lane-settings-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.lane-settings-section > summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-settings-section > summary::before {
+    transition: none;
+  }
+}
+
 /* Wider than the default modal: descriptions and the generated agent command
    are both long monospace blocks that wrap badly at 560px. */
 .ticket-modal {
@@ -2045,15 +2088,26 @@ span.ticket-image-thumb {
 .is-graph .view-switch-slider { transform: translateX(0); }
 .ticket-graph { display: flex; min-height: 450px; flex: 1; min-width: 0; }
 .graph-scroll { flex: 1; min-width: 0; max-height: calc(100vh - 210px); overflow: auto; }
-.graph-canvas { position: relative; }
-.graph-edges { position: absolute; inset: 0; color: var(--color-text-muted); }
+.graph-canvas { position: relative; user-select: none; }
+.graph-canvas.connecting, .graph-canvas.connecting * { cursor: crosshair; }
+.graph-edges { position: absolute; inset: 0; color: var(--color-text-muted); pointer-events: none; }
 .graph-edge { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .7; marker-end: url(#ticket-graph-arrow); }
-.graph-edge-override { stroke: var(--color-accent); stroke-dasharray: 5 4; }
-.graph-edge-label { fill: var(--color-accent); font-size: 11px; }
-.graph-node {
+.graph-edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.graph-edge-group:hover .graph-edge, .graph-edge-group.selected .graph-edge { color: var(--color-accent); stroke: var(--color-accent); opacity: 1; stroke-width: 2.5; }
+.graph-edge-live { stroke: var(--color-accent); stroke-dasharray: 5 4; opacity: 1; }
+.graph-edge-delete {
   position: absolute;
-  transform: translateY(-50%);
-  width: 180px;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 1;
+}
+.graph-lane-node { position: absolute; transform: translateY(-50%); width: 180px; }
+.graph-node {
+  display: block;
+  width: 100%;
   min-height: 48px;
   max-height: 58px;
   padding: 6px 12px;
@@ -2065,14 +2119,31 @@ span.ticket-image-thumb {
   color: var(--color-text);
   border: 1px solid var(--color-text-muted);
   border-radius: 12px;
+  cursor: grab;
 }
+.graph-node:active { cursor: grabbing; }
 .graph-node small { display: block; font-size: 10px; color: var(--color-text-muted); }
 .graph-node:hover, .graph-node.selected { border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent); }
 /* DFA notation: double border = terminal state, dimmed = no incoming transition. */
 .graph-lane.terminal { border: 3px double var(--color-text-muted); }
 .graph-lane.unreachable { opacity: .5; }
 .graph-lane.unreachable:hover, .graph-lane.unreachable.selected { opacity: 1; }
-.graph-armed { color: var(--color-accent); }
+.graph-dot {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 2px solid var(--color-text-muted);
+  transform: translate(-50%, -50%);
+  cursor: crosshair;
+  touch-action: none;
+}
+.graph-dot-left { left: 0; }
+.graph-dot-right { left: 100%; }
+.graph-dot:hover, .graph-canvas.connecting .graph-dot:hover { background: var(--color-accent); border-color: var(--color-accent); transform: translate(-50%, -50%) scale(1.3); }
+.graph-add-lane { width: 100%; margin-top: 8px; }
 .graph-details-heading { margin: 18px 0 4px; font-size: 13px; color: var(--color-text-muted); }
 .graph-transition { margin: 4px 0; }
 .graph-back { margin-bottom: 12px; }
