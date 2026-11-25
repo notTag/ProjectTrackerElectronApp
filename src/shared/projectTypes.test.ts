@@ -736,6 +736,33 @@ describe('ticketShellCommand', () => {
     expect(promptWithoutInstructions).not.toContain('Instructions')
   })
 
+  // #136: a field with no section would never render in the lane modal.
+  it('puts every lane settings field in the Agent, Orchestrator or Auto Run section', () => {
+    const fieldIdsIn = (section: string) =>
+      LANE_MODAL_FIELDS.filter((field) => field.section === section).map((field) => field.id)
+
+    expect(fieldIdsIn('agent')).toEqual(['agentPrompt', 'agentFile', 'output'])
+    expect(fieldIdsIn('orchestrator')).toEqual([
+      'orchestratorPrompt',
+      'orchestratorFile',
+      'orchestratorPoll',
+      'orchestratorAgent',
+      'orchestratorModel'
+    ])
+    expect(fieldIdsIn('autoRun')).toEqual([
+      'autoRunAgent',
+      'autoRunShell',
+      'autoRunModel',
+      'worktrees',
+      'fullAuto',
+      'nextLane',
+      'agentSetsVersion',
+      'closesTicket'
+    ])
+    const sectionedFieldCount = ['agent', 'orchestrator', 'autoRun'].flatMap(fieldIdsIn).length
+    expect(sectionedFieldCount).toBe(LANE_MODAL_FIELDS.length)
+  })
+
   it('lists external links only when the ticket has some', () => {
     const linkedTicket = ticket({ externalLinks: ['https://figma.com/f', 'https://slack.com/t'] })
     expect(ticketAgentPrompt(linkedTicket, lane())).toContain('Links:\n- https://figma.com/f\n- https://slack.com/t')
