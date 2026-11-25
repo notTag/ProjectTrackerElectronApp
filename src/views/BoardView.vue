@@ -2558,7 +2558,15 @@ const runTicketAgent = (ticket: Ticket) => {
         :open="laneModalSectionsOpen.orchestrator"
         @toggle="rememberLaneSectionOpen('orchestrator', $event)"
       >
-        <summary class="eyebrow">Orchestrator</summary>
+        <summary class="eyebrow">
+          Orchestrator
+          <span
+            v-if="openLaneMissingOrchestratorTokens.length && !laneModalSectionsOpen.orchestrator"
+            class="field-error"
+          >
+            · prompt missing {{ openLaneMissingOrchestratorTokens.join(', ') }}
+          </span>
+        </summary>
         <div class="lane-settings-section-body">
           <label v-if="showsLaneField('orchestratorPrompt', openLane.id)" for="lane-orchestrator-prompt">
             <span class="label-with-tip">

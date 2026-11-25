@@ -319,7 +319,7 @@ From left to right:
 ### 3.5 Display settings modal (⚙ Display)
 
 - **Ticket card display**: a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Semantic version). All are on by default.
-- **Swim lane settings fields**: a checkbox per Lane settings modal field (grouped as Agent / Orchestrator / Auto Run, in the modal's order). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
+- **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
 - **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
@@ -456,7 +456,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
 - **Closed-eye button** (left of Expand): checkboxes for this lane's settings fields, this lane only (`hiddenLaneModalFieldsByLane`). The Display modal list is the default; a field hidden there shows disabled with "Hidden for the whole board". Display-only. Lane name always shows.
 - **Lane name** input, for renaming.
-- Fields below the name sit in 3 collapsable sections, **Agent**, **Orchestrator**, **Auto Run** (native `<details>`: click the header, or Enter/Space with it focused; chevron rotates when open). All open by default. Open/closed is shared by every lane and kept until the app restarts (`laneModalSectionsOpen` in `src/modalWidth.ts`, #136). A section with every field hidden (closed-eye or Display) isn't shown. Collapsing keeps values: a focused prompt blurs and stores on the header click.
+- Fields below the name sit in 3 collapsable sections, **Agent**, **Orchestrator**, **Auto Run** (native `<details>`: click the header, or Enter/Space with it focused; chevron rotates when open). All open by default. Open/closed is shared by every lane and kept until the app restarts (`laneModalSectionsOpen` in `src/modalWidth.ts`, #136). A section with every field hidden (closed-eye or Display) isn't shown. Collapsing keeps values: a focused prompt blurs and stores on the header click. A collapsed Orchestrator header still shows the missing-token warning.
 - **Agent** section:
   - **Agent prompt** textarea: standing instructions for every ticket in this lane. An ⓘ icon beside it shows a tooltip on hover or keyboard focus (#102).
   - **Autosave to markdown** (no button): 1s after typing stops, the prompt is written to the lane's markdown file, and a new file path is stored on the lane. The prompt text itself is stored on blur, as before. The box is bound to the typed draft, so autosave status, a first-save path update or an outside DB refresh never puts old text back mid-typing (#92). Leaving the box, switching lanes or closing the modal saves at once. Saves run one at a time, in order.

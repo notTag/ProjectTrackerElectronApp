@@ -736,7 +736,7 @@ describe('ticketShellCommand', () => {
     expect(promptWithoutInstructions).not.toContain('Instructions')
   })
 
-  // #136: a field with no section would never render in the lane modal.
+  // #136: pins each field's section + order so the Display list, closed-eye list and lane modal stay in sync.
   it('puts every lane settings field in the Agent, Orchestrator or Auto Run section', () => {
     const fieldIdsIn = (section: string) =>
       LANE_MODAL_FIELDS.filter((field) => field.section === section).map((field) => field.id)
