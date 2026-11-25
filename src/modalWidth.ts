@@ -8,7 +8,7 @@ export const ticketModalExpanded = ref(false)
 export const laneModalExpanded = ref(false)
 
 // Half on the backdrop, half on the modal: a scrolling modal's right edge is its
-// scrollbar, which swallows pointer events, so the outer half is what stays grabbable.
+// scrollbar, so there only the outer half is grabbable.
 const EDGE_GRAB_PX = 6
 
 type Edge = 'left' | 'right'
@@ -18,6 +18,11 @@ function edgeUnderPointer(modal: HTMLElement, event: PointerEvent): Edge | null 
   const rect = modal.getBoundingClientRect()
   const isWithinModalHeight = event.clientY >= rect.top && event.clientY <= rect.bottom
   if (!isWithinModalHeight) return null
+  // A press on the scrollbar scrolls natively and never delivers pointerup here,
+  // so starting a resize there would leave it stuck on.
+  const scrollbarStart = rect.left + modal.clientLeft + modal.clientWidth
+  const isOnScrollbar = event.clientX >= scrollbarStart && event.clientX <= rect.right
+  if (isOnScrollbar) return null
   const distanceFromLeft = Math.abs(event.clientX - rect.left)
   const distanceFromRight = Math.abs(event.clientX - rect.right)
   if (distanceFromLeft <= EDGE_GRAB_PX) return 'left'
@@ -58,6 +63,8 @@ export const vEdgeResize: Directive<HTMLElement> = {
         const outwardDirection = edge === 'right' ? 1 : -1
 
         const resizeToPointer = (moveEvent: PointerEvent) => {
+          const isButtonReleased = moveEvent.buttons === 0
+          if (isButtonReleased) return stopResizing()
           const outwardDelta = (moveEvent.clientX - startX) * outwardDirection
           // The backdrop centres the modal, so it grows on both sides: 2x keeps the dragged edge under the pointer.
           const nextWidth = startWidth + outwardDelta * 2
