@@ -1,29 +1,33 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { effectiveNextLaneId, laneTransitions, promptRules, rulesToPrompt, type LaneTransition, type SwimLane, type Ticket } from '@/shared/projectTypes'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  graphPositionRightOf,
+  laneGraphPosition,
+  laneTransitions,
+  promptRules,
+  rulesToPrompt,
+  type GraphPosition,
+  type SwimLane,
+  type Ticket
+} from '@/shared/projectTypes'
 
 type PromptField = 'agentPrompt' | 'orchestratorPrompt'
+type LaneGraphPatch = Partial<Pick<SwimLane, PromptField | 'nextLaneId' | 'graphPosition'>>
 
 const props = defineProps<{ projectName: string; lanes: SwimLane[]; boardLanes: SwimLane[]; tickets: Ticket[]; ticketOpen: boolean }>()
-const emit = defineEmits<{ ticket: [id: string]; selection: []; editLane: [lane: SwimLane, patch: Partial<Pick<SwimLane, PromptField>>] }>()
+const emit = defineEmits<{ selection: []; editLane: [lane: SwimLane, patch: LaneGraphPatch]; addLane: [position: GraphPosition] }>()
 
-// ponytail: hand-rolled layout, one row of states. Swap for a layered layout
-// (e.g. dagre) if wide boards make the arcs unreadable.
-const LEFT_MARGIN = 50
-const COLUMN_WIDTH = 220
+// ponytail: free-form canvas, no zoom/pan or auto-layout. Add dagre if boards outgrow manual placement.
 const NODE_WIDTH = 180
-const NODE_HALF_HEIGHT = 26
-const TICKET_SPACING = 64
-const LABEL_ROOM = 24
+const CANVAS_MARGIN = 80
+const DRAG_THRESHOLD = 4
 
+const canvasElement = ref<HTMLElement>()
 const selectedLaneId = ref<string | null>(null)
+const selectedEdgeFromId = ref<string | null>(null)
 const selectedLane = computed(() => props.lanes.find(lane => lane.id === selectedLaneId.value))
-const laneTickets = (id: string) => props.tickets.filter(ticket => ticket.laneId === id)
-const transitions = computed(() => laneTransitions(props.lanes, props.tickets))
-
-const laneIndexById = computed(() => new Map(props.lanes.map((lane, index) => [lane.id, index])))
-const laneCenterX = (index: number) => LEFT_MARGIN + index * COLUMN_WIDTH + NODE_WIDTH / 2
-const arcHeight = (span: number) => 24 + 22 * span
+const laneTicketCount = (id: string) => props.tickets.filter(ticket => ticket.laneId === id).length
+const transitions = computed(() => laneTransitions(props.lanes, []))
 
 // Mirrors completionMoves: a target only counts if it's another lane still on the board.
 function movingTarget(fromLaneId: string, targetId: string | undefined) {
@@ -31,13 +35,6 @@ function movingTarget(fromLaneId: string, targetId: string | undefined) {
   return isOtherBoardLane ? targetId : undefined
 }
 const boardTargetIds = computed(() => new Set(props.boardLanes.map(lane => movingTarget(lane.id, lane.nextLaneId))))
-const willMove = (ticket: Ticket, lane: SwimLane) => Boolean(ticket.moveOnComplete && movingTarget(lane.id, effectiveNextLaneId(ticket, lane)))
-
-const transitionKey = (transition: LaneTransition) => `${transition.kind}:${transition.from}->${transition.to}`
-function ticketCountLabel(transition: LaneTransition) {
-  const ticketCount = transition.ticketIds.length
-  return `${ticketCount} ticket${ticketCount === 1 ? '' : 's'}`
-}
 
 function laneLabel(id: string | undefined) {
   if (!id) return undefined
@@ -47,74 +44,190 @@ function laneLabel(id: string | undefined) {
   return boardLane ? `${boardLane.name} (hidden)` : undefined
 }
 
-function edgeGeometry(transition: LaneTransition) {
-  const fromIndex = laneIndexById.value.get(transition.from)!
-  const toIndex = laneIndexById.value.get(transition.to)!
-  const isForward = toIndex > fromIndex
-  const isOverride = transition.kind === 'override'
-  const span = Math.abs(toIndex - fromIndex)
-  const height = arcHeight(span) + (isOverride ? 14 : 0)
-  // Overrides leave and land a little further out so they don't overlap the lane edge.
-  const endInset = isOverride ? 40 : 20
-  const direction = isForward ? 1 : -1
-  const startX = laneCenterX(fromIndex) + endInset * direction
-  const endX = laneCenterX(toIndex) - endInset * direction
-  return { isForward, height, startX, endX }
+// Positions while a node is mid-drag; the saved graphPosition takes over after drop.
+const draggedPositions = ref(new Map<string, GraphPosition>())
+const positionById = computed(() => new Map(props.lanes.map((lane, index) => {
+  const position = draggedPositions.value.get(lane.id) ?? laneGraphPosition(lane, index)
+  return [lane.id, position]
+})))
+const positionOf = (laneId: string) => positionById.value.get(laneId)!
+const leftDot = (laneId: string) => positionOf(laneId)
+const rightDot = (laneId: string) => {
+  const position = positionOf(laneId)
+  return { x: position.x + NODE_WIDTH, y: position.y }
 }
 
-const layout = computed(() => {
-  const edges = transitions.value.map(transition => ({ transition, ...edgeGeometry(transition) }))
-  const forwardHeights = edges.filter(edge => edge.isForward).map(edge => edge.height)
-  const backwardHeights = edges.filter(edge => !edge.isForward).map(edge => edge.height)
-  const forwardBand = Math.max(0, ...forwardHeights) * 0.75 + LABEL_ROOM
-  const backwardBand = Math.max(0, ...backwardHeights) * 0.75 + LABEL_ROOM
+function bezier(start: GraphPosition, end: GraphPosition, startDirection = 1) {
+  const horizontalSpan = Math.abs(end.x - start.x)
+  const pull = Math.max(40, horizontalSpan / 2)
+  // An arrow pointing back left would run straight through the nodes between, so it loops below them.
+  const isBackward = startDirection === 1 && end.x < start.x
+  const loopDrop = isBackward ? 60 + horizontalSpan * 0.1 : 0
+  const control1 = { x: start.x + pull * startDirection, y: start.y + loopDrop }
+  const control2 = { x: end.x - pull, y: end.y + loopDrop }
+  // A cubic's t = 0.5 point, for the edge's delete button.
+  const middle = {
+    x: (start.x + 3 * control1.x + 3 * control2.x + end.x) / 8,
+    y: (start.y + 3 * control1.y + 3 * control2.y + end.y) / 8
+  }
+  const d = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`
+  return { d, middle }
+}
 
-  const stateY = 20 + forwardBand + NODE_HALF_HEIGHT
-  const stateTop = stateY - NODE_HALF_HEIGHT
-  const stateBottom = stateY + NODE_HALF_HEIGHT
-  const ticketsTop = stateBottom + backwardBand + 20
+// Arrows stop short of the target dot so it doesn't cover the arrowhead.
+const DOT_RADIUS = 7
+const edges = computed(() => transitions.value.map(transition => {
+  const targetDot = leftDot(transition.to)
+  const arrowTip = { x: targetDot.x - DOT_RADIUS, y: targetDot.y }
+  const { d, middle } = bezier(rightDot(transition.from), arrowTip)
+  return { from: transition.from, d, middle }
+}))
 
-  const paths = edges.map(edge => {
-    const anchorY = edge.isForward ? stateTop : stateBottom
-    const controlY = edge.isForward ? anchorY - edge.height : anchorY + edge.height
-    // A cubic's apex sits 3/4 of the way to its control points.
-    const apexY = anchorY + (controlY - anchorY) * 0.75
-    const labelY = edge.isForward ? apexY - 4 : apexY + 12
-    const d = `M ${edge.startX} ${anchorY} C ${edge.startX} ${controlY}, ${edge.endX} ${controlY}, ${edge.endX} ${anchorY}`
-    const isOverride = edge.transition.kind === 'override'
-    const label = isOverride ? ticketCountLabel(edge.transition) : ''
-    const labelX = (edge.startX + edge.endX) / 2
-    return { key: transitionKey(edge.transition), d, kind: edge.transition.kind, label, labelX, labelY }
-  })
+const states = computed(() => props.lanes.map((lane, index) => {
+  const isStart = index === 0
+  return {
+    lane,
+    position: positionOf(lane.id),
+    isTerminal: Boolean(lane.closesTicket) || !movingTarget(lane.id, lane.nextLaneId),
+    // Hidden lanes still feed their Next Lane, so reachability uses the whole board.
+    isUnreachable: !isStart && !boardTargetIds.value.has(lane.id)
+  }
+}))
 
-  // Hidden lanes still feed their Next Lane, so reachability uses the whole board.
-  const visibleTargetIds = transitions.value.map(transition => transition.to)
-  const targetIds = new Set([...boardTargetIds.value, ...visibleTargetIds])
-  const states = props.lanes.map((lane, index) => {
-    const isStart = index === 0
-    const tickets = laneTickets(lane.id)
-    const nodes = tickets.map((ticket, ticketIndex) => ({ ticket, y: ticketsTop + NODE_HALF_HEIGHT + ticketIndex * TICKET_SPACING }))
-    return {
-      lane,
-      x: LEFT_MARGIN + index * COLUMN_WIDTH,
-      nodes,
-      isTerminal: Boolean(lane.closesTicket) || !movingTarget(lane.id, lane.nextLaneId),
-      isUnreachable: !isStart && !targetIds.has(lane.id)
-    }
-  })
-
-  const tallestColumn = Math.max(0, ...states.map(state => state.nodes.length))
-  const height = Math.max(400, ticketsTop + tallestColumn * TICKET_SPACING + 20)
-  const width = LEFT_MARGIN + props.lanes.length * COLUMN_WIDTH
-  return { states, paths, stateY, height, width }
+const canvasSize = computed(() => {
+  const positions = [...positionById.value.values()]
+  const farthestX = Math.max(0, ...positions.map(position => position.x + NODE_WIDTH))
+  const lowestY = Math.max(0, ...positions.map(position => position.y))
+  return { width: farthestX + CANVAS_MARGIN, height: Math.max(400, lowestY + CANVAS_MARGIN) }
 })
 
-const transitionLines = computed(() => transitions.value.map(transition => {
-  const from = laneLabel(transition.from)
-  const to = laneLabel(transition.to)
-  const overrideNote = transition.kind === 'override' ? ` (${ticketCountLabel(transition)})` : ''
-  return { key: transitionKey(transition), text: `${from} → ${to}${overrideNote}` }
-}))
+const entryEdge = computed(() => {
+  const firstLane = props.lanes[0]
+  if (!firstLane) return undefined
+  const end = leftDot(firstLane.id)
+  return `M ${Math.max(0, end.x - 44)} ${end.y} L ${end.x - DOT_RADIUS} ${end.y}`
+})
+
+function canvasPoint(event: PointerEvent): GraphPosition {
+  const bounds = canvasElement.value!.getBoundingClientRect()
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+}
+
+// --- Node dragging: a press that never passes DRAG_THRESHOLD stays a click.
+let nodeDrag: { lane: SwimLane; pointerStart: GraphPosition; nodeStart: GraphPosition; moved: boolean } | null = null
+let suppressNextClick = false
+
+function startNodeDrag(lane: SwimLane, event: PointerEvent) {
+  if (event.button !== 0) return
+  nodeDrag = { lane, pointerStart: canvasPoint(event), nodeStart: positionOf(lane.id), moved: false }
+}
+
+function moveNode(event: PointerEvent) {
+  if (!nodeDrag) return
+  const pointer = canvasPoint(event)
+  const deltaX = pointer.x - nodeDrag.pointerStart.x
+  const deltaY = pointer.y - nodeDrag.pointerStart.y
+  if (!nodeDrag.moved && Math.hypot(deltaX, deltaY) < DRAG_THRESHOLD) return
+  nodeDrag.moved = true
+  const x = Math.max(0, Math.round(nodeDrag.nodeStart.x + deltaX))
+  const y = Math.max(0, Math.round(nodeDrag.nodeStart.y + deltaY))
+  draggedPositions.value = new Map(draggedPositions.value).set(nodeDrag.lane.id, { x, y })
+}
+
+function dropNode() {
+  if (!nodeDrag) return
+  const { lane, moved } = nodeDrag
+  nodeDrag = null
+  if (!moved) return
+  suppressNextClick = true
+  const graphPosition = draggedPositions.value.get(lane.id)!
+  emit('editLane', lane, { graphPosition })
+  const remaining = new Map(draggedPositions.value)
+  remaining.delete(lane.id)
+  draggedPositions.value = remaining
+}
+
+function clickNode(laneId: string) {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    return
+  }
+  selectLane(laneId)
+}
+
+// --- Drag-to-connect: release over another lane's dot sets the origin's Next Lane.
+const connection = ref<{ fromLaneId: string; start: GraphPosition; startDirection: number; pointer: GraphPosition } | null>(null)
+const connectionPath = computed(() => {
+  const current = connection.value
+  return current ? bezier(current.start, current.pointer, current.startDirection).d : undefined
+})
+
+function startConnection(laneId: string, side: 'left' | 'right', event: PointerEvent) {
+  if (event.button !== 0) return
+  const start = side === 'right' ? rightDot(laneId) : leftDot(laneId)
+  connection.value = { fromLaneId: laneId, start, startDirection: side === 'right' ? 1 : -1, pointer: canvasPoint(event) }
+}
+
+function dropConnection(event: PointerEvent) {
+  const current = connection.value
+  if (!current) return
+  connection.value = null
+  const dropTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-dot-lane-id]')
+  const targetLaneId = dropTarget?.dataset.dotLaneId
+  const originLane = props.lanes.find(lane => lane.id === current.fromLaneId)
+  if (!originLane || !targetLaneId || targetLaneId === originLane.id) return
+  emit('editLane', originLane, { nextLaneId: targetLaneId })
+}
+
+function onPointerMove(event: PointerEvent) {
+  moveNode(event)
+  if (connection.value) connection.value = { ...connection.value, pointer: canvasPoint(event) }
+}
+function onPointerUp(event: PointerEvent) {
+  dropNode()
+  dropConnection(event)
+}
+
+// --- Edge selection + delete.
+function selectEdge(fromLaneId: string) {
+  selectedEdgeFromId.value = fromLaneId
+}
+function deleteEdge(fromLaneId: string) {
+  selectedEdgeFromId.value = null
+  const lane = props.lanes.find(candidate => candidate.id === fromLaneId)
+  if (lane) emit('editLane', lane, { nextLaneId: undefined })
+}
+function onKeyDown(event: KeyboardEvent) {
+  const isDeleteKey = event.key === 'Delete' || event.key === 'Backspace'
+  const fromLaneId = selectedEdgeFromId.value
+  if (!isDeleteKey || !fromLaneId) return
+  const target = event.target as HTMLElement | null
+  const isTyping = target?.closest('input, textarea, select, [contenteditable="true"]')
+  if (isTyping) return
+  event.preventDefault()
+  deleteEdge(fromLaneId)
+}
+
+onMounted(() => {
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('keydown', onKeyDown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('keydown', onKeyDown)
+})
+
+function requestAddLane() {
+  const positions = [...positionById.value.values()]
+  emit('addLane', graphPositionRightOf(positions))
+}
+
+const transitionLines = computed(() => transitions.value.map(transition => ({
+  key: `${transition.from}->${transition.to}`,
+  text: `${laneLabel(transition.from)} → ${laneLabel(transition.to)}`
+})))
 
 const selectedLaneDetails = computed(() => {
   const lane = selectedLane.value
@@ -122,14 +235,8 @@ const selectedLaneDetails = computed(() => {
   const incoming = transitions.value
     .filter(transition => transition.to === lane.id)
     .map(transition => laneLabel(transition.from))
-  const uniqueIncoming = [...new Set(incoming)]
-  const overrides = laneTickets(lane.id)
-    .map(ticket => ({ ticket, target: effectiveNextLaneId(ticket, lane) }))
-    .filter(({ target }) => target && target !== lane.nextLaneId)
-    .map(({ ticket, target }) => ({ ticket, targetName: laneLabel(target) }))
-    .filter(({ targetName }) => targetName)
   const nextLaneId = movingTarget(lane.id, lane.nextLaneId)
-  return { nextLaneName: laneLabel(nextLaneId), hasNextLane: Boolean(nextLaneId), incoming: uniqueIncoming, overrides }
+  return { nextLaneName: laneLabel(nextLaneId), hasNextLane: Boolean(nextLaneId), incoming }
 })
 
 const promptSections: { field: PromptField; title: string }[] = [
@@ -167,40 +274,58 @@ function commitOnEnter(event: KeyboardEvent) {
 
 function selectLane(id: string | null) {
   selectedLaneId.value = id
+  selectedEdgeFromId.value = null
   addingRuleTo.value = null
   emit('selection')
 }
 </script>
 
 <template>
-  <section class="ticket-graph" aria-label="Ticket graph">
+  <section class="ticket-graph" aria-label="Lane graph">
     <div class="graph-scroll">
-      <div class="graph-canvas" :style="{ height: `${layout.height}px`, width: `${layout.width}px` }">
-        <svg class="graph-edges" :width="layout.width" :height="layout.height" aria-hidden="true">
+      <div ref="canvasElement" class="graph-canvas" :class="{ connecting: connection }" :style="{ height: `${canvasSize.height}px`, width: `${canvasSize.width}px` }" @click.self="selectedEdgeFromId = null">
+        <svg class="graph-edges" :width="canvasSize.width" :height="canvasSize.height" aria-hidden="true">
           <defs><marker id="ticket-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
-          <path v-if="layout.states.length" class="graph-edge graph-edge-entry" :d="`M 6 ${layout.stateY} L ${LEFT_MARGIN - 4} ${layout.stateY}`" />
-          <template v-for="edge in layout.paths" :key="edge.key">
-            <path class="graph-edge" :class="`graph-edge-${edge.kind}`" :d="edge.d" />
-            <text v-if="edge.label" class="graph-edge-label" :x="edge.labelX" :y="edge.labelY" text-anchor="middle">{{ edge.label }}</text>
-          </template>
+          <path v-if="entryEdge" class="graph-edge graph-edge-entry" :d="entryEdge" />
+          <g v-for="edge in edges" :key="edge.from" class="graph-edge-group" :class="{ selected: selectedEdgeFromId === edge.from }" @click="selectEdge(edge.from)">
+            <path class="graph-edge-hit" :d="edge.d" />
+            <path class="graph-edge" :d="edge.d" />
+          </g>
+          <path v-if="connectionPath" class="graph-edge graph-edge-live" :d="connectionPath" />
         </svg>
-        <template v-for="state in layout.states" :key="state.lane.id">
+        <template v-for="edge in edges" :key="`delete:${edge.from}`">
+          <button
+            v-if="selectedEdgeFromId === edge.from"
+            class="graph-edge-delete"
+            :style="{ left: `${edge.middle.x}px`, top: `${edge.middle.y}px` }"
+            aria-label="Clear Next Lane"
+            title="Clear Next Lane (Delete)"
+            @click="deleteEdge(edge.from)"
+          >×</button>
+        </template>
+        <div
+          v-for="state in states"
+          :key="state.lane.id"
+          class="graph-lane-node"
+          :style="{ top: `${state.position.y}px`, left: `${state.position.x}px` }"
+        >
           <button
             :title="state.lane.name"
             class="graph-node graph-lane"
             :class="{ selected: selectedLaneId === state.lane.id && !ticketOpen, terminal: state.isTerminal, unreachable: state.isUnreachable }"
-            :style="{ top: `${layout.stateY}px`, left: `${state.x}px` }"
-            @click="selectLane(state.lane.id)"
-          ><small>Swim lane · {{ state.nodes.length }}</small>{{ state.lane.name }}</button>
-          <button
-            v-for="node in state.nodes"
-            :key="node.ticket.id"
-            :title="node.ticket.title"
-            class="graph-node graph-ticket"
-            :style="{ top: `${node.y}px`, left: `${state.x}px` }"
-            @click="emit('ticket', node.ticket.id)"
-          ><small>#{{ node.ticket.number }}<span v-if="willMove(node.ticket, state.lane)" class="graph-armed" title="Moves to its Next Lane on completion"> ▶</span></small>{{ node.ticket.title }}</button>
-        </template>
+            @pointerdown="startNodeDrag(state.lane, $event)"
+            @click="clickNode(state.lane.id)"
+          ><small>Swim lane · {{ laneTicketCount(state.lane.id) }}</small>{{ state.lane.name }}</button>
+          <span
+            v-for="side in (['left', 'right'] as const)"
+            :key="side"
+            class="graph-dot"
+            :class="`graph-dot-${side}`"
+            :data-dot-lane-id="state.lane.id"
+            :title="`Drag to set ${state.lane.name}'s Next Lane`"
+            @pointerdown.stop.prevent="startConnection(state.lane.id, side, $event)"
+          />
+        </div>
       </div>
     </div>
     <div v-if="ticketOpen" class="graph-ticket-space" aria-hidden="true" />
@@ -209,14 +334,10 @@ function selectLane(id: string | null) {
       <p class="eyebrow">{{ selectedLane ? 'Swim lane' : 'Project' }}</p>
       <h2>{{ selectedLane?.name ?? projectName }}</h2>
       <template v-if="selectedLane && selectedLaneDetails">
-        <p>{{ laneTickets(selectedLane.id).length }} tickets</p>
+        <p>{{ laneTicketCount(selectedLane.id) }} tickets</p>
         <p v-if="!selectedLaneDetails.hasNextLane">Next Lane: None — tickets stop here</p>
         <p v-else-if="selectedLaneDetails.nextLaneName">Next Lane: {{ selectedLaneDetails.nextLaneName }}</p>
         <p v-if="selectedLaneDetails.incoming.length">Incoming: {{ selectedLaneDetails.incoming.join(', ') }}</p>
-        <template v-if="selectedLaneDetails.overrides.length">
-          <h3 class="graph-details-heading">Ticket overrides</h3>
-          <button v-for="override in selectedLaneDetails.overrides" :key="override.ticket.id" class="graph-list-item secondary" @click="emit('ticket', override.ticket.id)">#{{ override.ticket.number }} → {{ override.targetName }}</button>
-        </template>
         <section v-for="section in promptSections" :key="section.field" class="graph-rules" :aria-label="section.title">
           <h3 class="graph-details-heading">{{ section.title }}</h3>
           <p v-if="section.field === 'agentPrompt' && agentFileName(selectedLane)" class="field-hint">Also follows: {{ agentFileName(selectedLane) }}</p>
@@ -245,10 +366,12 @@ function selectLane(id: string | null) {
       </template>
       <template v-else>
         <p>{{ lanes.length }} swim lanes</p>
-        <button v-for="lane in lanes" :key="lane.id" class="graph-list-item secondary" @click="selectLane(lane.id)">{{ lane.name }} <span>{{ laneTickets(lane.id).length }}</span></button>
+        <button class="secondary graph-add-lane" @click="requestAddLane">+ Add swim lane</button>
+        <button v-for="lane in lanes" :key="lane.id" class="graph-list-item secondary" @click="selectLane(lane.id)">{{ lane.name }} <span>{{ laneTicketCount(lane.id) }}</span></button>
         <h3 class="graph-details-heading">Transitions</h3>
         <p v-for="line in transitionLines" :key="line.key" class="graph-transition">{{ line.text }}</p>
         <p v-if="!transitionLines.length">No Next Lanes set.</p>
+        <p class="field-hint">Drag a lane's edge dot onto another lane's dot to set its Next Lane. Click an arrow, then Delete, to clear it.</p>
       </template>
     </aside>
   </section>

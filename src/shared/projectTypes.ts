@@ -267,6 +267,8 @@ export interface SwimLane {
   // Where this lane's tickets go on completion when they set no Next Lane of
   // their own. Absent means None.
   nextLaneId?: string
+  // Where the lane's node sits in the graph view. Absent means its default row slot.
+  graphPosition?: { x: number; y: number }
 }
 
 export interface ChecklistItem {
@@ -2287,4 +2289,22 @@ export const laneTransitions = (lanes: SwimLane[], tickets: Ticket[]): LaneTrans
     overrideEdges.set(key, edge)
   }
   return [...laneEdges, ...overrideEdges.values()]
+}
+
+// Graph view (#131): node x is its left edge, y its vertical center.
+export const GRAPH_LEFT_MARGIN = 50
+export const GRAPH_COLUMN_WIDTH = 220
+export const GRAPH_ROW_Y = 70
+
+export type GraphPosition = NonNullable<SwimLane['graphPosition']>
+
+// A lane never dragged keeps the #71 row slot, so untouched boards look the same.
+export const laneGraphPosition = (lane: SwimLane, index: number): GraphPosition =>
+  lane.graphPosition ?? { x: GRAPH_LEFT_MARGIN + index * GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
+
+// Where a lane added from the graph lands: one column right of the rightmost node.
+export const graphPositionRightOf = (positions: GraphPosition[]): GraphPosition => {
+  const nodeXs = positions.map((position) => position.x)
+  const rightmostX = Math.max(GRAPH_LEFT_MARGIN - GRAPH_COLUMN_WIDTH, ...nodeXs)
+  return { x: rightmostX + GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
 }

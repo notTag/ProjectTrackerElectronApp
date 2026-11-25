@@ -532,17 +532,17 @@ In graph view this opens as a side panel instead of a centered modal.
 
 ### 3.12 Graph view
 
-- A state diagram of the board's workflow. Each **Swim lane** is a state ("Swim lane · N"), laid out left to right in board order with No status first. Its **Ticket** nodes (#N and title) stack underneath it.
-- **Transitions**: an arrow from a lane to its Next Lane. Arrows to a lane further right curve above the row; arrows back to an earlier lane curve below it.
-- **Ticket overrides**: tickets whose own Next Lane differs from their lane's add a dashed arrow to their target. Overrides with the same source and target share one arrow, labeled with the ticket count ("2 tickets"). Built by `laneTransitions` in `projectTypes.ts`.
-- **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane with no incoming arrow is dimmed. Tickets can still be dragged there, so this is only a hint.
-- Armed tickets (they move on completion) show **▶** next to their number.
-- It uses the same visible lanes and filtered tickets as the swimlane view. Arrows into hidden, filtered-out or deleted lanes are not drawn.
+- A workflow editor for the board. Each **Swim lane** is a node ("Swim lane · N", N = its ticket count). Tickets themselves are not shown.
+- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). Moving a node never reorders the swimlane columns. A click without movement selects the lane.
+- **Connecting**: every node has a dot on its left and right edge. Drag from either dot and an arrow follows the pointer; release on any dot of another lane to set the origin lane's Next Lane to it. A lane has at most one outgoing arrow: connecting again replaces it. Releasing on empty canvas or on the origin lane changes nothing.
+- **Transitions**: an arrow from a lane's right dot to its Next Lane's left dot. Arrows pointing back left loop below the nodes. Click an arrow to select it, then press Delete/Backspace or its **×** to clear that lane's Next Lane.
+- **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
+- **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane that no lane points to is dimmed. Tickets can still be dragged there, so this is only a hint.
+- It uses the same visible lanes as the swimlane view. Hidden or filtered-out lanes are not drawn and can't be connected to.
 - **Details sidebar**:
-  - Nothing selected: the number of swim lanes, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
-  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, its ticket overrides ("#N → lane"), then **Agent prompt** and **Orchestrator prompt** sections.
+  - Nothing selected: the number of swim lanes, **+ Add swim lane**, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
+  - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, then **Agent prompt** and **Orchestrator prompt** sections.
   - Each prompt section lists the lane's prompt as editable rules (`promptRules` in `projectTypes.ts`): an unindented `- `/`* ` bullet or numbered line (`1.`) starts a rule; other lines, indented sub-bullets included, continue it. Leaving a rule (blur or Enter; Shift+Enter adds a line break) saves the prompt through `store.updateLane`, rewritten as `- rule` lines with numbered rules kept as-is (`rulesToPrompt`). **+ Add rule** and **×** add and delete rules; a rule cleared to empty is deleted. An empty prompt shows "No rules yet". When the lane has an agent markdown file the Agent section shows "Also follows: <file name>". The markdown file itself is not written; that stays on the Swimlane settings button.
-- Clicking a ticket node or a list entry opens the Ticket modal as a side panel, and the sidebar makes room for it.
 
 ---
 
