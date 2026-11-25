@@ -1878,8 +1878,13 @@ const runTicketAgent = (ticket: Ticket) => {
   <div v-if="boardSettingsOpen" class="modal-backdrop" @click.self="boardSettingsOpen = false">
     <section class="modal lane-modal">
       <p class="eyebrow">Ticket card display</p>
-      <span class="field-hint">The title always shows. Everything else is up to you.</span>
       <ul class="card-field-list">
+        <li>
+          <label>
+            <input type="checkbox" checked disabled />
+            Title
+          </label>
+        </li>
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
             <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
