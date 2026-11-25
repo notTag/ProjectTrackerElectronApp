@@ -102,7 +102,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
     ref="panel"
     class="ui-demo-panel"
     role="dialog"
-    aria-label="UI Demo"
+    aria-label="Settings"
     :style="{ left: `${uiDemoPanelPosition?.x ?? 0}px`, top: `${uiDemoPanelPosition?.y ?? 0}px` }"
   >
     <header
@@ -113,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
       @pointercancel="endDrag"
     >
       <span class="label-with-tip">
-        <strong>🎚 UI Demo</strong>
+        <strong>⚙ Settings</strong>
         <InfoTip text="Changes save automatically as you edit, on this machine only. Reset restores the defaults." />
       </span>
       <button class="secondary" title="Close (Esc)" aria-label="Close UI Demo" @click="uiDemoPanelOpen = false">

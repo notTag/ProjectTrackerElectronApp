@@ -1669,6 +1669,31 @@ code {
   gap: 4px;
 }
 
+/* Baseline, not center: the ⓘ glyph is larger than the small-caps eyebrow, so
+   centering their boxes leaves the glyph's baseline off the text's. The eyebrow's
+   bottom margin moves to the row so it doesn't skew alignment either. */
+.label-with-tip:has(> .eyebrow) {
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.label-with-tip > .eyebrow {
+  margin: 0;
+}
+
+.button-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lane-modal hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
 .info-tip {
   position: relative;
   display: inline-flex;

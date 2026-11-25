@@ -11,7 +11,8 @@ import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
-import UiDemoPanel from '@/components/UiDemoPanel.vue'
+import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
+import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
 import { uiDemoPanelOpen } from '@/uiDemo'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
@@ -141,6 +142,11 @@ const settingsOpen = ref(false)
 const openDisplaySettings = () => {
   settingsOpen.value = false
   boardSettingsOpen.value = true
+}
+// The UI panel has no backdrop, so it opens once Settings closes and the board stays live.
+const openUiSettingsPanel = () => {
+  settingsOpen.value = false
+  uiDemoPanelOpen.value = true
 }
 
 // nextLaneId stays null until the user picks one, so the field follows the
@@ -1607,14 +1613,11 @@ const runTicketAgent = (ticket: Ticket) => {
         {{ pullingIssues ? 'Pulling…' : '⇣ Pull issues' }}
       </button>
       <button class="secondary" title="Create swim lane" @click="laneDraftName = ''">+ Swim lane</button>
-      <button class="secondary" title="Board settings" @click="settingsOpen = true">⚙ Settings</button>
-      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="uiDemoPanelOpen = !uiDemoPanelOpen">
-        🎚 UI Demo
-      </button>
+      <button class="secondary" title="Board and UI settings" @click="settingsOpen = true">⚙ Settings</button>
     </div>
   </header>
 
-  <UiDemoPanel v-if="uiDemoPanelOpen" />
+  <UiSettingsPanel v-if="uiDemoPanelOpen" />
 
   <main class="app-shell board-shell">
     <MessageBanners />
@@ -1887,8 +1890,29 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <div v-if="boardSettingsOpen" class="modal-backdrop" @click.self="boardSettingsOpen = false">
     <section class="modal lane-modal">
-      <p class="eyebrow">Ticket card display</p>
-      <span class="field-hint">The title always shows. Everything else is up to you.</span>
+      <div class="label-with-tip">
+        <p class="eyebrow">Swimlane</p>
+        <InfoTip text="Show/Hide Swimlane's" />
+      </div>
+      <ul class="card-field-list">
+        <li v-for="lane in laneColumns" :key="lane.id">
+          <label>
+            <input
+              type="checkbox"
+              :checked="!laneIsHidden(lane.id)"
+              @change="toggleLaneVisibility(lane.id)"
+            />
+            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
+          </label>
+        </li>
+      </ul>
+
+      <hr />
+
+      <span class="label-with-tip">
+        <p class="eyebrow">Ticket Card</p>
+        <InfoTip text="Show/Hide Ticket Card fields" />
+      </span>
       <ul class="card-field-list">
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
@@ -1898,7 +1922,12 @@ const runTicketAgent = (ticket: Ticket) => {
         </li>
       </ul>
 
-      <p class="eyebrow">Swim lane settings fields</p>
+      <hr />
+
+      <span class="label-with-tip">
+        <p class="eyebrow">Swim lane Settings</p>
+        <InfoTip text="Show/Hide Swim lane Settings fields" />
+      </span>
       <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
       <ul class="card-field-list">
         <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
@@ -1913,20 +1942,6 @@ const runTicketAgent = (ticket: Ticket) => {
         </li>
       </ul>
 
-      <p class="eyebrow">Columns</p>
-      <ul class="card-field-list">
-        <li v-for="lane in laneColumns" :key="lane.id">
-          <label>
-            <input
-              type="checkbox"
-              :checked="!laneIsHidden(lane.id)"
-              @change="toggleLaneVisibility(lane.id)"
-            />
-            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
-          </label>
-        </li>
-      </ul>
-
       <div class="modal-actions">
         <button @click="boardSettingsOpen = false">Done</button>
       </div>
@@ -1937,8 +1952,13 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="modal lane-modal settings-modal">
       <p class="eyebrow">Board Settings</p>
       <MetricsPanel :project-paths="[projectPath]" scope="board" />
-      <button class="secondary" title="Choose what ticket cards show" @click="openDisplaySettings">
-        ⚙ Display
+      <button class="secondary button-with-icon" title="Choose what ticket cards show" @click="openDisplaySettings">
+        <EyeOffIcon /> Display
+      </button>
+      <hr />
+      <p class="eyebrow">UI Settings</p>
+      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="openUiSettingsPanel">
+        🎚 UI Settings
       </button>
       <div class="modal-actions">
         <button @click="settingsOpen = false">Done</button>
@@ -2048,12 +2068,7 @@ const runTicketAgent = (ticket: Ticket) => {
             :aria-expanded="modalFieldsMenuOpen"
             @click="modalFieldsMenuOpen = !modalFieldsMenuOpen"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
+            <EyeOffIcon />
           </button>
           <div v-if="modalFieldsMenuOpen" class="filter-popover" role="group" aria-label="Shown ticket fields">
             <label v-for="field in TICKET_MODAL_FIELDS" :key="field.id">
@@ -2481,12 +2496,7 @@ const runTicketAgent = (ticket: Ticket) => {
             :aria-expanded="laneFieldsMenuOpen"
             @click="laneFieldsMenuOpen = !laneFieldsMenuOpen"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
+            <EyeOffIcon />
           </button>
           <div v-if="laneFieldsMenuOpen" class="filter-popover" role="group" aria-label="Settings shown for this lane">
             <label
