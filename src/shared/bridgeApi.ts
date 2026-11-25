@@ -37,6 +37,8 @@ export const IPC_CHANNELS = [
   'lane:update',
   'lane:reorder',
   'lane:delete',
+  'workflow:activate',
+  'workflow:create',
   'project:update',
   'projects:scan',
   'projects:scan-cancel',
@@ -86,6 +88,9 @@ export interface ProjectTrackerBridge {
   updateLane(projectPath: string, laneId: string, patch: LaneWritePatch): Promise<SwimLane>
   reorderLanes(projectPath: string, laneIds: string[]): Promise<void>
   deleteLane(projectPath: string, laneId: string): Promise<void>
+  // Both return a fresh read: the board's lanes are replaced wholesale.
+  activateWorkflow(projectPath: string, workflowId: string): Promise<ProjectTrackerState>
+  createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState>
   updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord>
   onExternalChange(callback: () => void): () => void
   scanProjectDirectories(scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]): Promise<ScanResult>

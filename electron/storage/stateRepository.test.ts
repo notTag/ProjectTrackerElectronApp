@@ -275,6 +275,26 @@ describe('StateRepository', () => {
     expect(reopened.lanes[1].nextLaneId).toBeUndefined()
   })
 
+  it('adds the graph position column to a database created before it existed, then round-trips it', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN graph_position_json')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const board = repository.getState().boards![projectPath]
+    expect(board.lanes.map((lane) => lane.graphPosition)).toEqual(board.lanes.map(() => undefined))
+    const movedLaneId = board.lanes[0].id
+    repository.updateSwimLane(projectPath, movedLaneId, { graphPosition: { x: 310, y: 140 } })
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[0].graphPosition).toEqual({ x: 310, y: 140 })
+    expect(reopened.lanes[1].graphPosition).toBeUndefined()
+
+    new StateRepository(userDataPath).updateSwimLane(projectPath, movedLaneId, { graphPosition: null })
+    expect(reopenedBoard(userDataPath, projectPath).lanes[0].graphPosition).toBeUndefined()
+  })
+
   it('adds the agent model columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
@@ -383,6 +403,60 @@ describe('row-level writes', () => {
     expect(created).toMatchObject({ id: 'qa', name: 'QA' })
     const lanes = reopenedBoard(userDataPath, projectPath).lanes
     expect(lanes.map((lane) => [lane.id, lane.name])).toEqual([['qa', 'QA'], ['idea', 'Ideas']])
+  })
+
+  it('swaps workflows A → B → A without changing lanes or any ticket lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    // Flagged, with a ticket in it, so the insert trigger runs on every swap.
+    repository.updateSwimLane(projectPath, 'idea', { closesTicket: true })
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const laneRows = () => database.prepare('SELECT * FROM swim_lanes WHERE project_path = ? ORDER BY id').all(projectPath)
+    const ticketLanes = () =>
+      database.prepare('SELECT id, lane_id, closed_at FROM tickets WHERE project_path = ? ORDER BY id').all(projectPath)
+    const defaultLanes = laneRows()
+    const ticketsBefore = ticketLanes()
+
+    const created = repository.createWorkflow(projectPath, 'Hotfix')
+    const createdBoard = created.boards?.[projectPath]
+    const hotfixId = createdBoard?.activeWorkflowId ?? ''
+    expect(createdBoard?.workflows?.map((workflow) => workflow.name)).toEqual(['Default', 'Hotfix'])
+    expect(() => repository.createWorkflow(projectPath, ' hotfix ')).toThrow('already exists')
+    repository.updateSwimLane(projectPath, 'prd', { name: 'Spec', agentPrompt: 'Write the spec.' })
+    repository.deleteSwimLane(projectPath, 'idea')
+    repository.createSwimLane(projectPath, { id: 'triage', name: 'Triage', agentPrompt: '', agentFilePath: '' })
+    const hotfixLanes = laneRows()
+
+    const backToDefault = repository.activateWorkflow(projectPath, 'default')
+    expect(laneRows()).toEqual(defaultLanes)
+    expect(backToDefault.boards?.[projectPath].activeWorkflowId).toBe('default')
+    repository.activateWorkflow(projectPath, hotfixId)
+    expect(laneRows()).toEqual(hotfixLanes)
+    repository.activateWorkflow(projectPath, 'default')
+    expect(laneRows()).toEqual(defaultLanes)
+    expect(ticketLanes()).toEqual(ticketsBefore)
+    database.close()
+
+    expect(reopenedBoard(userDataPath, projectPath).activeWorkflowId).toBe('default')
+  })
+
+  it('un-closes tickets when a swap lands them in a lane that no longer closes', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const closedCount = () =>
+      database.prepare('SELECT COUNT(*) AS n FROM tickets WHERE project_path = ? AND closed_at IS NOT NULL').get(projectPath)?.n
+    const created = repository.createWorkflow(projectPath, 'Closing')
+    const closingId = created.boards?.[projectPath]?.activeWorkflowId ?? ''
+    repository.updateSwimLane(projectPath, 'idea', { closesTicket: true })
+    const closedInClosing = closedCount()
+    expect(closedInClosing).toBeGreaterThan(0)
+
+    repository.activateWorkflow(projectPath, 'default')
+    expect(closedCount()).toBe(0)
+    repository.activateWorkflow(projectPath, closingId)
+    expect(closedCount()).toBe(closedInClosing)
+    database.close()
   })
 
   it('refuses to create a lane whose id is already stored, keeping its config', () => {

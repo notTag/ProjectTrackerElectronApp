@@ -267,6 +267,8 @@ export interface SwimLane {
   // Where this lane's tickets go on completion when they set no Next Lane of
   // their own. Absent means None.
   nextLaneId?: string
+  // Where the lane's node sits in the graph view. Absent means its default row slot.
+  graphPosition?: { x: number; y: number }
 }
 
 export interface ChecklistItem {
@@ -1546,6 +1548,28 @@ export interface ProjectBoard {
   // can carry an agent prompt like any other lane while staying undeletable —
   // it is the fallback every orphaned ticket lands in.
   unassignedLane?: SwimLane
+  // Read-only here: written only through the workflow:* channels, never diffed.
+  workflows?: WorkflowSummary[]
+  activeWorkflowId?: string
+}
+
+export interface WorkflowSummary {
+  id: string
+  name: string
+}
+
+// A board that never swapped or created a workflow has no workflow rows; it is
+// shown as this one, and the first swap or create stores it under this id.
+export const DEFAULT_WORKFLOW_ID = 'default'
+export const DEFAULT_WORKFLOW_NAME = 'Default'
+
+export const boardWorkflows = (board: ProjectBoard): WorkflowSummary[] =>
+  board.workflows?.length ? board.workflows : [{ id: DEFAULT_WORKFLOW_ID, name: DEFAULT_WORKFLOW_NAME }]
+
+export const activeWorkflow = (board: ProjectBoard): WorkflowSummary => {
+  const workflows = boardWorkflows(board)
+  const activeId = board.activeWorkflowId ?? DEFAULT_WORKFLOW_ID
+  return workflows.find((workflow) => workflow.id === activeId) ?? workflows[0]
 }
 
 const DEFAULT_LANE_NAMES = ['Idea', 'PRD', 'In Development', 'In PR', 'In Dev', 'In QA', 'In Production']
@@ -1644,7 +1668,8 @@ export const nextTicketNumber = (board: ProjectBoard) => highestTicketNumber(boa
 
 // Repairs a board on read: tickets whose lane no longer exists fall back to the
 // unassigned column rather than rendering nowhere, and tickets saved before
-// numbers existed are backfilled. Saving afterwards persists the repair.
+// numbers existed are backfilled. Saving afterwards persists the number repair;
+// the lane fallback is display-only (see keepParkedLaneIds).
 export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
   const knownLaneIds = new Set([...board.lanes.map((lane) => lane.id), UNASSIGNED_LANE_ID])
   const hasOrphans = board.tickets.some((ticket) => !knownLaneIds.has(ticket.laneId))
@@ -1659,6 +1684,24 @@ export const normalizeBoard = (board: ProjectBoard): ProjectBoard => {
     return { ...ticket, laneId, number }
   })
   return { ...board, tickets }
+}
+
+// A ticket whose lane belongs to another workflow is parked: it shows in No
+// status, but keeps its stored lane so swapping back puts it where it was.
+// Undoes normalizeBoard's fallback on an edited board before it is written,
+// for every ticket the edit itself left in No status.
+export const keepParkedLaneIds = (stored: ProjectBoard | undefined, edited: ProjectBoard): ProjectBoard => {
+  if (!stored) return edited
+  const storedLaneIds = new Set([...stored.lanes.map((lane) => lane.id), UNASSIGNED_LANE_ID])
+  const parkedTickets = stored.tickets.filter((ticket) => !storedLaneIds.has(ticket.laneId))
+  const parkedLaneById = new Map(parkedTickets.map((ticket) => [ticket.id, ticket.laneId]))
+  if (parkedLaneById.size === 0) return edited
+  const tickets = edited.tickets.map((ticket) => {
+    const parkedLaneId = parkedLaneById.get(ticket.id)
+    const isStillParked = parkedLaneId !== undefined && ticket.laneId === UNASSIGNED_LANE_ID
+    return isStillParked ? { ...ticket, laneId: parkedLaneId } : ticket
+  })
+  return { ...edited, tickets }
 }
 
 export const addTicketToBoard = (
@@ -1694,9 +1737,12 @@ export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): Projec
     lanes,
     ...(board.unassignedLane && { unassignedLane: withoutNextLane(board.unassignedLane, laneId) })
   }
+  // Another workflow may still hold this lane, so with several workflows its
+  // tickets are parked like on a swap: No status now, back in it on swap back.
+  const parksTickets = boardWorkflows(board).length > 1
   const tickets = board.tickets.map((ticket) => {
     const targetBefore = effectiveNextLaneId(ticket, boardLaneById(board, ticket.laneId))
-    const fixed = withoutLane(ticket, laneId)
+    const fixed = parksTickets ? ticket : withoutLane(ticket, laneId)
     const targetAfter = effectiveNextLaneId(fixed, boardLaneById(laneBoard, fixed.laneId))
     return targetAfter === targetBefore ? fixed : { ...fixed, moveOnComplete: false }
   })
@@ -1867,25 +1913,26 @@ export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
 // Display-only, like TICKET_MODAL_FIELDS: a hidden lane setting keeps its value
 // and the agent still gets it. The lane name always shows.
 export const LANE_MODAL_FIELDS = [
-  { id: 'agentPrompt', label: 'Agent prompt' },
-  { id: 'agentFile', label: 'Agent markdown file' },
-  { id: 'output', label: 'Output' },
-  { id: 'orchestratorPrompt', label: 'Orchestrator prompt' },
-  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file' },
-  { id: 'orchestratorPoll', label: 'Orchestrator poll' },
-  { id: 'autoRunAgent', label: 'Agent' },
-  { id: 'autoRunShell', label: 'Shell' },
-  { id: 'autoRunModel', label: 'Model' },
-  { id: 'orchestratorAgent', label: 'Orchestrator agent' },
-  { id: 'orchestratorModel', label: 'Orchestrator model' },
-  { id: 'worktrees', label: 'Worktree and branch per ticket' },
-  { id: 'fullAuto', label: 'Full auto' },
-  { id: 'nextLane', label: 'Next Lane' },
-  { id: 'agentSetsVersion', label: 'Agent sets semantic version' },
-  { id: 'closesTicket', label: 'Counts as closed' }
+  { id: 'agentPrompt', label: 'Agent prompt', section: 'agent' },
+  { id: 'agentFile', label: 'Agent markdown file', section: 'agent' },
+  { id: 'output', label: 'Output', section: 'agent' },
+  { id: 'orchestratorPrompt', label: 'Orchestrator prompt', section: 'orchestrator' },
+  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file', section: 'orchestrator' },
+  { id: 'orchestratorPoll', label: 'Orchestrator poll', section: 'orchestrator' },
+  { id: 'orchestratorAgent', label: 'Orchestrator agent', section: 'orchestrator' },
+  { id: 'orchestratorModel', label: 'Orchestrator model', section: 'orchestrator' },
+  { id: 'autoRunAgent', label: 'Agent', section: 'autoRun' },
+  { id: 'autoRunShell', label: 'Shell', section: 'autoRun' },
+  { id: 'autoRunModel', label: 'Model', section: 'autoRun' },
+  { id: 'worktrees', label: 'Worktree and branch per ticket', section: 'autoRun' },
+  { id: 'fullAuto', label: 'Full auto', section: 'autoRun' },
+  { id: 'nextLane', label: 'Next Lane', section: 'autoRun' },
+  { id: 'agentSetsVersion', label: 'Agent sets semantic version', section: 'autoRun' },
+  { id: 'closesTicket', label: 'Counts as closed', section: 'autoRun' }
 ] as const
 
 export type LaneModalField = (typeof LANE_MODAL_FIELDS)[number]['id']
+export type LaneModalSection = (typeof LANE_MODAL_FIELDS)[number]['section']
 
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
@@ -2287,4 +2334,32 @@ export const laneTransitions = (lanes: SwimLane[], tickets: Ticket[]): LaneTrans
     overrideEdges.set(key, edge)
   }
   return [...laneEdges, ...overrideEdges.values()]
+}
+
+// Graph view (#131): node x is its left edge, y its vertical center.
+export const GRAPH_LEFT_MARGIN = 50
+export const GRAPH_COLUMN_WIDTH = 220
+export const GRAPH_ROW_Y = 70
+
+export type GraphPosition = NonNullable<SwimLane['graphPosition']>
+
+// The stored JSON can be hand- or agent-edited, so anything but two finite numbers counts as unset.
+const isValidGraphPosition = (position: unknown): position is GraphPosition => {
+  if (typeof position !== 'object' || position === null) return false
+  const { x, y } = position as Record<string, unknown>
+  return Number.isFinite(x) && Number.isFinite(y)
+}
+
+// A lane never dragged keeps the #71 row slot, so untouched boards look the same.
+export const laneGraphPosition = (lane: SwimLane, index: number): GraphPosition => {
+  const savedPosition = lane.graphPosition
+  if (isValidGraphPosition(savedPosition)) return { x: savedPosition.x, y: savedPosition.y }
+  return { x: GRAPH_LEFT_MARGIN + index * GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
+}
+
+// Where a lane added from the graph lands: one column right of the rightmost node.
+export const graphPositionRightOf = (positions: GraphPosition[]): GraphPosition => {
+  const nodeXs = positions.map((position) => position.x)
+  const rightmostX = Math.max(GRAPH_LEFT_MARGIN - GRAPH_COLUMN_WIDTH, ...nodeXs)
+  return { x: rightmostX + GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
 }

@@ -6,6 +6,9 @@ import {
   isGithubUnreachableError,
   normalizeSemanticVersion,
   boardWrites,
+  graphPositionRightOf,
+  keepParkedLaneIds,
+  laneGraphPosition,
   shellQuote,
   agentRunBadge,
   hasUnseenAgentResult,
@@ -344,6 +347,37 @@ describe('normalizeBoard', () => {
       ]
     }
     expect(normalizeBoard(orphaned).tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
+  })
+
+  it('parks a deleted lane’s tickets when another workflow may still hold the lane', () => {
+    const board: ProjectBoard = {
+      lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],
+      tickets: [{ id: 'a', number: 1, laneId: 'idea', title: 'A', description: '', createdAt: '2026-01-01T00:00:00.000Z' }]
+    }
+    const withWorkflows = { ...board, workflows: [{ id: 'default', name: 'Default' }, { id: 'w2', name: 'Hotfix' }] }
+    expect(removeLaneFromBoard(board, 'idea').tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
+    expect(removeLaneFromBoard(withWorkflows, 'idea').tickets[0].laneId).toBe('idea')
+  })
+
+  it('writes no lane change for a ticket parked in another workflow’s lane', () => {
+    const parked: ProjectBoard = {
+      lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],
+      tickets: [
+        { id: 'a', number: 1, laneId: 'qa', title: 'A', description: '', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'b', number: 2, laneId: 'qa', title: 'B', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
+      ]
+    }
+    const normalized = normalizeBoard(parked)
+    const edited = {
+      ...normalized,
+      tickets: normalized.tickets.map((ticket) => (ticket.id === 'a' ? { ...ticket, title: 'A2' } : { ...ticket, laneId: 'idea' }))
+    }
+    const kept = keepParkedLaneIds(parked, edited)
+    expect(kept.tickets.map((ticket) => ticket.laneId)).toEqual(['qa', 'idea'])
+    expect(boardWrites(parked, kept).map((write) => write.kind === 'ticket:update' && write.patch)).toEqual([
+      { title: 'A2', updatedAt: undefined },
+      { laneId: 'idea', updatedAt: undefined }
+    ])
   })
 
   it('leaves a board whose tickets all have real lanes untouched', () => {
@@ -734,6 +768,33 @@ describe('ticketShellCommand', () => {
     const promptlessLane = lane({ agentPrompt: '' })
     const promptWithoutInstructions = ticketAgentPrompt(ticket(), promptlessLane)
     expect(promptWithoutInstructions).not.toContain('Instructions')
+  })
+
+  // #136: pins each field's section + order so the Display list, closed-eye list and lane modal stay in sync.
+  it('puts every lane settings field in the Agent, Orchestrator or Auto Run section', () => {
+    const fieldIdsIn = (section: string) =>
+      LANE_MODAL_FIELDS.filter((field) => field.section === section).map((field) => field.id)
+
+    expect(fieldIdsIn('agent')).toEqual(['agentPrompt', 'agentFile', 'output'])
+    expect(fieldIdsIn('orchestrator')).toEqual([
+      'orchestratorPrompt',
+      'orchestratorFile',
+      'orchestratorPoll',
+      'orchestratorAgent',
+      'orchestratorModel'
+    ])
+    expect(fieldIdsIn('autoRun')).toEqual([
+      'autoRunAgent',
+      'autoRunShell',
+      'autoRunModel',
+      'worktrees',
+      'fullAuto',
+      'nextLane',
+      'agentSetsVersion',
+      'closesTicket'
+    ])
+    const sectionedFieldCount = ['agent', 'orchestrator', 'autoRun'].flatMap(fieldIdsIn).length
+    expect(sectionedFieldCount).toBe(LANE_MODAL_FIELDS.length)
   })
 
   it('lists external links only when the ticket has some', () => {
@@ -2244,5 +2305,31 @@ describe('githubErrorMessage', () => {
   it('passes other errors through', () => {
     expect(githubErrorMessage(new Error('Repository not found on GitHub.'))).toBe('Repository not found on GitHub.')
     expect(githubErrorMessage('boom')).toBe('boom')
+  })
+})
+
+describe('graph positions', () => {
+  const lane = (id: string, graphPosition?: { x: number; y: number }) => ({ id, name: id, agentPrompt: '', agentFilePath: '', graphPosition })
+
+  it('puts a lane with no saved position in its row slot', () => {
+    expect(laneGraphPosition(lane('a'), 0)).toEqual({ x: 50, y: 70 })
+    expect(laneGraphPosition(lane('c'), 2)).toEqual({ x: 490, y: 70 })
+  })
+
+  it('keeps a saved position', () => {
+    expect(laneGraphPosition(lane('a', { x: 5, y: 300 }), 3)).toEqual({ x: 5, y: 300 })
+  })
+
+  it('treats a malformed saved position as unset', () => {
+    const malformedPositions = [[10, 20], { x: '5', y: 5 }, { x: 5 }, null]
+    for (const malformed of malformedPositions) {
+      const malformedLane = { ...lane('b'), graphPosition: malformed as unknown as { x: number; y: number } }
+      expect(laneGraphPosition(malformedLane, 1)).toEqual({ x: 270, y: 70 })
+    }
+  })
+
+  it('places a new node one column right of the rightmost node', () => {
+    expect(graphPositionRightOf([{ x: 50, y: 70 }, { x: 900, y: 400 }, { x: 270, y: 70 }])).toEqual({ x: 1120, y: 70 })
+    expect(graphPositionRightOf([])).toEqual({ x: 50, y: 70 })
   })
 })

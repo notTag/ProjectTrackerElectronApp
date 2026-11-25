@@ -68,6 +68,14 @@ export const projectTrackerApi = {
     return bridge().deleteLane(projectPath, laneId)
   },
 
+  activateWorkflow(projectPath: string, workflowId: string): Promise<ProjectTrackerState> {
+    return bridge().activateWorkflow(projectPath, workflowId)
+  },
+
+  createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState> {
+    return bridge().createWorkflow(projectPath, name)
+  },
+
   updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord> {
     return bridge().updateProject(path, toPlainJson(patch))
   },

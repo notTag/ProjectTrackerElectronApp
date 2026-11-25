@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { laneModalExpanded, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
+import { laneModalExpanded, laneModalSectionsOpen, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -9,6 +9,7 @@ import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
+import WorkflowPicker from '@/components/WorkflowPicker.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
@@ -19,6 +20,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { TERMINAL_TARGETS, resolveAutoRunTerminal, type OpenInTarget } from '@/shared/openInTargets'
 import {
+  activeWorkflow,
   DEFAULT_LANE_WIDTH,
   GITHUB_IMPORT_LANE_ID,
   TICKET_CARD_FIELDS,
@@ -79,6 +81,7 @@ import {
   toggleLaneModalFieldInLane,
   LANE_MODAL_FIELDS,
   type LaneModalField,
+  type LaneModalSection,
   toggleModalField,
   TICKET_MODAL_FIELDS,
   type TicketModalField,
@@ -93,6 +96,7 @@ import {
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
   type SwimLane,
+  type GraphPosition,
   type Ticket,
   type TicketPatch,
   plural,
@@ -116,6 +120,7 @@ const projectPath = computed(() => decodeURIComponent(String(route.params.projec
 const project = computed(() => store.projects.find((entry) => entry.path === projectPath.value))
 const projectTitle = computed(() => project.value?.name ?? projectPath.value.split('/').pop() ?? 'Board')
 const board = computed(() => store.board(projectPath.value))
+const activeWorkflowName = computed(() => activeWorkflow(board.value).name)
 const githubUrl = computed(() => project.value?.githubUrl)
 const pullingIssues = computed(() => Boolean(store.githubLoading[projectPath.value]))
 
@@ -156,6 +161,11 @@ watch(ticketDraft, (_draft, previousDraft) => {
   previousDraft?.images.forEach((stagedImage) => URL.revokeObjectURL(stagedImage.previewUrl))
 })
 const laneDraftName = ref<string | null>(null)
+// Set when the graph's "+ Add swim lane" opened the prompt: where the new node lands.
+const laneDraftGraphPosition = ref<GraphPosition>()
+watch(laneDraftName, (name) => {
+  if (name === null) laneDraftGraphPosition.value = undefined
+})
 const checklistDraft = ref('')
 const linkDraft = ref('')
 const linkDraftInvalid = ref(false)
@@ -210,6 +220,12 @@ const laneFieldHiddenInLane = (field: LaneModalField, laneId: string) =>
   preferences.value.hiddenLaneModalFieldsByLane[laneId]?.includes(field) ?? false
 const showsLaneField = (field: LaneModalField, laneId: string) =>
   laneFieldShownOnBoard(field) && !laneFieldHiddenInLane(field, laneId)
+const showsLaneSection = (section: LaneModalSection, laneId: string) =>
+  LANE_MODAL_FIELDS.some((field) => field.section === section && showsLaneField(field.id, laneId))
+const rememberLaneSectionOpen = (section: LaneModalSection, event: Event) => {
+  const details = event.target as HTMLDetailsElement
+  laneModalSectionsOpen[section] = details.open
+}
 const toggleLaneFieldOnBoard = (field: LaneModalField) => savePreferences(toggleLaneModalField(preferences.value, field))
 const toggleLaneFieldInLane = (laneId: string, field: LaneModalField) =>
   savePreferences(toggleLaneModalFieldInLane(preferences.value, laneId, field))
@@ -865,8 +881,9 @@ const saveTicketDraft = async () => {
 const saveLaneDraft = async () => {
   const name = (laneDraftName.value ?? '').trim()
   if (!name) return
+  const graphPosition = laneDraftGraphPosition.value
   laneDraftName.value = null
-  await store.addLane(projectPath.value, name)
+  await store.addLane(projectPath.value, name, graphPosition ? { graphPosition } : {})
 }
 
 const deleteLane = async (lane: SwimLane) => {
@@ -1569,6 +1586,7 @@ const runTicketAgent = (ticket: Ticket) => {
       <OfflineBadge />
       <button class="secondary" title="Back to projects" @click="router.push('/')">← Projects</button>
       <MetricsPanel :project-paths="[projectPath]" scope="board" />
+      <WorkflowPicker :project-path="projectPath" />
       <OpenInPicker />
       <button
         class="secondary"
@@ -1612,6 +1630,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <MessageBanners />
 
     <section class="board-filters">
+      <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
       <input
         ref="filterQueryInput"
         v-model="filterQuery"
@@ -1674,7 +1693,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @ticket="openTicketId = $event" @selection="openTicketId = null" @edit-lane="editLane" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1903,6 +1922,12 @@ const runTicketAgent = (ticket: Ticket) => {
         <InfoTip text="Show/Hide Ticket Card fields" />
       </span>
       <ul class="card-field-list">
+        <li>
+          <label>
+            <input type="checkbox" checked disabled />
+            Title
+          </label>
+        </li>
         <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
           <label>
             <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
@@ -2497,262 +2522,297 @@ const runTicketAgent = (ticket: Ticket) => {
         @change="editLane(openLane, { name: ($event.target as HTMLInputElement).value })"
       />
 
-      <label v-if="showsLaneField('agentPrompt', openLane.id)" for="lane-agent-prompt">
-        <span class="label-with-tip">
-          <span id="lane-agent-prompt-label">Agent prompt</span>
-          <InfoTip :text="agentPromptTip" />
-        </span>
-        <textarea
-          id="lane-agent-prompt"
-          aria-labelledby="lane-agent-prompt-label"
-          class="agent-prompt"
-          :value="laneMarkdownDraft.agent.prompt"
-          placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
-          @input="onLaneMarkdownPromptInput(openLane, 'agent', $event)"
-          @change="storeTypedPrompts"
-        />
-      </label>
-
-      <label v-if="showsLaneField('agentFile', openLane.id)">
-        Agent markdown file
-        <input
-          class="agent-file-path"
-          :value="openLane.agentFilePath"
-          placeholder="/Users/you/Projects/thing/docs/agent-prompt.md"
-          @input="laneMarkdownDraft.agent.filePath = ($event.target as HTMLInputElement).value"
-          @change="onLaneMarkdownPathChange(openLane, 'agent', $event)"
-        />
-        <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
-        <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
-      </label>
-
-      <label v-if="showsLaneField('output', openLane.id)">
-        Output
-        <textarea
-          class="agent-prompt"
-          :value="openLane.outputTarget ?? ''"
-          placeholder="A file, a directory, or where it goes — e.g. a new folder inside the project directory"
-          @change="editLane(openLane, { outputTarget: ($event.target as HTMLTextAreaElement).value })"
-        />
-        <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
-      </label>
-
-      <label v-if="showsLaneField('orchestratorPrompt', openLane.id)" for="lane-orchestrator-prompt">
-        <span class="label-with-tip">
-          <span id="lane-orchestrator-prompt-label">Orchestrator prompt</span>
-          <InfoTip :text="orchestratorPromptTip" />
-        </span>
-        <textarea
-          id="lane-orchestrator-prompt"
-          aria-labelledby="lane-orchestrator-prompt-label"
-          class="agent-prompt orchestrator-prompt"
-          :value="laneMarkdownDraft.orchestrator.prompt"
-          spellcheck="false"
-          @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
-          @change="storeTypedPrompts"
-        />
-      </label>
-      <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
-        Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
-      </span>
-      <button
-        v-if="showsLaneField('orchestratorPrompt', openLane.id) && openLaneOrchestratorOverride"
-        class="secondary lane-prompt-reset"
-        type="button"
-        @click="editLane(openLane, { orchestratorPromptOverride: '' })"
+      <details
+        v-if="showsLaneSection('agent', openLane.id)"
+        class="lane-settings-section"
+        :open="laneModalSectionsOpen.agent"
+        @toggle="rememberLaneSectionOpen('agent', $event)"
       >
-        Reset to default
-      </button>
-
-      <label v-if="showsLaneField('orchestratorFile', openLane.id)">
-        Agent Orchestrator markdown file
-        <input
-          class="agent-file-path"
-          :value="openLane.orchestratorFilePath ?? ''"
-          placeholder="/Users/you/Projects/thing/docs/orchestrator.md"
-          @input="laneMarkdownDraft.orchestrator.filePath = ($event.target as HTMLInputElement).value"
-          @change="onLaneMarkdownPathChange(openLane, 'orchestrator', $event)"
-        />
-        <span v-if="laneMarkdownStatus.orchestrator.error" class="field-hint field-error">
-          {{ laneMarkdownStatus.orchestrator.error }}
-        </span>
-        <span v-else-if="laneMarkdownStatus.orchestrator.savedMessage" class="field-hint">
-          {{ laneMarkdownStatus.orchestrator.savedMessage }}
-        </span>
-        <span v-else class="field-hint">
-          The prompt above autosaves here, for versioning or review. Left empty it's
-          SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
-        </span>
-      </label>
-
-      <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
-           clicking a wrapping caption would fire − and switch the lane off. -->
-      <div v-if="showsLaneField('orchestratorPoll', openLane.id)" class="orchestrator-poll-row">
-        <label
-          id="orchestrator-poll-caption"
-          :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
-        >Orchestrator poll (minutes)</label>
-        <div
-          class="poll-stepper"
-          role="group"
-          aria-labelledby="orchestrator-poll-caption"
-          :title="orchestratorPollTooltip(openLane)"
-        >
-          <button
-            type="button"
-            aria-label="Decrease orchestrator poll"
-            :aria-disabled="!orchestratorPollActive(openLane)"
-            @click="stepOrchestratorPoll(openLane.id, -1)"
-          >−</button>
-          <span class="poll-stepper-value">
-            <input
-              v-if="orchestratorPollActive(openLane)"
-              id="orchestrator-poll-minutes"
-              type="number"
-              min="1"
-              step="1"
-              :value="orchestratorPollMinutes(openLane)"
-              @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+        <summary class="eyebrow">Agent</summary>
+        <div class="lane-settings-section-body">
+          <label v-if="showsLaneField('agentPrompt', openLane.id)" for="lane-agent-prompt">
+            <span class="label-with-tip">
+              <span id="lane-agent-prompt-label">Agent prompt</span>
+              <InfoTip :text="agentPromptTip" />
+            </span>
+            <textarea
+              id="lane-agent-prompt"
+              aria-labelledby="lane-agent-prompt-label"
+              class="agent-prompt"
+              :value="laneMarkdownDraft.agent.prompt"
+              placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
+              @input="onLaneMarkdownPromptInput(openLane, 'agent', $event)"
+              @change="storeTypedPrompts"
             />
-            <span v-else role="img" aria-label="Orchestrator never polls">∞</span>
-          </span>
-          <span class="poll-stepper-status" aria-live="polite">{{
-            orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Never polls'
-          }}</span>
-          <button
-            type="button"
-            aria-label="Increase orchestrator poll"
-            @click="stepOrchestratorPoll(openLane.id, 1)"
-          >+</button>
-        </div>
-      </div>
+          </label>
 
-      <section class="ticket-agent">
-        <p class="eyebrow">Auto Run</p>
-        <div class="auto-run-pickers">
-          <label v-if="showsLaneField('autoRunAgent', openLane.id)">
-            Agent
-            <select
-              :value="findAgent(agents, openLane.autoRunAgentId).id"
-              @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
+          <label v-if="showsLaneField('agentFile', openLane.id)">
+            Agent markdown file
+            <input
+              class="agent-file-path"
+              :value="openLane.agentFilePath"
+              placeholder="/Users/you/Projects/thing/docs/agent-prompt.md"
+              @input="laneMarkdownDraft.agent.filePath = ($event.target as HTMLInputElement).value"
+              @change="onLaneMarkdownPathChange(openLane, 'agent', $event)"
+            />
+            <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
+            <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
+          </label>
+
+          <label v-if="showsLaneField('output', openLane.id)">
+            Output
+            <textarea
+              class="agent-prompt"
+              :value="openLane.outputTarget ?? ''"
+              placeholder="A file, a directory, or where it goes — e.g. a new folder inside the project directory"
+              @change="editLane(openLane, { outputTarget: ($event.target as HTMLTextAreaElement).value })"
+            />
+            <span class="field-hint">Where the agent puts its work. An existing directory is used as-is, no prompt.</span>
+          </label>
+        </div>
+      </details>
+
+      <details
+        v-if="showsLaneSection('orchestrator', openLane.id)"
+        class="lane-settings-section"
+        :open="laneModalSectionsOpen.orchestrator"
+        @toggle="rememberLaneSectionOpen('orchestrator', $event)"
+      >
+        <summary class="eyebrow">
+          Orchestrator
+          <span
+            v-if="openLaneMissingOrchestratorTokens.length && !laneModalSectionsOpen.orchestrator"
+            class="field-error"
+          >
+            · prompt missing {{ openLaneMissingOrchestratorTokens.join(', ') }}
+          </span>
+        </summary>
+        <div class="lane-settings-section-body">
+          <label v-if="showsLaneField('orchestratorPrompt', openLane.id)" for="lane-orchestrator-prompt">
+            <span class="label-with-tip">
+              <span id="lane-orchestrator-prompt-label">Orchestrator prompt</span>
+              <InfoTip :text="orchestratorPromptTip" />
+            </span>
+            <textarea
+              id="lane-orchestrator-prompt"
+              aria-labelledby="lane-orchestrator-prompt-label"
+              class="agent-prompt orchestrator-prompt"
+              :value="laneMarkdownDraft.orchestrator.prompt"
+              spellcheck="false"
+              @input="onLaneMarkdownPromptInput(openLane, 'orchestrator', $event)"
+              @change="storeTypedPrompts"
+            />
+          </label>
+          <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
+            Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
+          </span>
+          <button
+            v-if="showsLaneField('orchestratorPrompt', openLane.id) && openLaneOrchestratorOverride"
+            class="secondary lane-prompt-reset"
+            type="button"
+            @click="editLane(openLane, { orchestratorPromptOverride: '' })"
+          >
+            Reset to default
+          </button>
+
+          <label v-if="showsLaneField('orchestratorFile', openLane.id)">
+            Agent Orchestrator markdown file
+            <input
+              class="agent-file-path"
+              :value="openLane.orchestratorFilePath ?? ''"
+              placeholder="/Users/you/Projects/thing/docs/orchestrator.md"
+              @input="laneMarkdownDraft.orchestrator.filePath = ($event.target as HTMLInputElement).value"
+              @change="onLaneMarkdownPathChange(openLane, 'orchestrator', $event)"
+            />
+            <span v-if="laneMarkdownStatus.orchestrator.error" class="field-hint field-error">
+              {{ laneMarkdownStatus.orchestrator.error }}
+            </span>
+            <span v-else-if="laneMarkdownStatus.orchestrator.savedMessage" class="field-hint">
+              {{ laneMarkdownStatus.orchestrator.savedMessage }}
+            </span>
+            <span v-else class="field-hint">
+              The prompt above autosaves here, for versioning or review. Left empty it's
+              SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
+            </span>
+          </label>
+
+          <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+               clicking a wrapping caption would fire − and switch the lane off. -->
+          <div v-if="showsLaneField('orchestratorPoll', openLane.id)" class="orchestrator-poll-row">
+            <label
+              id="orchestrator-poll-caption"
+              :for="orchestratorPollActive(openLane) ? 'orchestrator-poll-minutes' : undefined"
+            >Orchestrator poll (minutes)</label>
+            <div
+              class="poll-stepper"
+              role="group"
+              aria-labelledby="orchestrator-poll-caption"
+              :title="orchestratorPollTooltip(openLane)"
             >
+              <button
+                type="button"
+                aria-label="Decrease orchestrator poll"
+                :aria-disabled="!orchestratorPollActive(openLane)"
+                @click="stepOrchestratorPoll(openLane.id, -1)"
+              >−</button>
+              <span class="poll-stepper-value">
+                <input
+                  v-if="orchestratorPollActive(openLane)"
+                  id="orchestrator-poll-minutes"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :value="orchestratorPollMinutes(openLane)"
+                  @change="editOrchestratorPollMinutes(openLane, $event.target as HTMLInputElement)"
+                />
+                <span v-else role="img" aria-label="Orchestrator never polls">∞</span>
+              </span>
+              <span class="poll-stepper-status" aria-live="polite">{{
+                orchestratorPollActive(openLane) ? plural(orchestratorPollMinutes(openLane), 'minute') : 'Never polls'
+              }}</span>
+              <button
+                type="button"
+                aria-label="Increase orchestrator poll"
+                @click="stepOrchestratorPoll(openLane.id, 1)"
+              >+</button>
+            </div>
+          </div>
+          <label v-if="showsLaneField('orchestratorAgent', openLane.id)">
+            Orchestrator agent
+            <select
+              :value="openLane.orchestratorAgentId ?? ''"
+              @change="
+                editLane(openLane, {
+                  orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
+                  orchestratorModel: undefined
+                })
+              "
+            >
+              <option value="">Same as ticket agent</option>
               <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
             </select>
           </label>
-          <label v-if="showsLaneField('autoRunShell', openLane.id)">
-            Shell
-            <select
-              :value="autoRunTerminal(openLane).id"
-              @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
-            >
-              <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
-                {{ terminal.label }}
-              </option>
-            </select>
+          <label v-if="showsLaneField('orchestratorModel', openLane.id)">
+            Orchestrator model
+            <ModelField
+              :model-value="openLane.orchestratorModel ?? ''"
+              :agent="findAgent(agents, openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
+              :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+              @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
+            />
           </label>
         </div>
-        <label v-if="showsLaneField('autoRunModel', openLane.id)">
-          Model
-          <ModelField
-            :model-value="openLane.autoRunModel ?? ''"
-            :agent="findAgent(agents, openLane.autoRunAgentId)"
-            placeholder="CLI default"
-            @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
-          />
-        </label>
-        <label v-if="showsLaneField('orchestratorAgent', openLane.id)">
-          Orchestrator agent
-          <select
-            :value="openLane.orchestratorAgentId ?? ''"
-            @change="
-              editLane(openLane, {
-                orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
-                orchestratorModel: undefined
-              })
-            "
-          >
-            <option value="">Same as ticket agent</option>
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label v-if="showsLaneField('orchestratorModel', openLane.id)">
-          Orchestrator model
-          <ModelField
-            :model-value="openLane.orchestratorModel ?? ''"
-            :agent="findAgent(agents, openLane.orchestratorAgentId ?? openLane.autoRunAgentId)"
-            :placeholder="openLane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-            @update:model-value="editLane(openLane, { orchestratorModel: $event || undefined })"
-          />
-        </label>
-        <label v-if="showsLaneField('worktrees', openLane.id)" class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="autoRunUsesWorktrees(openLane)"
-            @change="editLane(openLane, { autoRunWorktrees: ($event.target as HTMLInputElement).checked })"
-          />
-          Worktree and branch per ticket
-        </label>
-        <label v-if="showsLaneField('fullAuto', openLane.id)" class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="Boolean(openLane.fullAuto)"
-            aria-labelledby="lane-full-auto-label"
-            @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
-          />
-          <span id="lane-full-auto-label">Full auto: start the next lane's agent when this lane's agent moves a ticket on</span>
-          <InfoTip
-            text="Covers every ticket in this lane. A ticket's own Full auto turns it on for that ticket in every lane. Next Lane below sets where a ticket moves when its checklist is done."
-          />
-        </label>
-        <label v-if="showsLaneField('nextLane', openLane.id)">
-          Next Lane
-          <select
-            :value="openLane.nextLaneId ?? ''"
-            @change="editLane(openLane, { nextLaneId: ($event.target as HTMLSelectElement).value || undefined })"
-          >
-            <option value="">None</option>
-            <option v-if="openLane.id !== UNASSIGNED_LANE_ID" :value="UNASSIGNED_LANE_ID">
-              {{ UNASSIGNED_LANE_NAME }}
-            </option>
-            <option
-              v-for="lane in board.lanes.filter((candidate) => candidate.id !== openLane?.id)"
-              :key="lane.id"
-              :value="lane.id"
-            >
-              {{ lane.name }}
-            </option>
-          </select>
-          <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
-        </label>
-        <template v-if="showsLaneField('agentSetsVersion', openLane.id)">
-          <label class="checkbox-label">
+      </details>
+
+      <details
+        v-if="showsLaneSection('autoRun', openLane.id)"
+        class="lane-settings-section"
+        :open="laneModalSectionsOpen.autoRun"
+        @toggle="rememberLaneSectionOpen('autoRun', $event)"
+      >
+        <summary class="eyebrow">Auto Run</summary>
+        <div class="lane-settings-section-body ticket-agent">
+          <div class="auto-run-pickers">
+            <label v-if="showsLaneField('autoRunAgent', openLane.id)">
+              Agent
+              <select
+                :value="findAgent(agents, openLane.autoRunAgentId).id"
+                @change="changeLaneAutoRunAgent(openLane, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+              </select>
+            </label>
+            <label v-if="showsLaneField('autoRunShell', openLane.id)">
+              Shell
+              <select
+                :value="autoRunTerminal(openLane).id"
+                @change="editLane(openLane, { autoRunTerminalId: ($event.target as HTMLSelectElement).value })"
+              >
+                <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
+                  {{ terminal.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <label v-if="showsLaneField('autoRunModel', openLane.id)">
+            Model
+            <ModelField
+              :model-value="openLane.autoRunModel ?? ''"
+              :agent="findAgent(agents, openLane.autoRunAgentId)"
+              placeholder="CLI default"
+              @update:model-value="editLane(openLane, { autoRunModel: $event || undefined })"
+            />
+          </label>
+          <label v-if="showsLaneField('worktrees', openLane.id)" class="checkbox-label">
             <input
               type="checkbox"
-              :checked="Boolean(openLane.agentSetsVersion)"
-              @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
+              :checked="autoRunUsesWorktrees(openLane)"
+              @change="editLane(openLane, { autoRunWorktrees: ($event.target as HTMLInputElement).checked })"
             />
-            Agent sets semantic version
+            Worktree and branch per ticket
           </label>
-          <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
-        </template>
-        <label v-if="showsLaneField('closesTicket', openLane.id)" class="checkbox-label">
-          <input
-            type="checkbox"
-            :checked="Boolean(openLane.closesTicket)"
-            @change="editLane(openLane, { closesTicket: ($event.target as HTMLInputElement).checked })"
-          />
-          Counts as closed: tickets entering this lane count as closed in Metrics
-        </label>
-        <span class="field-hint">
-          The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it
-          waits until focus leaves it.
-        </span>
-        <span class="field-hint">
-          Auto Run on this lane opens one new window with a tab per visible ticket, each running its agent command.
-          With worktrees on, each ticket gets .worktrees/tN on its own branch off freshly fetched main, so parallel
-          agents never share a checkout. Terminal needs Accessibility permission to open tabs.
-        </span>
-      </section>
+          <label v-if="showsLaneField('fullAuto', openLane.id)" class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(openLane.fullAuto)"
+              aria-labelledby="lane-full-auto-label"
+              @change="editLane(openLane, { fullAuto: ($event.target as HTMLInputElement).checked })"
+            />
+            <span id="lane-full-auto-label">Full auto: start the next lane's agent when this lane's agent moves a ticket on</span>
+            <InfoTip
+              text="Covers every ticket in this lane. A ticket's own Full auto turns it on for that ticket in every lane. Next Lane below sets where a ticket moves when its checklist is done."
+            />
+          </label>
+          <label v-if="showsLaneField('nextLane', openLane.id)">
+            Next Lane
+            <select
+              :value="openLane.nextLaneId ?? ''"
+              @change="editLane(openLane, { nextLaneId: ($event.target as HTMLSelectElement).value || undefined })"
+            >
+              <option value="">None</option>
+              <option v-if="openLane.id !== UNASSIGNED_LANE_ID" :value="UNASSIGNED_LANE_ID">
+                {{ UNASSIGNED_LANE_NAME }}
+              </option>
+              <option
+                v-for="lane in board.lanes.filter((candidate) => candidate.id !== openLane?.id)"
+                :key="lane.id"
+                :value="lane.id"
+              >
+                {{ lane.name }}
+              </option>
+            </select>
+            <span class="field-hint">Where this lane's tickets go on completion unless a ticket sets its own.</span>
+          </label>
+          <template v-if="showsLaneField('agentSetsVersion', openLane.id)">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                :checked="Boolean(openLane.agentSetsVersion)"
+                @change="editLane(openLane, { agentSetsVersion: ($event.target as HTMLInputElement).checked })"
+              />
+              Agent sets semantic version
+            </label>
+            <span class="field-hint">This lane's agent decides whether the ticket needs a version and writes it.</span>
+          </template>
+          <label v-if="showsLaneField('closesTicket', openLane.id)" class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(openLane.closesTicket)"
+              @change="editLane(openLane, { closesTicket: ($event.target as HTMLInputElement).checked })"
+            />
+            Counts as closed: tickets entering this lane count as closed in Metrics
+          </label>
+          <span class="field-hint">
+            The next agent starts on the board's next refresh (about 10 seconds). While you're typing in a field it
+            waits until focus leaves it.
+          </span>
+          <span class="field-hint">
+            Auto Run on this lane opens one new window with a tab per visible ticket, each running its agent command.
+            With worktrees on, each ticket gets .worktrees/tN on its own branch off freshly fetched main, so parallel
+            agents never share a checkout. Terminal needs Accessibility permission to open tabs.
+          </span>
+        </div>
+      </details>
 
       <div class="modal-actions">
         <button

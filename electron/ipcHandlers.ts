@@ -243,7 +243,8 @@ const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   orchestratorPromptOverride: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
-  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true
+  nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true,
+  graphPosition: true
 }
 const TICKET_PATCH_KEYS = new Set(Object.keys(TICKET_PATCH_FIELDS))
 const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
@@ -255,6 +256,9 @@ const OPTIONAL_TEXT_KEYS = new Set(['outputTarget', 'orchestratorPrompt', 'orche
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
 const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 
+const isGraphPosition = (value: unknown): boolean =>
+  isPlainObject(value) && Number.isFinite(value.x) && Number.isFinite(value.y)
+
 const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
   if (!isPlainObject(value)) return false
   return Object.entries(value).every(([key, fieldValue]) => {
@@ -262,6 +266,7 @@ const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
     const isString = typeof fieldValue === 'string'
     if (REQUIRED_TEXT_KEYS.has(key)) return isString
     if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
+    if (key === 'graphPosition') return fieldValue == null || isGraphPosition(fieldValue)
     return true
   })
 }
@@ -447,6 +452,18 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
       if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane delete payload.')
       repository.deleteSwimLane(normalizePath(projectPath), laneId)
+    },
+
+    'workflow:activate': (payload, { repository }) => {
+      const { projectPath, workflowId } = (payload ?? {}) as { projectPath?: unknown; workflowId?: unknown }
+      if (typeof projectPath !== 'string' || typeof workflowId !== 'string') throw new Error('Invalid workflow activate payload.')
+      return toPlainJson(repository.activateWorkflow(normalizePath(projectPath), workflowId))
+    },
+
+    'workflow:create': (payload, { repository }) => {
+      const { projectPath, name } = (payload ?? {}) as { projectPath?: unknown; name?: unknown }
+      if (typeof projectPath !== 'string' || typeof name !== 'string') throw new Error('Invalid workflow create payload.')
+      return toPlainJson(repository.createWorkflow(normalizePath(projectPath), name))
     },
 
     'project:update': (payload, { repository }) => {

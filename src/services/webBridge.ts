@@ -102,6 +102,8 @@ export const webBridge = {
   updateLane: (projectPath, laneId, patch) => invoke('lane:update', { projectPath, laneId, patch }),
   reorderLanes: (projectPath, laneIds) => invoke('lane:reorder', { projectPath, laneIds }),
   deleteLane: (projectPath, laneId) => invoke('lane:delete', { projectPath, laneId }),
+  activateWorkflow: (projectPath, workflowId) => invoke('workflow:activate', { projectPath, workflowId }),
+  createWorkflow: (projectPath, name) => invoke('workflow:create', { projectPath, name }),
   updateProject: (path, patch) => invoke('project:update', { path, patch }),
   onExternalChange: (callback) => subscribe('external-change', () => callback()),
   scanProjectDirectories: (scanDirectories, hiddenPaths, thirdPartyPaths) =>

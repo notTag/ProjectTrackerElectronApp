@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('projectTracker', {
     invokePlain('lane:update', { projectPath, laneId, patch }),
   reorderLanes: (projectPath: string, laneIds: string[]) => invokePlain('lane:reorder', { projectPath, laneIds }),
   deleteLane: (projectPath: string, laneId: string) => invokePlain('lane:delete', { projectPath, laneId }),
+  activateWorkflow: (projectPath: string, workflowId: string) =>
+    invokePlain('workflow:activate', { projectPath, workflowId }),
+  createWorkflow: (projectPath: string, name: string) => invokePlain('workflow:create', { projectPath, name }),
   updateProject: (path: string, patch: ProjectWritePatch) => invokePlain('project:update', { path, patch }),
   // The IPC event object is withheld so the renderer never gets ipcRenderer access.
   onExternalChange: (callback: () => void) => {
