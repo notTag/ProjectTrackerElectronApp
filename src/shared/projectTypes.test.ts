@@ -2261,6 +2261,14 @@ describe('graph positions', () => {
     expect(laneGraphPosition(lane('a', { x: 5, y: 300 }), 3)).toEqual({ x: 5, y: 300 })
   })
 
+  it('treats a malformed saved position as unset', () => {
+    const malformedPositions = [[10, 20], { x: '5', y: 5 }, { x: 5 }, null]
+    for (const malformed of malformedPositions) {
+      const malformedLane = { ...lane('b'), graphPosition: malformed as unknown as { x: number; y: number } }
+      expect(laneGraphPosition(malformedLane, 1)).toEqual({ x: 270, y: 70 })
+    }
+  })
+
   it('places a new node one column right of the rightmost node', () => {
     expect(graphPositionRightOf([{ x: 50, y: 70 }, { x: 900, y: 400 }, { x: 270, y: 70 }])).toEqual({ x: 1120, y: 70 })
     expect(graphPositionRightOf([])).toEqual({ x: 50, y: 70 })

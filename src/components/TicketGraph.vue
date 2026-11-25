@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   graphPositionRightOf,
   laneGraphPosition,
@@ -20,6 +20,8 @@ const emit = defineEmits<{ selection: []; editLane: [lane: SwimLane, patch: Lane
 // ponytail: free-form canvas, no zoom/pan or auto-layout. Add dagre if boards outgrow manual placement.
 const NODE_WIDTH = 180
 const CANVAS_MARGIN = 80
+// y is a node's vertical center (translateY(-50%)), so this keeps its top edge on the canvas.
+const NODE_HALF_HEIGHT = 29
 const DRAG_THRESHOLD = 4
 
 const canvasElement = ref<HTMLElement>()
@@ -97,7 +99,10 @@ const states = computed(() => props.lanes.map((lane, index) => {
 const canvasSize = computed(() => {
   const positions = [...positionById.value.values()]
   const farthestX = Math.max(0, ...positions.map(position => position.x + NODE_WIDTH))
-  const lowestY = Math.max(0, ...positions.map(position => position.y))
+  const nodeYs = positions.map(position => position.y)
+  // A backward arrow's loop bottoms out near its middle, below the nodes.
+  const edgeMiddleYs = edges.value.map(edge => edge.middle.y)
+  const lowestY = Math.max(0, ...nodeYs, ...edgeMiddleYs)
   return { width: farthestX + CANVAS_MARGIN, height: Math.max(400, lowestY + CANVAS_MARGIN) }
 })
 
@@ -130,8 +135,10 @@ function moveNode(event: PointerEvent) {
   if (!nodeDrag.moved && Math.hypot(deltaX, deltaY) < DRAG_THRESHOLD) return
   nodeDrag.moved = true
   const x = Math.max(0, Math.round(nodeDrag.nodeStart.x + deltaX))
-  const y = Math.max(0, Math.round(nodeDrag.nodeStart.y + deltaY))
-  draggedPositions.value = new Map(draggedPositions.value).set(nodeDrag.lane.id, { x, y })
+  const y = Math.max(NODE_HALF_HEIGHT, Math.round(nodeDrag.nodeStart.y + deltaY))
+  const nextPositions = new Map(draggedPositions.value)
+  nextPositions.set(nodeDrag.lane.id, { x, y })
+  draggedPositions.value = nextPositions
 }
 
 function dropNode() {
@@ -139,12 +146,23 @@ function dropNode() {
   const { lane, moved } = nodeDrag
   nodeDrag = null
   if (!moved) return
+  // The release may land off the button (clamped edge, own dot), so its click never comes; don't let the flag outlive this gesture.
   suppressNextClick = true
+  setTimeout(() => { suppressNextClick = false })
   const graphPosition = draggedPositions.value.get(lane.id)!
   emit('editLane', lane, { graphPosition })
-  const remaining = new Map(draggedPositions.value)
-  remaining.delete(lane.id)
-  draggedPositions.value = remaining
+}
+
+// The store saves positions through a queue, so a dropped node keeps its dragged spot until the new lanes arrive.
+watch(() => props.lanes, () => {
+  if (!draggedPositions.value.size || nodeDrag) return
+  draggedPositions.value = new Map()
+})
+
+function cancelGestures() {
+  nodeDrag = null
+  draggedPositions.value = new Map()
+  connection.value = null
 }
 
 function clickNode(laneId: string) {
@@ -172,8 +190,9 @@ function dropConnection(event: PointerEvent) {
   const current = connection.value
   if (!current) return
   connection.value = null
-  const dropTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-dot-lane-id]')
-  const targetLaneId = dropTarget?.dataset.dotLaneId
+  const elementUnderPointer = document.elementFromPoint(event.clientX, event.clientY)
+  const dropDot = elementUnderPointer?.closest<HTMLElement>('[data-dot-lane-id]')
+  const targetLaneId = dropDot?.dataset.dotLaneId
   const originLane = props.lanes.find(lane => lane.id === current.fromLaneId)
   if (!originLane || !targetLaneId || targetLaneId === originLane.id) return
   emit('editLane', originLane, { nextLaneId: targetLaneId })
@@ -211,11 +230,15 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', cancelGestures)
+  window.addEventListener('blur', cancelGestures)
   window.addEventListener('keydown', onKeyDown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', cancelGestures)
+  window.removeEventListener('blur', cancelGestures)
   window.removeEventListener('keydown', onKeyDown)
 })
 
