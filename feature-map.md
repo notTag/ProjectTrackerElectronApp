@@ -240,15 +240,15 @@ From left to right:
 
 | Control | Behavior |
 |---------|----------|
-| **Project name** title | The project's folder name, or the last part of its path |
+| **Project name** title | The project's folder name, or the last part of its path. Ellipsizes when long |
+| **Open In** picker | Right of the title; its menu opens rightward. See 1.6 |
+| **⌁ Open** | Right of Open In. Opens the project folder in the Open In app |
 | **← Projects** | Back to the Dashboard. Escape does the same when no modal is open |
-| **Open In** picker | See 1.6 |
-| **⌁ Open** | Opens the project folder in the Open In app |
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Display** | Opens the Display settings modal (3.5) |
-| **📊 Metrics** | The same popover as the Dashboard's (2.1), for this project only |
+| **⚙ Settings** | Opens the Settings modal. Its **Board Settings** section holds **📊 Metrics** (the Dashboard's panel (2.1) for this project only, shown inline in the modal) and **⚙ Display** (closes Settings, opens the Display settings modal (3.5)). Escape or a backdrop click closes it |
+| **🎚 UI Demo** | Toggles the UI Demo tuning panel |
 
 ### 3.2 Notices and errors
 

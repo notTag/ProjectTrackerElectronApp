@@ -70,11 +70,26 @@ body {
   -webkit-app-region: drag;
 }
 
-/* The title takes only leftover width and ellipsizes, so the action buttons
-   never get squeezed into wrapping. No tooltip: the title sits in the drag
-   region, which receives no hover events. */
-.titlebar-title {
+/* The lead group (title + Open In + ⌁ Open) takes only leftover width; the
+   title inside it ellipsizes so its buttons never get pushed off. The empty
+   rest of the group stays a drag handle. */
+.titlebar-lead {
+  display: flex;
   flex: 1 1 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Opens rightward: leftward would run under the traffic lights. */
+.titlebar-lead .filter-popover {
+  left: 0;
+  right: auto;
+}
+
+/* No tooltip: the title sits in the drag region, which receives no hover events. */
+.titlebar-title {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2141,6 +2156,33 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
+/* Settings modal (#137): Metrics renders inline so the modal grows instead of
+   clipping an absolute popover. */
+.settings-modal {
+  width: auto;
+  min-width: min(420px, 100%);
+  max-width: 100%;
+  align-items: flex-start;
+}
+
+.settings-modal .modal-actions {
+  align-self: stretch;
+}
+
+.settings-modal .metrics-menu {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.settings-modal .metrics-popover {
+  position: static;
+  max-width: 100%;
+  box-shadow: none;
+}
+
+.settings-modal .metrics-popover-header button,
 .titlebar-actions .metrics-popover-header button {
   min-width: 28px;
   padding: 0 8px;
