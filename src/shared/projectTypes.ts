@@ -267,6 +267,8 @@ export interface SwimLane {
   // Where this lane's tickets go on completion when they set no Next Lane of
   // their own. Absent means None.
   nextLaneId?: string
+  // Where the lane's node sits in the graph view. Absent means its default row slot.
+  graphPosition?: { x: number; y: number }
 }
 
 export interface ChecklistItem {
@@ -1911,25 +1913,26 @@ export type TicketModalField = (typeof TICKET_MODAL_FIELDS)[number]['id']
 // Display-only, like TICKET_MODAL_FIELDS: a hidden lane setting keeps its value
 // and the agent still gets it. The lane name always shows.
 export const LANE_MODAL_FIELDS = [
-  { id: 'agentPrompt', label: 'Agent prompt' },
-  { id: 'agentFile', label: 'Agent markdown file' },
-  { id: 'output', label: 'Output' },
-  { id: 'orchestratorPrompt', label: 'Orchestrator prompt' },
-  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file' },
-  { id: 'orchestratorPoll', label: 'Orchestrator poll' },
-  { id: 'autoRunAgent', label: 'Agent' },
-  { id: 'autoRunShell', label: 'Shell' },
-  { id: 'autoRunModel', label: 'Model' },
-  { id: 'orchestratorAgent', label: 'Orchestrator agent' },
-  { id: 'orchestratorModel', label: 'Orchestrator model' },
-  { id: 'worktrees', label: 'Worktree and branch per ticket' },
-  { id: 'fullAuto', label: 'Full auto' },
-  { id: 'nextLane', label: 'Next Lane' },
-  { id: 'agentSetsVersion', label: 'Agent sets semantic version' },
-  { id: 'closesTicket', label: 'Counts as closed' }
+  { id: 'agentPrompt', label: 'Agent prompt', section: 'agent' },
+  { id: 'agentFile', label: 'Agent markdown file', section: 'agent' },
+  { id: 'output', label: 'Output', section: 'agent' },
+  { id: 'orchestratorPrompt', label: 'Orchestrator prompt', section: 'orchestrator' },
+  { id: 'orchestratorFile', label: 'Agent Orchestrator markdown file', section: 'orchestrator' },
+  { id: 'orchestratorPoll', label: 'Orchestrator poll', section: 'orchestrator' },
+  { id: 'orchestratorAgent', label: 'Orchestrator agent', section: 'orchestrator' },
+  { id: 'orchestratorModel', label: 'Orchestrator model', section: 'orchestrator' },
+  { id: 'autoRunAgent', label: 'Agent', section: 'autoRun' },
+  { id: 'autoRunShell', label: 'Shell', section: 'autoRun' },
+  { id: 'autoRunModel', label: 'Model', section: 'autoRun' },
+  { id: 'worktrees', label: 'Worktree and branch per ticket', section: 'autoRun' },
+  { id: 'fullAuto', label: 'Full auto', section: 'autoRun' },
+  { id: 'nextLane', label: 'Next Lane', section: 'autoRun' },
+  { id: 'agentSetsVersion', label: 'Agent sets semantic version', section: 'autoRun' },
+  { id: 'closesTicket', label: 'Counts as closed', section: 'autoRun' }
 ] as const
 
 export type LaneModalField = (typeof LANE_MODAL_FIELDS)[number]['id']
+export type LaneModalSection = (typeof LANE_MODAL_FIELDS)[number]['section']
 
 // A card is too narrow for a full path; the last segment is what tells
 // sibling worktrees apart.
@@ -2331,4 +2334,32 @@ export const laneTransitions = (lanes: SwimLane[], tickets: Ticket[]): LaneTrans
     overrideEdges.set(key, edge)
   }
   return [...laneEdges, ...overrideEdges.values()]
+}
+
+// Graph view (#131): node x is its left edge, y its vertical center.
+export const GRAPH_LEFT_MARGIN = 50
+export const GRAPH_COLUMN_WIDTH = 220
+export const GRAPH_ROW_Y = 70
+
+export type GraphPosition = NonNullable<SwimLane['graphPosition']>
+
+// The stored JSON can be hand- or agent-edited, so anything but two finite numbers counts as unset.
+const isValidGraphPosition = (position: unknown): position is GraphPosition => {
+  if (typeof position !== 'object' || position === null) return false
+  const { x, y } = position as Record<string, unknown>
+  return Number.isFinite(x) && Number.isFinite(y)
+}
+
+// A lane never dragged keeps the #71 row slot, so untouched boards look the same.
+export const laneGraphPosition = (lane: SwimLane, index: number): GraphPosition => {
+  const savedPosition = lane.graphPosition
+  if (isValidGraphPosition(savedPosition)) return { x: savedPosition.x, y: savedPosition.y }
+  return { x: GRAPH_LEFT_MARGIN + index * GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
+}
+
+// Where a lane added from the graph lands: one column right of the rightmost node.
+export const graphPositionRightOf = (positions: GraphPosition[]): GraphPosition => {
+  const nodeXs = positions.map((position) => position.x)
+  const rightmostX = Math.max(GRAPH_LEFT_MARGIN - GRAPH_COLUMN_WIDTH, ...nodeXs)
+  return { x: rightmostX + GRAPH_COLUMN_WIDTH, y: GRAPH_ROW_Y }
 }

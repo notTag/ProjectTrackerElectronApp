@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   orchestrator_model TEXT NOT NULL DEFAULT '',
   -- Not a foreign key: it may name the virtual unassigned lane.
   next_lane_id TEXT,
+  -- Where the lane's node sits in the graph view, as {x, y}. NULL means the default row slot.
+  graph_position_json TEXT,
   PRIMARY KEY (project_path, id)
 );
 
@@ -199,6 +201,7 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_rules_passed_lane_id', definition: 'TEXT' },
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
   // NULL until the board's first workflow swap or create materializes "Default".
   { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]

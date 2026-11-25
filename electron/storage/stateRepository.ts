@@ -184,6 +184,7 @@ const laneFromRow = (row: Row): SwimLane => ({
     orchestratorAgentId: asText(row.orchestrator_agent_id),
     orchestratorModel: asNonEmptyText(row.orchestrator_model),
     nextLaneId: asText(row.next_lane_id),
+    graphPosition: parseJson<SwimLane['graphPosition']>(row.graph_position_json, undefined),
     orchestratorPollMinutes: Number(row.orchestrator_poll_minutes),
     orchestratorPollActive: asBool(row.orchestrator_poll_active)
   })
@@ -779,8 +780,8 @@ export class StateRepository {
          id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
-         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, graph_position_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
@@ -791,7 +792,7 @@ export class StateRepository {
          auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
          orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id,
          orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
-         orchestrator_file_path = excluded.orchestrator_file_path`,
+         orchestrator_file_path = excluded.orchestrator_file_path, graph_position_json = excluded.graph_position_json`,
       [
         lane.id,
         projectPath,
@@ -815,7 +816,8 @@ export class StateRepository {
         lane.nextLaneId ?? null,
         orchestratorPollMinutes(lane),
         orchestratorPollActive(lane) ? 1 : 0,
-        lane.orchestratorFilePath ?? ''
+        lane.orchestratorFilePath ?? '',
+        lane.graphPosition ? JSON.stringify(lane.graphPosition) : null
       ]
     )
   }
