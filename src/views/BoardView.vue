@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { laneModalExpanded, ticketModalExpanded } from '@/modalWidth'
+import { laneModalExpanded, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -654,7 +654,8 @@ watch(
 // modal's edge and letting go over the backdrop would otherwise close the modal.
 let pressStartedOnBackdrop = false
 const notePressTarget = (event: PointerEvent) => {
-  pressStartedOnBackdrop = event.target === event.currentTarget
+  const isEdgeResize = event.defaultPrevented
+  pressStartedOnBackdrop = event.target === event.currentTarget && !isEdgeResize
 }
 const closeIfPressStartedOnBackdrop = (close: () => void) => {
   const startedOnBackdrop = pressStartedOnBackdrop
@@ -1924,7 +1925,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (ticketDraft = null))">
-    <section class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
+    <section v-edge-resize class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
       <div class="ticket-modal-header">
         <p class="eyebrow">New ticket</p>
         <ExpandToggle v-model="ticketModalExpanded" />
@@ -2005,6 +2006,7 @@ const runTicketAgent = (ticket: Ticket) => {
   <div v-if="openTicket" class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(closeModals)">
     <!-- Refresh before editing so fields include writes from other processes. -->
     <section
+      v-edge-resize
       class="modal ticket-modal"
       :class="{ expanded: ticketModalExpanded && boardView !== 'graph', resizable: boardView !== 'graph' }"
       @focusin="store.refresh()"
@@ -2445,7 +2447,7 @@ const runTicketAgent = (ticket: Ticket) => {
   </div>
 
   <div v-if="openLane" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (openLaneId = null))">
-    <section class="modal lane-modal resizable" :class="{ expanded: laneModalExpanded }">
+    <section v-edge-resize class="modal lane-modal resizable" :class="{ expanded: laneModalExpanded }">
       <div class="ticket-modal-header">
         <p class="eyebrow">Swim lane</p>
         <div ref="laneFieldsMenuRef" class="filter-menu">

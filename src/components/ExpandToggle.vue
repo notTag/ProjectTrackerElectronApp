@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const expanded = defineModel<boolean>({ required: true })
 
-// A dragged (resize: horizontal) width is an inline style that beats .modal.expanded.
+// A dragged (vEdgeResize) width is an inline style that beats .modal.expanded.
 function toggle(event: MouseEvent) {
   const button = event.currentTarget as HTMLElement
   const modal = button.closest<HTMLElement>('.modal')

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, type Directive } from 'vue'
 
 // Module scope, not component setup: App.vue remounts BoardView on Board <-> Dashboard
 // switches, and each modal's chosen width should survive that.
@@ -6,3 +6,73 @@ import { ref } from 'vue'
 export const ticketModalExpanded = ref(false)
 // Separate from the ticket modal so expanding one modal type never resizes the other.
 export const laneModalExpanded = ref(false)
+
+// Half on the backdrop, half on the modal: a scrolling modal's right edge is its
+// scrollbar, which swallows pointer events, so the outer half is what stays grabbable.
+const EDGE_GRAB_PX = 6
+
+type Edge = 'left' | 'right'
+
+function edgeUnderPointer(modal: HTMLElement, event: PointerEvent): Edge | null {
+  if (!modal.classList.contains('resizable')) return null
+  const rect = modal.getBoundingClientRect()
+  const isWithinModalHeight = event.clientY >= rect.top && event.clientY <= rect.bottom
+  if (!isWithinModalHeight) return null
+  const distanceFromLeft = Math.abs(event.clientX - rect.left)
+  const distanceFromRight = Math.abs(event.clientX - rect.right)
+  if (distanceFromLeft <= EDGE_GRAB_PX) return 'left'
+  if (distanceFromRight <= EDGE_GRAB_PX) return 'right'
+  return null
+}
+
+// Drag a `.resizable` modal's left or right edge to set its width. Min/max width
+// come from `.modal.resizable` CSS, which clamps the inline width written here.
+// Listens on the backdrop (capture phase, so it runs before the backdrop's own
+// handlers) because half the grab zone lies outside the modal. preventDefault
+// tells BoardView's backdrop-close logic that this press was a resize, not a dismiss.
+export const vEdgeResize: Directive<HTMLElement> = {
+  mounted(modal) {
+    const backdrop = modal.parentElement
+    if (!backdrop) return
+
+    backdrop.addEventListener(
+      'pointermove',
+      (event) => {
+        if (backdrop.hasPointerCapture(event.pointerId)) return
+        const isOnEdge = edgeUnderPointer(modal, event) !== null
+        backdrop.style.cursor = isOnEdge ? 'ew-resize' : ''
+      },
+      { capture: true }
+    )
+
+    backdrop.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (event.button !== 0) return
+        const edge = edgeUnderPointer(modal, event)
+        if (!edge) return
+        event.preventDefault()
+
+        const startX = event.clientX
+        const startWidth = modal.getBoundingClientRect().width
+        const outwardDirection = edge === 'right' ? 1 : -1
+
+        const resizeToPointer = (moveEvent: PointerEvent) => {
+          const outwardDelta = (moveEvent.clientX - startX) * outwardDirection
+          // The backdrop centres the modal, so it grows on both sides: 2x keeps the dragged edge under the pointer.
+          const nextWidth = startWidth + outwardDelta * 2
+          modal.style.width = `${nextWidth}px`
+        }
+        const stopResizing = () => {
+          backdrop.removeEventListener('pointermove', resizeToPointer)
+          backdrop.removeEventListener('lostpointercapture', stopResizing)
+        }
+
+        backdrop.setPointerCapture(event.pointerId)
+        backdrop.addEventListener('pointermove', resizeToPointer)
+        backdrop.addEventListener('lostpointercapture', stopResizing)
+      },
+      { capture: true }
+    )
+  },
+}
