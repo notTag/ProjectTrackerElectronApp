@@ -1861,6 +1861,11 @@ code {
   margin: 0;
 }
 
+/* ↻ ink sits centred already; the base bottom-padding nudge tuned for ×/⚙ lifts it. */
+.pull-request-status .icon-button {
+  padding: 0;
+}
+
 /* One hue per state, shared by the modal pill and the card dot. */
 :is(.pull-request-pill, .pull-request-dot)[data-state='open'] {
   --pull-request-color: #2da44e;
@@ -1920,6 +1925,11 @@ code {
 
 .ticket-checklist li span {
   flex: 1;
+}
+
+/* Without a width the add-item input falls back to the browser's size=20 and clips its placeholder. */
+.ticket-checklist > input {
+  width: 100%;
 }
 
 .ticket-links li a {
