@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useRowConfirm, type RowAction } from '@/components/rowConfirm'
 import type { LaneStoreEntry } from '@/shared/projectTypes'
@@ -38,7 +38,15 @@ const confirm = async (entry: LaneStoreEntry, action: RowAction) => {
   if (!done) error.value = store.error ?? 'That did not work.'
 }
 
+// Blur alone misses a click that moves no focus (the window isn't focused).
+const cancelOnOutsidePointer = (event: PointerEvent) => {
+  const onConfirmButton = confirmButtonRef.value.some((button) => button.contains(event.target as Node))
+  if (!onConfirmButton) cancel()
+}
+
+onBeforeUnmount(() => window.removeEventListener('pointerdown', cancelOnOutsidePointer))
 onMounted(() => {
+  window.addEventListener('pointerdown', cancelOnOutsidePointer)
   store.loadLaneStore().catch((loadError: unknown) => {
     error.value = loadError instanceof Error ? loadError.message : String(loadError)
   })

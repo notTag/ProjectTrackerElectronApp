@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 
+import SwimlaneStoreSection from '@/components/SwimlaneStoreSection.vue'
 import { activeWorkflow, boardWorkflows, workflowNameProblem } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -95,6 +96,7 @@ const submitDraft = async () => {
         <span class="image-dropzone-plus" aria-hidden="true">+</span>
         <span>Create new Workflow</span>
       </button>
+      <SwimlaneStoreSection :project-path="projectPath" />
       <div class="modal-actions">
         <button type="button" @click="emit('close')">Close</button>
       </div>
