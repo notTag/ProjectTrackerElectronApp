@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { toRaw } from 'vue'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { resolveAutoRunTerminal } from '@/shared/openInTargets'
@@ -307,7 +308,8 @@ const applyTicketWritesInPlace = (
   writes: BoardWrite[]
 ) => {
   const ticketWritesOnly = writes.every((write) => write.kind.startsWith('ticket:'))
-  if (!ticketWritesOnly || !onlyTicketsDiffer(current, next, projectPath)) return false
+  // `next` is built from the raw state, so compare it against the raw state.
+  if (!ticketWritesOnly || !onlyTicketsDiffer(toRaw(current), next, projectPath)) return false
   const board = current.boards![projectPath]
   const rowById = new Map(board.tickets.map((ticket) => [ticket.id, ticket]))
   for (const write of writes) {
@@ -819,9 +821,12 @@ export const useProjectsStore = defineStore('projects', {
       saveQueue = saveQueue
         .catch(() => undefined)
         .then(async () => {
-          const persistedState = undo ? undo(this.state) : this.state
-          const candidate = update(this.state)
-          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          // The diff walks every ticket several times; through the reactive
+          // proxy each read is tracked, which dominated a create on a big board (#134).
+          const rawState = toRaw(this.state)
+          const persistedState = undo ? undo(rawState) : rawState
+          const candidate = update(rawState)
+          const ownMoves = withCompletionMoves(rawState, candidate, alsoCompletedIds)
           const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
           // Taken before the rows are patched in place: the candidate shares
           // those row objects, so afterwards it would no longer show the moves.

@@ -1464,7 +1464,12 @@ const autoRunSplit = (lane: SwimLane) => {
   return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
 
-const autoRunTickets = (lane: SwimLane) => autoRunSplit(lane).runnable
+// Cached per lane: the header reads it twice per render, and opening a ticket
+// re-renders the header without changing any lane's tickets (#134).
+const runnableByLaneId = computed(
+  () => new Map(laneColumns.value.map((lane) => [lane.id, autoRunSplit(lane).runnable]))
+)
+const autoRunTickets = (lane: SwimLane) => runnableByLaneId.value.get(lane.id) ?? autoRunSplit(lane).runnable
 
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
@@ -1551,7 +1556,12 @@ const openTicketInShell = (ticket: Ticket) => {
 // A re-running ticket shows the running dot, not its old result, so the lane
 // count leaves it out too.
 const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
-const unseenAgentResultCount = (laneId: string) => laneTickets(laneId).filter(showsUnseenResult).length
+const unseenCountByLaneId = computed(() => {
+  const counts = new Map<string, number>()
+  for (const [laneId, tickets] of ticketsByLane.value) counts.set(laneId, tickets.filter(showsUnseenResult).length)
+  return counts
+})
+const unseenAgentResultCount = (laneId: string) => unseenCountByLaneId.value.get(laneId) ?? 0
 
 // Watching the open ticket (not the card click) also covers opening from the
 // graph view, and a run that finishes while its modal is already open.
