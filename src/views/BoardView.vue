@@ -1622,7 +1622,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <UiSettingsPanel v-if="uiDemoPanelOpen">
     <template #metrics>
-      <MetricsPanel :project-paths="[projectPath]" scope="board" />
+      <MetricsPanel :project-paths="[projectPath]" scope="board" inline />
     </template>
     <template #display>
       <div class="label-with-tip">
