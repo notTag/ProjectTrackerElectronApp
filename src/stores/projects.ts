@@ -59,6 +59,7 @@ import {
   type ProjectStatus,
   type ProjectTrackerState,
   type LaneMarkdownKind,
+  type LaneStoreEntry,
   type ScanProgress,
   type SwimLane,
   type Ticket,
@@ -85,6 +86,8 @@ interface ProjectsStoreState {
   agentRunning: Record<string, boolean>
   // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
   autoRunning: Record<string, boolean>
+  // The global Swimlane Store (#146), sorted by name. Empty until loadLaneStore.
+  laneStoreEntries: LaneStoreEntry[]
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -283,7 +286,8 @@ export const useProjectsStore = defineStore('projects', {
     readmes: {},
     githubLoading: {},
     agentRunning: {},
-    autoRunning: {}
+    autoRunning: {},
+    laneStoreEntries: []
   }),
 
   getters: {
@@ -398,6 +402,37 @@ export const useProjectsStore = defineStore('projects', {
 
     async createWorkflow(projectPath: string, name: string) {
       return this.writeWorkflow(projectPath, () => projectTrackerApi.createWorkflow(projectPath, name))
+    },
+
+    // Rejects with the reason, so the lane modal can show it inline. The
+    // identity write first stores a never-saved board's lanes, queued behind
+    // any pending lane edit, so the snapshot holds what the modal shows.
+    async saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry> {
+      await this.writeBoard(projectPath, boardUpdate(projectPath, (board) => board))
+      const saved = saveQueue.catch(() => undefined).then(() => projectTrackerApi.saveLaneToStore(projectPath, laneId))
+      saveQueue = saved.then(
+        () => undefined,
+        () => undefined
+      )
+      const entry = await saved
+      await this.loadLaneStore()
+      return entry
+    },
+
+    async loadLaneStore() {
+      this.laneStoreEntries = await projectTrackerApi.listLaneStore()
+    },
+
+    async deleteLaneStoreEntry(entryId: string) {
+      return this.persist(async () => {
+        await projectTrackerApi.deleteLaneStoreEntry(entryId)
+        this.laneStoreEntries = this.laneStoreEntries.filter((entry) => entry.id !== entryId)
+        return []
+      })
+    },
+
+    async addLaneFromStore(projectPath: string, entryId: string) {
+      return this.writeWorkflow(projectPath, () => projectTrackerApi.addLaneFromStore(projectPath, entryId))
     },
 
     // The identity board write first stores a never-saved board's default

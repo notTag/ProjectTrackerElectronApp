@@ -3,6 +3,7 @@ import type {
   AutoRunTicketLaunch,
   GithubIssueLists,
   LaneMarkdownKind,
+  LaneStoreEntry,
   LaneWritePatch,
   ProjectGithubData,
   ProjectMetrics,
@@ -39,6 +40,10 @@ export const IPC_CHANNELS = [
   'lane:delete',
   'workflow:activate',
   'workflow:create',
+  'lane-store:list',
+  'lane-store:save',
+  'lane-store:delete',
+  'lane-store:add',
   'project:update',
   'projects:scan',
   'projects:scan-cancel',
@@ -91,6 +96,12 @@ export interface ProjectTrackerBridge {
   // Both return a fresh read: the board's lanes are replaced wholesale.
   activateWorkflow(projectPath: string, workflowId: string): Promise<ProjectTrackerState>
   createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState>
+  // The Swimlane Store (#146): global lane presets. Add returns a fresh read,
+  // like a workflow swap.
+  listLaneStore(): Promise<LaneStoreEntry[]>
+  saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry>
+  deleteLaneStoreEntry(entryId: string): Promise<void>
+  addLaneFromStore(projectPath: string, entryId: string): Promise<ProjectTrackerState>
   updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord>
   onExternalChange(callback: () => void): () => void
   scanProjectDirectories(scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]): Promise<ScanResult>

@@ -27,6 +27,7 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
+  type LaneStoreEntry,
   type LaneWritePatch,
   type ProjectWritePatch,
   type User
@@ -704,14 +705,105 @@ export class StateRepository {
     // ponytail: JSON.parse throws on corrupt text, rolling the swap back instead of emptying the board.
     const rows = JSON.parse(lanesJson) as Row[]
     if (!Array.isArray(rows)) throw new Error('Workflow lanes are not a list.')
+    for (const row of rows) this.insertLaneRow({ ...row, project_path: projectPath })
+  }
+
+  private insertLaneRow(laneRow: Row) {
     const tableColumns = this.select('PRAGMA table_info(swim_lanes)').map((column) => String(column.name))
-    for (const row of rows) {
-      const laneRow: Row = { ...row, project_path: projectPath }
-      const columns = tableColumns.filter((column) => column in laneRow)
-      const placeholders = columns.map(() => '?').join(', ')
-      const values = columns.map((column) => laneRow[column] as SQLInputValue)
-      this.run(`INSERT INTO swim_lanes (${columns.join(', ')}) VALUES (${placeholders})`, values)
-    }
+    const columns = tableColumns.filter((column) => column in laneRow)
+    const placeholders = columns.map(() => '?').join(', ')
+    const values = columns.map((column) => laneRow[column] as SQLInputValue)
+    this.run(`INSERT INTO swim_lanes (${columns.join(', ')}) VALUES (${placeholders})`, values)
+  }
+
+  listLaneStore(): LaneStoreEntry[] {
+    const rows = this.select('SELECT id, lane_id, name, created_at, updated_at FROM lane_store ORDER BY lower(name), id')
+    return rows.map((row) => ({
+      id: String(row.id),
+      laneId: String(row.lane_id),
+      name: String(row.name),
+      createdAt: String(row.created_at),
+      updatedAt: asText(row.updated_at)
+    }))
+  }
+
+  // Same lane id + name (any case) overwrites that entry, so saving a lane
+  // twice never leaves two copies.
+  saveLaneToStore(projectPath: string, laneId: string, markdown: { agent: string; orchestrator: string }): LaneStoreEntry {
+    if (laneId === UNASSIGNED_LANE_ID) throw new Error('The No status lane cannot be saved to the store.')
+    const entryId = this.transaction(() => {
+      const [laneRow] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+      if (!laneRow) throw new Error(`Lane ${laneId} does not exist.`)
+      const { project_path: _projectPath, position: _position, graph_position_json: _graphPosition, ...portableRow } = laneRow
+      const laneJson = JSON.stringify(portableRow)
+      const name = String(laneRow.name)
+      const now = new Date().toISOString()
+      const [existing] = this.select('SELECT id FROM lane_store WHERE lane_id = ? AND lower(name) = lower(?)', [laneId, name])
+      if (existing) {
+        this.run(
+          'UPDATE lane_store SET name = ?, lane_json = ?, agent_markdown = ?, orchestrator_markdown = ?, updated_at = ? WHERE id = ?',
+          [name, laneJson, markdown.agent, markdown.orchestrator, now, String(existing.id)]
+        )
+        return String(existing.id)
+      }
+      const newId = randomUUID()
+      this.run(
+        `INSERT INTO lane_store (id, lane_id, name, lane_json, agent_markdown, orchestrator_markdown, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [newId, laneId, name, laneJson, markdown.agent, markdown.orchestrator, now]
+      )
+      return newId
+    })
+    return this.listLaneStore().find((entry) => entry.id === entryId)!
+  }
+
+  deleteLaneStoreEntry(entryId: string) {
+    this.run('DELETE FROM lane_store WHERE id = ?', [entryId])
+  }
+
+  // Lands in the live lanes, so it joins the active workflow. The lane keeps
+  // its stored id, bringing back tickets parked under it; a clash refuses
+  // rather than minting a new id. File paths are cleared: the caller writes
+  // the markdown to the lane's default folder.
+  addLaneFromStore(projectPath: string, entryId: string): { laneName: string; agentMarkdown: string; orchestratorMarkdown: string } {
+    const added = this.transaction(() => {
+      const [entry] = this.select('SELECT * FROM lane_store WHERE id = ?', [entryId])
+      if (!entry) throw new Error('That store entry no longer exists.')
+      const laneId = String(entry.lane_id)
+      const taken = this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+      if (taken.length > 0) throw new Error('A lane with that id is already in this workflow.')
+      const storedRow = JSON.parse(String(entry.lane_json)) as Row
+      const nextLaneId = asText(storedRow.next_lane_id)
+      const nextLaneOnBoard =
+        nextLaneId !== undefined &&
+        this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, nextLaneId]).length > 0
+      const [positionRow] = this.select(
+        'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0',
+        [projectPath]
+      )
+      this.insertLaneRow({
+        ...storedRow,
+        id: laneId,
+        project_path: projectPath,
+        position: Number(positionRow.next),
+        is_unassigned: 0,
+        next_lane_id: nextLaneOnBoard ? nextLaneId : null,
+        agent_file_path: '',
+        orchestrator_file_path: '',
+        graph_position_json: null
+      })
+      return {
+        laneName: String(storedRow.name ?? entry.name),
+        agentMarkdown: String(entry.agent_markdown),
+        orchestratorMarkdown: String(entry.orchestrator_markdown)
+      }
+    })
+    return added
+  }
+
+  lane(projectPath: string, laneId: string): SwimLane | undefined {
+    const [row] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+    return row ? laneFromRow(row) : undefined
   }
 
   // Only the hand-edited fields: everything else on the row belongs to the scanner.

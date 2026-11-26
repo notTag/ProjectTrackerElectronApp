@@ -1382,6 +1382,7 @@ const commitTypedPrompts = () => {
 
 watch(openLaneId, () => {
   laneFieldsMenuOpen.value = false
+  laneStoreStatus.value = idleMarkdownStatus()
   flushMarkdownSaves()
   commitTypedPrompts()
   laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
@@ -1396,6 +1397,21 @@ onBeforeUnmount(() => {
   flushMarkdownSaves()
   commitTypedPrompts()
 })
+
+// Swimlane Store (#146). Typed prompts and their files are stored first, so
+// the snapshot matches what the modal shows.
+const laneStoreStatus = ref<LaneMarkdownStatus>(idleMarkdownStatus())
+const saveOpenLaneToStore = async (lane: SwimLane) => {
+  flushMarkdownSaves()
+  commitTypedPrompts()
+  await markdownSaveQueue
+  try {
+    await store.saveLaneToStore(projectPath.value, lane.id)
+    if (openLaneId.value === lane.id) laneStoreStatus.value = { savedMessage: 'Saved to store', error: '' }
+  } catch (error) {
+    if (openLaneId.value === lane.id) laneStoreStatus.value = { savedMessage: '', error: ipcErrorMessage(error) }
+  }
+}
 
 // Only the file (and its path, the first time) is written here. The prompt
 // itself is stored on blur, as before: storing it mid-typing would re-render
@@ -2853,7 +2869,17 @@ const runTicketAgent = (ticket: Ticket) => {
         >
           Delete lane
         </button>
-        <span v-else class="field-hint">This column always exists — it holds tickets with no status.</span>
+        <button
+          v-if="openLane.id !== UNASSIGNED_LANE_ID"
+          class="secondary"
+          title="Save this lane's settings and prompts to the Swimlane Store, to add to any board's workflow"
+          @click="saveOpenLaneToStore(openLane)"
+        >
+          Save to Store
+        </button>
+        <span v-if="laneStoreStatus.error" class="field-hint field-error">{{ laneStoreStatus.error }}</span>
+        <span v-else-if="laneStoreStatus.savedMessage" class="field-hint">{{ laneStoreStatus.savedMessage }}</span>
+        <span v-if="openLane.id === UNASSIGNED_LANE_ID" class="field-hint">This column always exists — it holds tickets with no status.</span>
         <button @click="openLaneId = null">Done</button>
       </div>
     </section>

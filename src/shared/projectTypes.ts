@@ -1558,6 +1558,15 @@ export interface WorkflowSummary {
   name: string
 }
 
+// A saved lane preset in the global Swimlane Store (#146).
+export interface LaneStoreEntry {
+  id: string
+  laneId: string
+  name: string
+  createdAt: string
+  updatedAt?: string
+}
+
 // A board that never swapped or created a workflow has no workflow rows; it is
 // shown as this one, and the first swap or create stores it under this id.
 export const DEFAULT_WORKFLOW_ID = 'default'

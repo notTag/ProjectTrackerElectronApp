@@ -157,6 +157,20 @@ CREATE TABLE IF NOT EXISTS workflows (
   PRIMARY KEY (project_path, id)
 );
 
+-- Global lane presets (#146), not tied to a board. lane_json holds a
+-- swim_lanes row minus project_path, position and graph_position_json; the
+-- prompts travel as content because file paths are project-relative.
+CREATE TABLE IF NOT EXISTS lane_store (
+  id TEXT PRIMARY KEY,
+  lane_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  lane_json TEXT NOT NULL,
+  agent_markdown TEXT NOT NULL DEFAULT '',
+  orchestrator_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS tickets_by_board ON tickets (project_path, lane_id);
 CREATE INDEX IF NOT EXISTS tickets_by_assignee ON tickets (assignee_id);
 CREATE INDEX IF NOT EXISTS tickets_by_external_id ON tickets (external_id);

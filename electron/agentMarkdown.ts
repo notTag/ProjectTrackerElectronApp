@@ -81,3 +81,15 @@ export const saveAgentMarkdown = (filePath: string, content: string, previousCon
   if (existing !== content) writeFileSync(filePath, content, 'utf8')
   return { filePath }
 }
+
+// Swimlane Store (#146): a lane's prompt file as it stands, or '' when it has none.
+export const readLaneMarkdown = (target: AgentMarkdownTarget): string => readIfExists(resolveAgentMarkdownPath(target))
+
+// A lane added from the store gets its prompt in the default lane folder, but
+// only when nothing is there yet: an existing file may be hand-written.
+export const writeMissingLaneMarkdown = (target: Omit<AgentMarkdownTarget, 'filePath'>, content: string) => {
+  const filePath = resolveAgentMarkdownPath({ ...target, filePath: '' })
+  if (content === '' || existsSync(filePath)) return
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  writeFileSync(filePath, content, 'utf8')
+}

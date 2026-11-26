@@ -4,6 +4,7 @@ import type {
   AutoRunTicketLaunch,
   Clearable,
   LaneMarkdownKind,
+  LaneStoreEntry,
   ProjectRecord,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -74,6 +75,22 @@ export const projectTrackerApi = {
 
   createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState> {
     return bridge().createWorkflow(projectPath, name)
+  },
+
+  listLaneStore(): Promise<LaneStoreEntry[]> {
+    return bridge().listLaneStore()
+  },
+
+  saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry> {
+    return bridge().saveLaneToStore(projectPath, laneId)
+  },
+
+  deleteLaneStoreEntry(entryId: string): Promise<void> {
+    return bridge().deleteLaneStoreEntry(entryId)
+  },
+
+  addLaneFromStore(projectPath: string, entryId: string): Promise<ProjectTrackerState> {
+    return bridge().addLaneFromStore(projectPath, entryId)
   },
 
   updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord> {

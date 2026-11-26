@@ -571,6 +571,116 @@ const laneRowsOf = (rows: DumpedRows, projectPath: string) => rows.filter((row) 
 const laneRowsExcept = (rows: DumpedRows, projectPath: string, laneId: string) =>
   rows.filter((row) => !(row.project_path === projectPath && row.id === laneId))
 
+describe('swimlane store (#146)', () => {
+  const twoBoardRepository = (userDataPath: string) => {
+    const state = stateWithBoard()
+    const sourceProject = state.snapshot.projects[0]
+    const otherProject = { ...sourceProject, path: `${sourceProject.path}-other`, name: 'Other' }
+    const otherBoard = { lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }], tickets: [] }
+    new StateRepository(userDataPath).saveState({
+      ...state,
+      snapshot: { ...state.snapshot, projects: [sourceProject, otherProject] },
+      boards: { ...state.boards, [otherProject.path]: otherBoard }
+    })
+    return { repository: new StateRepository(userDataPath), sourcePath: sourceProject.path, otherPath: otherProject.path }
+  }
+  const markdown = { agent: '# Agent', orchestrator: '# Orchestrator' }
+
+  it('creates the lane_store table on an existing database', () => {
+    const userDataPath = freshUserDataPath()
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    legacy.exec(SCHEMA_SQL.replace(/CREATE TABLE IF NOT EXISTS lane_store \([^;]*\);/, ''))
+    expect(legacy.prepare("SELECT name FROM sqlite_master WHERE name = 'lane_store'").all()).toEqual([])
+    legacy.close()
+
+    expect(new StateRepository(userDataPath).listLaneStore()).toEqual([])
+  })
+
+  it('saves a lane once, overwriting a same id + name entry, and survives a reopen', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+
+    const first = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    repository.updateSwimLane(sourcePath, 'prd', { outputTarget: 'docs/spec/' })
+    const second = repository.saveLaneToStore(sourcePath, 'prd', { agent: '# Agent v2', orchestrator: '' })
+    repository.saveLaneToStore(sourcePath, 'idea', markdown)
+
+    expect(second.id).toBe(first.id)
+    expect(second.updatedAt).toBeDefined()
+    const reopened = new StateRepository(userDataPath)
+    expect(reopened.listLaneStore().map((entry) => [entry.laneId, entry.name])).toEqual([['idea', 'Idea'], ['prd', 'PRD']])
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const stored = database.prepare('SELECT * FROM lane_store WHERE id = ?').get(first.id)!
+    database.close()
+    const laneJson = JSON.parse(String(stored.lane_json))
+    expect(laneJson).toMatchObject({ id: 'prd', output_target: 'docs/spec/', auto_run_agent_id: 'codex' })
+    expect(laneJson).not.toHaveProperty('project_path')
+    expect(laneJson).not.toHaveProperty('position')
+    expect(laneJson).not.toHaveProperty('graph_position_json')
+    expect(stored.agent_markdown).toBe('# Agent v2')
+  })
+
+  it('refuses the No status lane and missing lanes', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+    expect(() => repository.saveLaneToStore(sourcePath, UNASSIGNED_LANE_ID, markdown)).toThrow('No status')
+    expect(() => repository.saveLaneToStore(sourcePath, 'ghost', markdown)).toThrow('does not exist')
+  })
+
+  it('adds a stored lane to another board last, with its settings, cleared file paths and next lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: 'idea', graphPosition: { x: 4, y: 5 } })
+    repository.createSwimLane(sourcePath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '', nextLaneId: 'prd' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const qaEntry = repository.saveLaneToStore(sourcePath, 'qa', markdown)
+
+    const added = repository.addLaneFromStore(otherPath, prdEntry.id)
+    repository.addLaneFromStore(otherPath, qaEntry.id)
+
+    expect(added).toEqual({ laneName: 'PRD', agentMarkdown: '# Agent', orchestratorMarkdown: '# Orchestrator' })
+    const lanes = reopenedBoard(userDataPath, otherPath).lanes
+    expect(lanes.map((lane) => lane.id)).toEqual(['idea', 'prd', 'qa'])
+    const prd = lanes.find((lane) => lane.id === 'prd')
+    expect(prd).toMatchObject({
+      name: 'PRD',
+      outputTarget: 'docs/prd/',
+      autoRunAgentId: 'codex',
+      fullAuto: true,
+      orchestratorPollMinutes: 5,
+      agentFilePath: '',
+      orchestratorFilePath: '',
+      nextLaneId: 'idea'
+    })
+    expect(prd?.graphPosition).toBeUndefined()
+    // qa's next lane (prd) is on the board by the time qa lands.
+    expect(lanes.find((lane) => lane.id === 'qa')?.nextLaneId).toBe('prd')
+  })
+
+  it('clears a next lane the board lacks, and refuses a lane id already there', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: 'ghost' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const ideaEntry = repository.saveLaneToStore(sourcePath, 'idea', markdown)
+
+    repository.addLaneFromStore(otherPath, prdEntry.id)
+    expect(() => repository.addLaneFromStore(otherPath, ideaEntry.id)).toThrow('already in this workflow')
+
+    const prd = reopenedBoard(userDataPath, otherPath).lanes.find((lane) => lane.id === 'prd')
+    expect(prd?.nextLaneId).toBeUndefined()
+  })
+
+  it('deletes an entry', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+    const entry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    repository.deleteLaneStoreEntry(entry.id)
+    expect(repository.listLaneStore()).toEqual([])
+    expect(() => repository.addLaneFromStore(sourcePath, entry.id)).toThrow('no longer exists')
+  })
+})
+
 describe('per-entity writes leave unrelated rows alone', () => {
   it('ticket create, update, move and delete touch only that ticket', () => {
     const userDataPath = freshUserDataPath()

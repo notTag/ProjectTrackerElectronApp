@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import { readLaneMarkdown, resolveAgentMarkdownPath, saveAgentMarkdown, writeMissingLaneMarkdown } from './agentMarkdown.js'
 import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { createGithubRequest } from './githubRequest.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
@@ -464,6 +464,47 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, name } = (payload ?? {}) as { projectPath?: unknown; name?: unknown }
       if (typeof projectPath !== 'string' || typeof name !== 'string') throw new Error('Invalid workflow create payload.')
       return toPlainJson(repository.createWorkflow(normalizePath(projectPath), name))
+    },
+
+    'lane-store:list': (_payload, { repository }) => toPlainJson(repository.listLaneStore()),
+
+    // Prompts are read from the lane's files now: the store carries content,
+    // since a file path only means something inside its own project.
+    'lane-store:save': (payload, { repository }) => {
+      const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane store save payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const lane = repository.lane(normalized, laneId)
+      if (!lane) throw new Error(`Lane ${laneId} does not exist.`)
+      const scanDirectories = scanDirectoriesOf(repository)
+      const readMarkdown = (kind: LaneMarkdownKind, filePath: string) => {
+        const markdownTarget = { kind, projectPath: normalized, laneName: lane.name, filePath }
+        const resolvedPath = resolveAgentMarkdownPath(markdownTarget)
+        if (!isInsideAny(resolvedPath, scanDirectories)) throw new Error('Markdown file must be inside a scanned directory.')
+        return readLaneMarkdown(markdownTarget)
+      }
+      const markdown = {
+        agent: readMarkdown('agent', lane.agentFilePath),
+        orchestrator: readMarkdown('orchestrator', lane.orchestratorFilePath ?? '')
+      }
+      return toPlainJson(repository.saveLaneToStore(normalized, laneId, markdown))
+    },
+
+    'lane-store:delete': (payload, { repository }) => {
+      const { entryId } = (payload ?? {}) as { entryId?: unknown }
+      if (typeof entryId !== 'string') throw new Error('Invalid lane store delete payload.')
+      repository.deleteLaneStoreEntry(entryId)
+    },
+
+    'lane-store:add': (payload, { repository }) => {
+      const { projectPath, entryId } = (payload ?? {}) as { projectPath?: unknown; entryId?: unknown }
+      if (typeof projectPath !== 'string' || typeof entryId !== 'string') throw new Error('Invalid lane store add payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const added = repository.addLaneFromStore(normalized, entryId)
+      const laneFolder = { projectPath: normalized, laneName: added.laneName }
+      writeMissingLaneMarkdown({ ...laneFolder, kind: 'agent' }, added.agentMarkdown)
+      writeMissingLaneMarkdown({ ...laneFolder, kind: 'orchestrator' }, added.orchestratorMarkdown)
+      return toPlainJson(repository.getState())
     },
 
     'project:update': (payload, { repository }) => {
