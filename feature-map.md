@@ -387,7 +387,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Merge Request**
 
-- A state pill (open, draft, merged, closed, or none), "Merged <date time>" for merged PRs, a link to the PR, and a **Refresh from GitHub** button.
+- A state pill (open, draft, merged, closed, or none), "Merged <date time>" for merged PRs, a link to the PR, and a **Refresh from GitHub** ↻ icon button (glyph centred: no bottom-padding nudge).
 - State comes from GitHub: a PR with `merged_at` is merged, otherwise closed or open, and draft only while open. Opening a board refreshes tickets that have a branch or PR URL and whose PR isn't settled yet.
 
 **External Links**
@@ -409,7 +409,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - The heading shows done/total.
 - Each item has a checkbox to mark it done (done items are struck through) and × to remove it.
-- To add an item, type it in "Add an item, then press Enter".
+- To add an item, type it in the full-width "Add an item, then press Enter" input.
 
 **Agent completion**
 
