@@ -1584,7 +1584,8 @@ code {
 
 /* Scoped through .modal to outrank `.lane-modal label`, which stacks its label
    contents in a column — a checkbox and its text belong on one line. */
-.modal .card-field-list label {
+.modal .card-field-list label,
+.ui-demo-panel .card-field-list label {
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -2547,7 +2548,7 @@ span.ticket-image-thumb {
   touch-action: none;
 }
 
-/* Static so the bubble anchors to the titlebar's left edge and fits the 320px panel. */
+/* Static so the bubble anchors to the titlebar's left edge and stays inside the panel. */
 .ui-demo-titlebar .info-tip {
   position: static;
   cursor: default;

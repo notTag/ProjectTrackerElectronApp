@@ -39,24 +39,23 @@ Settings takes two hops today. `⚙ Settings` (`BoardView.vue:1635`) opens a Set
 ## Acceptance criteria
 - Header has exactly one `⚙ Settings` button
 - Clicking it opens the floating Settings panel, with no modal and no backdrop. Clicking it again closes the panel, and so do ✕ and Esc.
-- The panel has 3 accordion sections, Metrics, Display and UI Settings, each with a clickable `<summary>` header (keyboard: Enter/Space)
-- All 3 start collapsed. Open state holds while the app runs and resets on restart.
+- The panel opens centered every time and is resizable (bottom-right grip), staying inside the window
+- Left sidebar lists Metrics, Display and UI Settings; the selected section's content shows on the right. Metrics is selected by default; the selection holds while the app runs and resets on restart.
 - Section contents behave as before: Metrics windows/totals, the Display toggles (lane visibility, card fields, lane-modal fields) apply live, and UI Settings sliders/selects/Reset work
-- With every section expanded the panel stays inside the viewport and its body scrolls. It's still draggable by the titlebar.
+- The content pane scrolls when it overflows. The panel is still draggable by the titlebar.
 - No references to `settingsOpen`, `boardSettingsOpen`, `.settings-modal` remain
 - `bun run test` + typecheck pass. The app was exercised on an isolated DB copy before merge (memory: run-app-before-merge / drive-app-via-cdp).
 
 ## Verify (manual, isolated DB)
-1. Open the board, click `⚙ Settings`: the panel appears with 3 collapsed sections
-2. Expand Display and toggle a card field: the card updates live. Hide a lane: the lane disappears.
-3. Expand Metrics: the table renders inline without clipping. If it's wider than 320px, see Risks.
-4. Expand all three: the body scrolls and the panel bottom stays on screen. Drag the panel near the bottom edge and expand a section: it clamps back up.
-5. Esc closes the panel. Reopen it and the sections keep their open state.
-6. Switch Board → Dashboard → Board and reopen: the state is still there
+1. Open the board, click `⚙ Settings`: the panel appears centered with Metrics selected
+2. Select Display and toggle a card field: the card updates live. Hide a lane: the lane disappears. The pane scrolls.
+3. Select Metrics and open the table: it scrolls sideways inside the pane instead of clipping.
+4. Drag the panel to a corner: it clamps on screen. Resize it: it stops at the window edge.
+5. Esc closes the panel. Reopen it: centered again, last-selected section still selected.
+6. Switch Board → Dashboard → Board and reopen: the selection is still there
 
 ## Risks
-- The Metrics table may be wider than the 320px panel. Fallback: `overflow-x: auto` on the Metrics section body. Don't widen the panel unless the table looks broken.
-- `UiSettingsPanel` sits at z-index 250, above modal backdrops (200). A ticket/lane modal opened while the panel is open shows under the panel. Behaviour is unchanged (it's already the case today), so out of scope.
+- `UiSettingsPanel` sits at z-index 250, above modal backdrops (200), on purpose (#129: UI knobs stay usable while a modal is open). At 680×520 centered it now covers more of a ticket/lane modal opened behind it; drag or close the panel. Out of scope.
 
 ## Out of scope
 - Changing what any section contains
