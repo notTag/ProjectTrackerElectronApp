@@ -272,7 +272,8 @@ From left to right:
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.
-- **Clear**: appears when any filter is set and resets the text, lane and assignee filters.
+- **Clear**: appears when any filter is set (any text in the box, spaces included) and resets the text, lane and assignee filters. Column toggles aren't touched.
+- The text box, Swim lane filter, Assigned to me and each column toggle can be hidden from Display → **Ticket Dashboard** (3.5). Hiding one with a filter set clears that filter. Hiding a column toggle hides only the button, not the column. With the text box hidden, ⌘⇧F does nothing.
 - **View switch**: a two-button slider for **Graph view** and **Swimlane view** (the default). Switching closes any open ticket.
 
 ### 3.4 Swimlane view
@@ -319,6 +320,7 @@ From left to right:
 
 ### 3.5 Display settings modal (⚙ Display)
 
+- **Ticket Dashboard** (first): a checkbox per filter bar control (Ticket filter box, Swim lane filter, Assigned to me, No status toggle, GitHub Issues toggle). All on by default; unchecking hides it from the filter bar (3.3). Saved per user in `BoardPreferences.hiddenFilterControls` (`BOARD_FILTER_CONTROLS` in `projectTypes.ts`). The GitHub Issues row shows even before issues are imported.
 - **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.

@@ -77,6 +77,9 @@ import {
   skippedRunsNotice,
   joinNotices,
   toggleCardField,
+  toggleFilterControl,
+  BOARD_FILTER_CONTROLS,
+  type BoardFilterControl,
   toggleLaneModalField,
   toggleLaneModalFieldInLane,
   LANE_MODAL_FIELDS,
@@ -222,6 +225,28 @@ const savePreferences = (next: ReturnType<typeof store.boardPreferences>) =>
 const hiddenLaneIds = computed(() => new Set(preferences.value.hiddenLaneIds))
 const laneIsHidden = (laneId: string) => hiddenLaneIds.value.has(laneId)
 const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLane(preferences.value, laneId))
+
+const showsFilterControl = (control: BoardFilterControl) =>
+  !preferences.value.hiddenFilterControls.includes(control)
+
+const columnToggleControl = (laneId: string): BoardFilterControl =>
+  laneId === UNASSIGNED_LANE_ID ? 'noStatus' : 'githubIssues'
+
+// A hidden control can't keep narrowing the board: nothing on screen would explain it.
+const clearFilterOf = (control: BoardFilterControl) => {
+  if (control === 'query') filterQuery.value = ''
+  if (control === 'lanes') {
+    filterLaneIds.value = []
+    laneFilterMenuOpen.value = false
+  }
+  if (control === 'mine') showOnlyMine.value = false
+}
+
+const toggleFilterControlOnBoard = (control: BoardFilterControl) => {
+  const hiding = showsFilterControl(control)
+  if (hiding) clearFilterOf(control)
+  savePreferences(toggleFilterControl(preferences.value, control))
+}
 
 const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(preferences.value, field))
@@ -546,7 +571,7 @@ const visibleTicketCount = computed(() =>
 )
 
 const filtersActive = computed(() =>
-  Boolean(filterQuery.value.trim() || laneFilterNarrows.value || showOnlyMine.value)
+  Boolean(filterQuery.value || laneFilterNarrows.value || showOnlyMine.value)
 )
 
 const clearFilters = () => {
@@ -1644,6 +1669,7 @@ const runTicketAgent = (ticket: Ticket) => {
     <section class="board-filters">
       <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
       <input
+        v-if="showsFilterControl('query')"
         ref="filterQueryInput"
         v-model="filterQuery"
         type="search"
@@ -1652,7 +1678,7 @@ const runTicketAgent = (ticket: Ticket) => {
         :class="{ active: filterQuery }"
         placeholder="Filter tickets…"
       />
-      <div ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
+      <div v-if="showsFilterControl('lanes')" ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
         <button
           type="button"
           class="filter-trigger"
@@ -1675,6 +1701,7 @@ const runTicketAgent = (ticket: Ticket) => {
         </div>
       </div>
       <button
+        v-if="showsFilterControl('mine')"
         class="secondary"
         :class="{ active: showOnlyMine }"
         title="Show only tickets assigned to me"
@@ -1682,16 +1709,17 @@ const runTicketAgent = (ticket: Ticket) => {
       >
         Assigned to me
       </button>
-      <button
-        v-for="lane in toggleableLanes"
-        :key="lane.id"
-        class="secondary"
-        :class="{ active: !laneIsHidden(lane.id) }"
-        :title="`${laneIsHidden(lane.id) ? 'Show' : 'Hide'} the ${lane.name} column`"
-        @click="toggleLaneVisibility(lane.id)"
-      >
-        {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
-      </button>
+      <template v-for="lane in toggleableLanes" :key="lane.id">
+        <button
+          v-if="showsFilterControl(columnToggleControl(lane.id))"
+          class="secondary"
+          :class="{ active: !laneIsHidden(lane.id) }"
+          :title="`${laneIsHidden(lane.id) ? 'Show' : 'Hide'} the ${lane.name} column`"
+          @click="toggleLaneVisibility(lane.id)"
+        >
+          {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
+        </button>
+      </template>
       <span class="filter-count">{{ visibleTicketCount }} of {{ board.tickets.length }}</span>
       <button v-if="filtersActive" class="secondary" @click="clearFilters">Clear</button>
       <div class="board-view-switch" role="group" aria-label="Ticket view" :class="{ 'is-graph': boardView === 'graph' }">
@@ -1910,6 +1938,25 @@ const runTicketAgent = (ticket: Ticket) => {
 
   <div v-if="boardSettingsOpen" class="modal-backdrop" @click.self="boardSettingsOpen = false">
     <section class="modal lane-modal">
+      <span class="label-with-tip">
+        <p class="eyebrow">Ticket Dashboard</p>
+        <InfoTip text="Show/Hide filter bar controls" />
+      </span>
+      <ul class="card-field-list">
+        <li v-for="control in BOARD_FILTER_CONTROLS" :key="control.id">
+          <label>
+            <input
+              type="checkbox"
+              :checked="showsFilterControl(control.id)"
+              @change="toggleFilterControlOnBoard(control.id)"
+            />
+            {{ control.label }}
+          </label>
+        </li>
+      </ul>
+
+      <hr />
+
       <div class="label-with-tip">
         <p class="eyebrow">Swimlane</p>
         <InfoTip text="Show/Hide Swimlane's" />
