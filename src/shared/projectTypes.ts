@@ -1570,7 +1570,17 @@ export interface LaneStoreEntry {
 // A board that never swapped or created a workflow has no workflow rows; it is
 // shown as this one, and the first swap or create stores it under this id.
 export const DEFAULT_WORKFLOW_ID = 'default'
-export const DEFAULT_WORKFLOW_NAME = 'Default'
+export const DEFAULT_WORKFLOW_NAME = 'Development Workflow'
+
+// Empty string = the name is fine to create.
+export const workflowNameProblem = (name: string, existing: WorkflowSummary[]): string => {
+  const trimmedName = name.trim()
+  if (!trimmedName) return 'Name the workflow.'
+  const lowerName = trimmedName.toLowerCase()
+  const nameTaken = existing.some((workflow) => workflow.name.toLowerCase() === lowerName)
+  if (nameTaken) return 'A workflow with that name already exists.'
+  return ''
+}
 
 export const boardWorkflows = (board: ProjectBoard): WorkflowSummary[] =>
   board.workflows?.length ? board.workflows : [{ id: DEFAULT_WORKFLOW_ID, name: DEFAULT_WORKFLOW_NAME }]

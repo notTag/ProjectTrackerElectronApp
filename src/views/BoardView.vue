@@ -10,6 +10,7 @@ import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import WorkflowPicker from '@/components/WorkflowPicker.vue'
+import WorkflowsModal from '@/components/WorkflowsModal.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
@@ -143,6 +144,7 @@ const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
 const boardSettingsOpen = ref(false)
 const settingsOpen = ref(false)
+const workflowsModalOpen = ref(false)
 // Swap, never stack: Display replaces Settings rather than opening over it.
 const openDisplaySettings = () => {
   settingsOpen.value = false
@@ -203,7 +205,8 @@ const anyModalOpen = computed(
         lanePendingDeletion.value
     ) ||
     boardSettingsOpen.value ||
-    settingsOpen.value
+    settingsOpen.value ||
+    workflowsModalOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -700,6 +703,7 @@ const closeModals = () => {
   laneDraftName.value = null
   boardSettingsOpen.value = false
   settingsOpen.value = false
+  workflowsModalOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -1658,7 +1662,9 @@ const runTicketAgent = (ticket: Ticket) => {
     <MessageBanners />
 
     <section class="board-filters">
-      <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
+      <button type="button" class="workflow-label" title="Browse, switch and create workflows" @click="workflowsModalOpen = true">
+        {{ activeWorkflowName }}
+      </button>
       <input
         ref="filterQueryInput"
         v-model="filterQuery"
@@ -1989,6 +1995,8 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
   </div>
+
+  <WorkflowsModal v-if="workflowsModalOpen" :project-path="projectPath" @close="workflowsModalOpen = false" />
 
   <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
     <section class="modal lane-modal settings-modal">

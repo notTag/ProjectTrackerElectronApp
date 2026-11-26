@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { activeWorkflow, boardWorkflows } from '@/shared/projectTypes'
+import { activeWorkflow, boardWorkflows, workflowNameProblem } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
 
 const props = defineProps<{ projectPath: string }>()
@@ -19,15 +19,8 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 const draftName = ref<string | null>(null)
 
 const trimmedDraftName = computed(() => draftName.value?.trim() ?? '')
-const draftNameTaken = computed(() => {
-  const lowerName = trimmedDraftName.value.toLowerCase()
-  return workflows.value.some((workflow) => workflow.name.toLowerCase() === lowerName)
-})
-const draftProblem = computed(() => {
-  if (!trimmedDraftName.value) return 'Name the workflow.'
-  if (draftNameTaken.value) return 'A workflow with that name already exists.'
-  return ''
-})
+const draftNameTaken = computed(() => Boolean(trimmedDraftName.value) && Boolean(draftProblem.value))
+const draftProblem = computed(() => workflowNameProblem(trimmedDraftName.value, workflows.value))
 
 const triggerTitle = computed(() =>
   agentsRunning.value
