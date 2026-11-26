@@ -2,7 +2,10 @@
 // copy of the live DB and times ticket create + open through the real UI.
 // Plan + decisions: docs/prd/t118-scalability-testing.md
 //
-//   bun run scale-test [--keep] [--port 9333]
+//   bun run scale-test [--keep] [--port 9333] [--tag t134]
+//
+// --tag names the output files (<tag>-scaling-raw.csv / -report.pdf / -stop.json,
+// default t118). A tag other than t118 charts the t118 run beside it.
 //
 // Never writes the live DB: it is only read by `sqlite3 .backup`.
 
@@ -16,7 +19,12 @@ export const THRESHOLD_SECONDS = 5
 export const TICKET_CAP = 20_000
 export const WALL_CAP_MS = 60 * 60 * 1000
 export const SAMPLES_PER_CHECKPOINT = 3
-export const STOP_FILE = 't118-scaling-stop.json'
+export const BASELINE_TAG = 't118'
+export const reportFiles = (tag) => ({
+  csv: `${tag}-scaling-raw.csv`,
+  pdf: `${tag}-scaling-report.pdf`,
+  stop: `${tag}-scaling-stop.json`
+})
 export const CSV_HEADER = 'checkpoint,ticket_count,sample,creation_s,access_s,fill_s,iso_time'
 
 export function* checkpoints() {
@@ -188,8 +196,15 @@ const timeSample = (cdp, title) =>
   cdp.evaluate(
     inPage(`
       const timeout = ${SAMPLE_TIMEOUT_MS}
-      const cardCount = () => document.querySelectorAll('article.ticket').length
-      const cardsBefore = cardCount()
+      // Since #134 long lanes mount only the cards near their scroll position,
+      // and a new ticket is appended to its lane: look at the lane bottoms, as
+      // a user waiting for the new card would. Untimed.
+      // Repeated: measuring the cards that mount there resizes the spacers.
+      for (let pass = 0; pass < 3; pass += 1) {
+        for (const laneBody of document.querySelectorAll('.lane-body')) laneBody.scrollTop = laneBody.scrollHeight
+        await raf()
+        await raf()
+      }
       const findCard = () =>
         [...document.querySelectorAll('article.ticket')].find((card) => card.querySelector('h3')?.textContent.includes(arg.title))
 
@@ -206,7 +221,7 @@ const timeSample = (cdp, title) =>
           return button && !button.disabled && button
         }, timeout, 'Save enabled')
         save.click()
-        await waitFor(() => cardCount() > cardsBefore && findCard(), timeout, 'new card')
+        await waitFor(() => findCard(), timeout, 'new card')
         await raf()
         await raf()
         creationSeconds = (performance.now() - createStartedAt) / 1000
@@ -267,8 +282,13 @@ const reloadAndWaitForCards = async (cdp, expectedCards) => {
   const deadline = Date.now() + 10 * 60_000
   while (Date.now() < deadline) {
     try {
-      const rendered = await cdp.evaluate(`async () => document.querySelectorAll('article.ticket').length`)
-      if (rendered === expectedCards) return
+      // Lane counts, not mounted cards: virtualized lanes (#134) mount only what is in view.
+      const shown = await cdp.evaluate(`async () => {
+        const counts = [...document.querySelectorAll('.lane-count')].map((badge) => Number(badge.textContent))
+        const anyCard = document.querySelector('article.ticket') !== null
+        return anyCard ? counts.reduce((total, count) => total + count, 0) : 0
+      }`)
+      if (shown === expectedCards) return
     } catch {
       // Context torn down mid-reload.
     }
@@ -293,7 +313,8 @@ const formatSample = (seconds, error) => {
 const parseArgs = (argv) => ({
   keep: argv.includes('--keep'),
   port: Number(argv[argv.indexOf('--port') + 1]) || 9333,
-  outDir: path.resolve(argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : 'docs/reports')
+  outDir: path.resolve(argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : 'docs/reports'),
+  tag: argv.includes('--tag') ? argv[argv.indexOf('--tag') + 1] : BASELINE_TAG
 })
 
 const run = async () => {
@@ -320,7 +341,8 @@ const run = async () => {
   })
   const runStartedAt = Date.now()
   const csvRows = [CSV_HEADER]
-  const csvPath = path.join(options.outDir, 't118-scaling-raw.csv')
+  const files = reportFiles(options.tag)
+  const csvPath = path.join(options.outDir, files.csv)
   fs.mkdirSync(options.outDir, { recursive: true })
   fs.rmSync(csvPath, { force: true })
   let stopCause = null
@@ -386,20 +408,22 @@ const run = async () => {
   } finally {
     cdp?.close()
     app.kill()
-    writeReport({ electronBin, csvPath, outDir: options.outDir, stopCause, elapsedMs: Date.now() - runStartedAt })
+    writeReport({ electronBin, csvPath, files, outDir: options.outDir, tag: options.tag, stopCause, elapsedMs: Date.now() - runStartedAt })
     // The scratch dir holds a full copy of the live DB: never leave it behind by accident.
     if (!options.keep) fs.rmSync(scratch, { recursive: true, force: true })
   }
 }
 
-const writeReport = ({ electronBin, csvPath, outDir, stopCause, elapsedMs }) => {
+const writeReport = ({ electronBin, csvPath, files, outDir, tag, stopCause, elapsedMs }) => {
   if (!fs.existsSync(csvPath)) return
-  const stopPath = path.join(outDir, STOP_FILE)
+  const stopPath = path.join(outDir, files.stop)
   const stopRecord = { reason: stopCause ?? 'interrupted', elapsedMinutes: elapsedMs / 60_000 }
   fs.writeFileSync(stopPath, JSON.stringify(stopRecord, null, 2) + '\n')
   const reportScript = path.resolve('scripts/scale-report.mjs')
-  const pdfPath = path.join(outDir, 't118-scaling-report.pdf')
-  execFileSync(electronBin, [reportScript, csvPath, pdfPath], { stdio: 'inherit' })
+  const pdfPath = path.join(outDir, files.pdf)
+  const baselineCsv = path.join(outDir, reportFiles(BASELINE_TAG).csv)
+  const baselineArgs = tag !== BASELINE_TAG && fs.existsSync(baselineCsv) ? ['--baseline', baselineCsv] : []
+  execFileSync(electronBin, [reportScript, ...baselineArgs, csvPath, pdfPath], { stdio: 'inherit' })
   log(`wrote ${csvPath}, ${stopPath} and ${pdfPath}`)
 }
 
