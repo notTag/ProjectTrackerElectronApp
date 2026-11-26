@@ -127,7 +127,7 @@ export const uiDemoValues = reactive<UiDemoValues>(normalizeUiDemoValues(initial
 export const uiDemoPanelOpen = ref(false)
 export type SettingsSection = 'metrics' | 'display' | 'ui'
 // ponytail: app-session only, never saved; reopening shows the last-picked section.
-export const selectedSettingsSection = ref<SettingsSection>('metrics')
+export const selectedSettingsSection = ref<SettingsSection>('display')
 
 export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
   const rootStyle = document.documentElement.style

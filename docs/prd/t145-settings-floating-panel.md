@@ -40,16 +40,16 @@ Settings takes two hops today. `⚙ Settings` (`BoardView.vue:1635`) opens a Set
 - Header has exactly one `⚙ Settings` button
 - Clicking it opens the floating Settings panel, with no modal and no backdrop. Clicking it again closes the panel, and so do ✕ and Esc.
 - The panel opens centered every time and is resizable (bottom-right grip), staying inside the window
-- Left sidebar lists Metrics, Display and UI Settings; the selected section's content shows on the right. Metrics is selected by default; the selection holds while the app runs and resets on restart.
+- Left sidebar lists Display, Metrics and UI Settings; the selected section's content shows on the right. Display is selected by default. Metrics shows its table directly, with no toggle button; the selection holds while the app runs and resets on restart.
 - Section contents behave as before: Metrics windows/totals, the Display toggles (lane visibility, card fields, lane-modal fields) apply live, and UI Settings sliders/selects/Reset work
 - The content pane scrolls when it overflows. The panel is still draggable by the titlebar.
 - No references to `settingsOpen`, `boardSettingsOpen`, `.settings-modal` remain
 - `bun run test` + typecheck pass. The app was exercised on an isolated DB copy before merge (memory: run-app-before-merge / drive-app-via-cdp).
 
 ## Verify (manual, isolated DB)
-1. Open the board, click `⚙ Settings`: the panel appears centered with Metrics selected
-2. Select Display and toggle a card field: the card updates live. Hide a lane: the lane disappears. The pane scrolls.
-3. Select Metrics and open the table: it scrolls sideways inside the pane instead of clipping.
+1. Open the board, click `⚙ Settings`: the panel appears centered with Display selected
+2. In Display, toggle a card field: the card updates live. Hide a lane: the lane disappears. The pane scrolls.
+3. Select Metrics: the table shows at once (no button) and scrolls sideways inside the pane instead of clipping.
 4. Drag the panel to a corner: it clamps on screen. Resize it: it stops at the window edge.
 5. Esc closes the panel. Reopen it: centered again, last-selected section still selected.
 6. Switch Board → Dashboard → Board and reopen: the selection is still there
@@ -69,4 +69,5 @@ None.
 The user picked this PR over #179 (#140) and changed the design:
 - The panel opens centered every time. Its position is component state and is no longer saved to localStorage.
 - The panel is resizable with native CSS `resize: both` from the bottom-right grip, 680×520 by default and 420×280 at minimum. Inline `max-width`/`max-height` derived from its position keep it inside the window.
-- Accordions are replaced by a side-by-side layout like macOS System Settings: a fixed 168px sidebar (icon + label, the selected section highlighted) and a scrolling content pane on the right. The selected section (`selectedSettingsSection`) lasts for the app session and defaults to Metrics.
+- Accordions are replaced by a side-by-side layout like macOS System Settings: a fixed 168px sidebar (icon + label, the selected section highlighted) and a scrolling content pane on the right. The selected section (`selectedSettingsSection`) lasts for the app session and defaults to Display.
+- Follow-up: Display moved to the top of the sidebar and is the default; Metrics renders `MetricsPanel inline` (table always open, no nested toggle button).

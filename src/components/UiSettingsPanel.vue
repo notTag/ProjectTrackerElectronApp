@@ -17,8 +17,8 @@ import {
 import InfoTip from './InfoTip.vue'
 
 const SECTIONS: { id: SettingsSection; icon: string; label: string }[] = [
-  { id: 'metrics', icon: '📊', label: 'Metrics' },
   { id: 'display', icon: '👁', label: 'Display' },
+  { id: 'metrics', icon: '📊', label: 'Metrics' },
   { id: 'ui', icon: '🎚', label: 'UI Settings' }
 ]
 
