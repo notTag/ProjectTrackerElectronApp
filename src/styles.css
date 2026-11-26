@@ -1762,7 +1762,6 @@ code {
 }
 
 .info-tip {
-  position: relative;
   display: inline-flex;
 }
 
@@ -1785,12 +1784,15 @@ code {
   outline-offset: 1px;
 }
 
+/* Top-layer popover anchored to its ⓘ (see InfoTip.vue); flips to stay on screen. */
 .info-tip-bubble {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 10;
-  display: none;
+  position: fixed;
+  inset: auto;
+  top: calc(anchor(bottom) + 4px);
+  left: anchor(left);
+  position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  margin: 0;
+  overflow: visible;
   width: max-content;
   max-width: min(280px, 70vw);
   padding: 6px 8px;
@@ -1802,11 +1804,6 @@ code {
   font-size: 0.75rem;
   font-weight: normal;
   white-space: pre-line;
-}
-
-.info-tip:not(.dismissed):hover .info-tip-bubble,
-.info-tip:not(.dismissed):has(.info-tip-button:focus-visible) .info-tip-bubble {
-  display: block;
 }
 
 .field-hint.field-error {
@@ -2534,9 +2531,7 @@ span.ticket-image-thumb {
   touch-action: none;
 }
 
-/* Static so the bubble anchors to the titlebar's left edge and fits the 320px panel. */
 .ui-demo-titlebar .info-tip {
-  position: static;
   cursor: default;
 }
 
