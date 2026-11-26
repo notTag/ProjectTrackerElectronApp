@@ -277,6 +277,7 @@ export class StateRepository {
       this.addMissingColumns()
       this.db.exec(CLOSED_AT_TRIGGERS_SQL)
       this.seedClosingLanesOnce()
+      this.renameLegacyDefaultWorkflow()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
@@ -407,6 +408,20 @@ export class StateRepository {
     if (storedVersion >= CLOSING_LANES_SCHEMA_VERSION) return
     const placeholders = SEEDED_CLOSING_LANE_IDS.map(() => '?').join(', ')
     this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
+  }
+
+  // #144 renamed the built-in workflow from "Default". Keyed on its fixed id so
+  // a user-made "Default" stays; skipped where the new name would clash.
+  private renameLegacyDefaultWorkflow() {
+    this.run(
+      `UPDATE workflows SET name = ?
+       WHERE id = ? AND name = 'Default'
+         AND NOT EXISTS (
+           SELECT 1 FROM workflows other
+           WHERE other.project_path = workflows.project_path AND lower(other.name) = lower(?)
+         )`,
+      [DEFAULT_WORKFLOW_NAME, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME]
+    )
   }
 
   private recordSchemaVersion() {
