@@ -13,7 +13,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const THRESHOLD_SECONDS = 5
 export const TICKET_CAP = 20_000
@@ -88,13 +88,16 @@ const makeThrowawayProject = (projectDir) => {
   fs.writeFileSync(path.join(projectDir, 'README.md'), '# scale-board\n\nThrowaway board for the #118 scaling run.\n')
 }
 
+const OWN_RENDERER_URL = pathToFileURL(path.resolve('out/renderer/index.html')).href
+
 const connectCdp = async (port) => {
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json`)
       const targets = await response.json()
-      const page = targets.find((target) => target.type === 'page' && target.url.includes('index.html'))
+      // This checkout's renderer only: another worktree's app may hold the port.
+      const page = targets.find((target) => target.type === 'page' && target.url.startsWith(OWN_RENDERER_URL))
       if (page) return openCdpSession(page.webSocketDebuggerUrl)
     } catch {
       // App still starting.
