@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
   UI_DEMO_CONTROLS,
@@ -7,9 +7,11 @@ import {
   clampValue,
   resetUiDemo,
   saveUiDemo,
+  settingsSectionsOpen,
   uiDemoPanelOpen,
   uiDemoPanelPosition,
   uiDemoValues,
+  type SettingsSection,
   type UiDemoControl
 } from '@/uiDemo'
 
@@ -89,6 +91,13 @@ const setChoice = (control: UiDemoControl, event: Event) => {
   uiDemoValues[control.key] = clampValue(control, (event.target as HTMLSelectElement).value)
 }
 
+// Expanding a section grows the panel; clamp so its bottom stays on screen.
+const rememberSectionOpen = async (section: SettingsSection, event: Event) => {
+  settingsSectionsOpen[section] = (event.target as HTMLDetailsElement).open
+  await nextTick()
+  keepInViewport()
+}
+
 onMounted(() => {
   keepInViewport()
   window.addEventListener('resize', keepInViewport)
@@ -116,40 +125,69 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
         <strong>⚙ Settings</strong>
         <InfoTip text="Changes save automatically as you edit, on this machine only. Reset restores the defaults." />
       </span>
-      <button class="secondary" title="Close (Esc)" aria-label="Close UI Demo" @click="uiDemoPanelOpen = false">
+      <button class="secondary" title="Close (Esc)" aria-label="Close Settings" @click="uiDemoPanelOpen = false">
         ✕
       </button>
     </header>
     <div class="ui-demo-body">
-      <label v-for="control in UI_DEMO_CONTROLS" :key="control.key" class="ui-demo-row">
-        <span>{{ control.label }}</span>
-        <template v-if="control.kind === 'range'">
-          <input
-            type="range"
-            :min="control.min"
-            :max="control.max"
-            :value="uiDemoValues[control.key]"
-            @input="setRange(control, $event)"
-          />
-          <!-- Esc commits here, before the board's window handler unmounts the panel;
-               the blur that follows doesn't fire change. -->
-          <input
-            type="number"
-            :min="control.min"
-            :max="control.max"
-            :value="uiDemoValues[control.key]"
-            :aria-label="`${control.label} value`"
-            @change="commitNumber(control, $event)"
-            @keydown.esc="commitNumber(control, $event)"
-          />
-        </template>
-        <select v-else :value="uiDemoValues[control.key]" @change="setChoice(control, $event)">
-          <option v-for="option in control.options" :key="option.value" :value="option.value">
-            {{ option.label }}
-          </option>
-        </select>
-      </label>
-      <button class="secondary" @click="resetUiDemo">Reset</button>
+      <details
+        class="lane-settings-section"
+        :open="settingsSectionsOpen.metrics"
+        @toggle="rememberSectionOpen('metrics', $event)"
+      >
+        <summary class="eyebrow">Metrics</summary>
+        <div class="lane-settings-section-body">
+          <slot name="metrics" />
+        </div>
+      </details>
+      <details
+        class="lane-settings-section"
+        :open="settingsSectionsOpen.display"
+        @toggle="rememberSectionOpen('display', $event)"
+      >
+        <summary class="eyebrow">Display</summary>
+        <div class="lane-settings-section-body">
+          <slot name="display" />
+        </div>
+      </details>
+      <details
+        class="lane-settings-section"
+        :open="settingsSectionsOpen.ui"
+        @toggle="rememberSectionOpen('ui', $event)"
+      >
+        <summary class="eyebrow">UI Settings</summary>
+        <div class="lane-settings-section-body">
+          <label v-for="control in UI_DEMO_CONTROLS" :key="control.key" class="ui-demo-row">
+            <span>{{ control.label }}</span>
+            <template v-if="control.kind === 'range'">
+              <input
+                type="range"
+                :min="control.min"
+                :max="control.max"
+                :value="uiDemoValues[control.key]"
+                @input="setRange(control, $event)"
+              />
+              <!-- Esc commits here, before the board's window handler unmounts the panel;
+                   the blur that follows doesn't fire change. -->
+              <input
+                type="number"
+                :min="control.min"
+                :max="control.max"
+                :value="uiDemoValues[control.key]"
+                :aria-label="`${control.label} value`"
+                @change="commitNumber(control, $event)"
+                @keydown.esc="commitNumber(control, $event)"
+              />
+            </template>
+            <select v-else :value="uiDemoValues[control.key]" @change="setChoice(control, $event)">
+              <option v-for="option in control.options" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <button class="secondary" @click="resetUiDemo">Reset</button>
+        </div>
+      </details>
     </div>
   </section>
 </template>

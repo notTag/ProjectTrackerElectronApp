@@ -135,6 +135,9 @@ export const uiDemoValues = reactive<UiDemoValues>(normalizeUiDemoValues(initial
 export const uiDemoPanelPosition = ref<PanelPosition | null>(readPosition(initialStored.position))
 // Module scope so the panel's open state survives BoardView remounts within a session.
 export const uiDemoPanelOpen = ref(false)
+// ponytail: app-session only, never saved (same as laneModalSectionsOpen, #136)
+export const settingsSectionsOpen = reactive({ metrics: false, display: false, ui: false })
+export type SettingsSection = keyof typeof settingsSectionsOpen
 
 export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
   const rootStyle = document.documentElement.style
