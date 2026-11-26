@@ -2291,6 +2291,9 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
       ticketCreates.push({ kind: 'ticket:create', ticket })
       continue
     }
+    // Edits keep untouched rows as the same object, so this skips the field
+    // diff for every ticket but the edited ones (#134).
+    if (ticket === previous) continue
     const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
     if (isEmptyPatch(patch)) continue
     ticketUpdates.push({ kind: 'ticket:update', id: ticket.id, patch: { ...patch, updatedAt: ticket.updatedAt } })

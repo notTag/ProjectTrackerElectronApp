@@ -29,6 +29,7 @@ import {
   type TicketAgentRun,
   availableAgents,
   boardWrites,
+  changedFields,
   buildAutoRunLaunch,
   completionMoves,
   findAgent,
@@ -260,13 +261,65 @@ const replaceById = <T extends { id: string }>(entries: T[], written: T) => {
   return exists ? entries.map((entry) => (entry.id === written.id ? written : entry)) : [...entries, written]
 }
 
-// The row as stored wins over the local copy: a created ticket takes the
-// repository's number here.
-const withWrittenEntity = (board: ProjectBoard, write: BoardWrite, written: Ticket | SwimLane): ProjectBoard => {
-  if (write.kind.startsWith('ticket:')) return { ...board, tickets: replaceById(board.tickets, written as Ticket) }
-  const lane = written as SwimLane
+// The row as stored wins over the local copy.
+const withWrittenLane = (board: ProjectBoard, lane: SwimLane): ProjectBoard => {
   if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: lane }
   return { ...board, lanes: replaceById(board.lanes, lane) }
+}
+
+// Tickets are patched in place, not swapped into a copied array (#134): every
+// other row, the lanes and the board keep their identity, so the board view
+// re-renders only the card that changed. A created ticket takes the
+// repository's number here; a row that came back unchanged triggers nothing.
+const patchTicketInPlace = (board: ProjectBoard, written: Ticket) => {
+  const row = board.tickets.find((ticket) => ticket.id === written.id)
+  if (!row) {
+    board.tickets.push(written)
+    return
+  }
+  const changed = changedFields(written, row)
+  Object.assign(row, changed)
+}
+
+const onlyTicketsDiffer = (current: ProjectTrackerState, next: ProjectTrackerState, projectPath: string) => {
+  const currentBoard = current.boards?.[projectPath]
+  const nextBoard = next.boards?.[projectPath]
+  if (!currentBoard || !nextBoard) return false
+  const sameOtherState = Object.keys(next).every(
+    (key) => key === 'boards' || next[key as keyof ProjectTrackerState] === current[key as keyof ProjectTrackerState]
+  )
+  const sameOtherBoards = Object.keys(next.boards ?? {}).every(
+    (path) => path === projectPath || next.boards?.[path] === current.boards?.[path]
+  )
+  const sameBoardFields = Object.keys(nextBoard).every(
+    (key) => key === 'tickets' || nextBoard[key as keyof ProjectBoard] === currentBoard[key as keyof ProjectBoard]
+  )
+  return sameOtherState && sameOtherBoards && sameBoardFields
+}
+
+// Applies a ticket-only edit to the live board instead of swapping in `next`.
+// Returns false (nothing touched) when the edit reaches past the tickets, and
+// the caller assigns `next` as before.
+const applyTicketWritesInPlace = (
+  current: ProjectTrackerState,
+  next: ProjectTrackerState,
+  projectPath: string,
+  writes: BoardWrite[]
+) => {
+  const ticketWritesOnly = writes.every((write) => write.kind.startsWith('ticket:'))
+  if (!ticketWritesOnly || !onlyTicketsDiffer(current, next, projectPath)) return false
+  const board = current.boards![projectPath]
+  const rowById = new Map(board.tickets.map((ticket) => [ticket.id, ticket]))
+  for (const write of writes) {
+    if (write.kind === 'ticket:create') board.tickets.push(write.ticket)
+    const updatedRow = write.kind === 'ticket:update' ? rowById.get(write.id) : undefined
+    if (write.kind === 'ticket:update' && updatedRow) Object.assign(updatedRow, write.patch)
+    if (write.kind === 'ticket:delete') {
+      const index = board.tickets.findIndex((ticket) => ticket.id === write.id)
+      if (index >= 0) board.tickets.splice(index, 1)
+    }
+  }
+  return true
 }
 
 export const useProjectsStore = defineStore('projects', {
@@ -729,7 +782,12 @@ export const useProjectsStore = defineStore('projects', {
       for (const write of writes) {
         const written = await sendBoardWrite(projectPath, write)
         if (!written) continue
-        const board = withWrittenEntity(storedBoard(this.state, projectPath), write, written)
+        const stored = this.state.boards?.[projectPath]
+        if (stored && write.kind.startsWith('ticket:')) {
+          patchTicketInPlace(stored, written as Ticket)
+          continue
+        }
+        const board = withWrittenLane(storedBoard(this.state, projectPath), written as SwimLane)
         this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
       }
     },
@@ -765,14 +823,18 @@ export const useProjectsStore = defineStore('projects', {
           const candidate = update(this.state)
           const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
           const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
-          this.state = ownMoves.state
+          // Taken before the rows are patched in place: the candidate shares
+          // those row objects, so afterwards it would no longer show the moves.
+          const pendingHandoffs = handoffsBetween(candidate, ownMoves.state)
+          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, ownMoves.state, projectPath, writes)
+          if (!appliedInPlace) this.state = ownMoves.state
           try {
             await this.dispatchBoardWrites(projectPath, writes)
           } catch (error) {
             await this.reloadAfterFailedWrite(undo)
             throw error
           }
-          handoffs = handoffsBetween(candidate, this.state)
+          handoffs = pendingHandoffs
           this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
         })
       await saveQueue
