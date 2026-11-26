@@ -54,6 +54,7 @@ const showsField = (field: TicketCardField) => props.cardFields.includes(field)
 <template>
   <article
     class="ticket"
+    :data-ticket-id="ticket.id"
     :class="{ 'ticket-carried': carried }"
     draggable="true"
     @dragstart="emit('drag-start', $event, ticket.id)"

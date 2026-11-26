@@ -6,6 +6,7 @@ import { laneModalExpanded, laneModalSectionsOpen, ticketModalExpanded, vEdgeRes
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
 import TicketCard from '@/components/TicketCard.vue'
+import LaneCardList from '@/components/LaneCardList.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
@@ -16,6 +17,7 @@ import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
 import { uiDemoPanelOpen } from '@/uiDemo'
+import { pageFindActive } from '@/pageFind'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -1769,10 +1771,14 @@ const runTicketAgent = (ticket: Ticket) => {
           </button>
         </header>
 
-        <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
+        <LaneCardList
+          v-slot="{ ticket }"
+          :tickets="laneTickets(lane.id)"
+          :render-all="pageFindActive"
+          :keep-mounted-id="draggedTicketId"
+          @dblclick.self="startTicketDraft(lane.id)"
+        >
           <TicketCard
-            v-for="ticket in laneTickets(lane.id)"
-            :key="ticket.id"
             :ticket="ticket"
             :card-fields="preferences.cardFields"
             :selected="selectedTicketIds.has(ticket.id)"
@@ -1786,7 +1792,7 @@ const runTicketAgent = (ticket: Ticket) => {
             @drag-start="startTicketDrag"
             @drag-end="draggedTicketId = null"
           />
-        </div>
+        </LaneCardList>
 
         <div
           class="lane-resize-handle"
