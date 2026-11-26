@@ -67,6 +67,7 @@ import {
   hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
+  groupTicketsByLane,
   ticketShellCommand,
   ticketTabTitle,
   currentLaneOf,
@@ -526,10 +527,12 @@ const matchesQuery = (ticket: Ticket) => {
   return ticketSearchText(ticket).includes(query)
 }
 
-const ticketsInLane = (laneId: string) =>
-  board.value.tickets.filter(
-    (ticket) => ticket.laneId === laneId && matchesQuery(ticket) && matchesAssignee(ticket)
-  )
+const ticketsByLane = computed(() =>
+  groupTicketsByLane(board.value.tickets, (ticket) => matchesQuery(ticket) && matchesAssignee(ticket))
+)
+// Shared, so an empty lane hands the same array to every reader each render.
+const NO_TICKETS: Ticket[] = []
+const laneTickets = (laneId: string) => ticketsByLane.value.get(laneId) ?? NO_TICKETS
 
 // ponytail: in-memory only — a pick for the next run, not ticket data. Persist
 // it (store or board preferences) if it should survive leaving the board.
@@ -542,7 +545,7 @@ const toggleTicketSelected = (ticketId: string) => {
 }
 
 const visibleTicketCount = computed(() =>
-  visibleLanes.value.reduce((total, lane) => total + ticketsInLane(lane.id).length, 0)
+  visibleLanes.value.reduce((total, lane) => total + laneTickets(lane.id).length, 0)
 )
 
 const filtersActive = computed(() =>
@@ -1112,7 +1115,7 @@ const orchestratorPollTooltip = (lane: SwimLane): string => {
   return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
-const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id)))
+const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => laneTickets(lane.id)))
 
 const carriedIds = computed(() => {
   const ticketId = draggedTicketId.value
@@ -1456,7 +1459,7 @@ const onLaneMarkdownPathChange = (lane: SwimLane, kind: LaneMarkdownKind, event:
 }
 
 const autoRunSplit = (lane: SwimLane) => {
-  const visibleLaneTickets = ticketsInLane(lane.id)
+  const visibleLaneTickets = laneTickets(lane.id)
   const candidates = ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
   return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
@@ -1562,7 +1565,7 @@ const cardAgentBadge = (ticket: Ticket) => {
 // A re-running ticket shows the running dot, not its old result, so the lane
 // count leaves it out too.
 const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
-const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
+const unseenAgentResultCount = (laneId: string) => laneTickets(laneId).filter(showsUnseenResult).length
 
 // Watching the open ticket (not the card click) also covers opening from the
 // graph view, and a run that finishes while its modal is already open.
@@ -1705,7 +1708,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleTickets" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1752,7 +1755,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @keydown="moveLaneByKeyboard(lane, $event)"
         >
           <h2 :title="lane.name">{{ lane.name }}</h2>
-          <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span class="lane-count">{{ laneTickets(lane.id).length }}</span>
           <span
             v-if="unseenAgentResultCount(lane.id) > 0"
             class="lane-unseen-count"
@@ -1784,7 +1787,7 @@ const runTicketAgent = (ticket: Ticket) => {
 
         <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
           <article
-            v-for="ticket in ticketsInLane(lane.id)"
+            v-for="ticket in laneTickets(lane.id)"
             :key="ticket.id"
             class="ticket"
             :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
