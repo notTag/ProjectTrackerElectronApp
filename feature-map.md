@@ -248,7 +248,7 @@ From left to right:
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Settings** | Opens the Settings modal. Its **Board Settings** section holds **📊 Metrics** (the Dashboard's panel (2.1) for this project only, shown inline in the modal) and **⚙ Display** (closes Settings, opens the Display settings modal (3.5)). Its **UI Settings** section holds **🎚 UI Settings** (closes Settings, opens the UI tuning panel). Escape or a backdrop click closes it |
+| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists **Metrics** (the Dashboard's panel (2.1) for this project only, inline), **Display** (3.5) and **UI Settings**; the selected one shows on the right. The selection lasts for the app session, never saved |
 
 ### 3.2 Notices and errors
 
@@ -317,19 +317,19 @@ From left to right:
   - Without rules: shows when the ticket completed (3.8 Next Lane) in this lane while unarmed. Unticking an item clears it.
   - Never shown when the Next Lane doesn't resolve to another lane on the board, or after the ticket moves.
 
-### 3.5 Display settings modal (⚙ Display)
+### 3.5 Display settings (⚙ Settings → Display)
 
 - **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
-- **Done** closes the modal. So do clicking the backdrop and Escape.
+- Toggles apply live; the section has no Done button.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
-#### UI Settings panel (⚙ Settings → 🎚 UI Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
+#### Settings panel (⚙ Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **🎚 UI Settings** in the Settings modal closes the modal and opens a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
-- Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
-- Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
+- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Metrics / Display / UI Settings; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Position isn't remembered.
+- UI Settings section: each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
   - Opacity 0–100%: modals, swimlanes, ticket cards. Fades the background only, text stays solid.
   - Card text justify (left / center / right) and card content align (top / middle / bottom).

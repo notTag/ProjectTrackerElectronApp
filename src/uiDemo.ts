@@ -109,8 +109,7 @@ export const normalizeUiDemoValues = (stored: unknown): UiDemoValues => {
 
 const STORAGE_KEY = 'project-tracker-ui-demo'
 
-type PanelPosition = { x: number; y: number }
-type StoredUiDemo = { values?: unknown; position?: unknown }
+type StoredUiDemo = { values?: unknown }
 
 const readStored = (): StoredUiDemo => {
   try {
@@ -121,20 +120,14 @@ const readStored = (): StoredUiDemo => {
   }
 }
 
-const readPosition = (stored: unknown): PanelPosition | null => {
-  const candidate = stored as Partial<PanelPosition> | null
-  const x = candidate?.x
-  const y = candidate?.y
-  const isValid = Number.isFinite(x) && Number.isFinite(y)
-  return isValid ? { x: x as number, y: y as number } : null
-}
-
 const initialStored = readStored()
 
 export const uiDemoValues = reactive<UiDemoValues>(normalizeUiDemoValues(initialStored.values))
-export const uiDemoPanelPosition = ref<PanelPosition | null>(readPosition(initialStored.position))
 // Module scope so the panel's open state survives BoardView remounts within a session.
 export const uiDemoPanelOpen = ref(false)
+export type SettingsSection = 'metrics' | 'display' | 'ui'
+// ponytail: app-session only, never saved; reopening shows the last-picked section.
+export const selectedSettingsSection = ref<SettingsSection>('metrics')
 
 export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
   const rootStyle = document.documentElement.style
@@ -145,7 +138,7 @@ export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
 
 export const saveUiDemo = () => {
   try {
-    const payload = { values: { ...uiDemoValues }, position: uiDemoPanelPosition.value }
+    const payload = { values: { ...uiDemoValues } }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   } catch {
     // Storage full or unavailable: the knobs still work for this session.
