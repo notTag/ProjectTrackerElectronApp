@@ -5,6 +5,7 @@ import { laneModalExpanded, laneModalSectionsOpen, ticketModalExpanded, vEdgeRes
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
+import TicketCard from '@/components/TicketCard.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
@@ -29,9 +30,7 @@ import {
   addChecklistItem,
   addExternalLink,
   agentForTicket,
-  agentRunBadge,
   canResume,
-  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -88,7 +87,6 @@ import {
   type TicketModalField,
   toggleHiddenLane,
   updateLaneInBoard,
-  worktreeFolderName,
   type Agent,
   type LaneMarkdownKind,
   LANE_MARKDOWN_FILE_PATH_FIELD,
@@ -1548,20 +1546,6 @@ const openTicketInShell = (ticket: Ticket) => {
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 
-// Glyphs, not just colour, tell success from failure.
-const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
-  running: { className: 'agent-status-running', label: 'Agent running' },
-  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
-  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
-  interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
-}
-
-const cardAgentBadge = (ticket: Ticket) => {
-  const running = Boolean(store.agentRunning[ticket.id])
-  const badge = agentRunBadge(ticket, running)
-  return badge ? AGENT_BADGES[badge] : null
-}
-
 // A re-running ticket shows the running dot, not its old result, so the lane
 // count leaves it out too.
 const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
@@ -1786,97 +1770,22 @@ const runTicketAgent = (ticket: Ticket) => {
         </header>
 
         <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
-          <article
+          <TicketCard
             v-for="ticket in laneTickets(lane.id)"
             :key="ticket.id"
-            class="ticket"
-            :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
-            draggable="true"
-            @dragstart="startTicketDrag($event, ticket.id)"
-            @dragend="draggedTicketId = null"
-            @click="openTicketId = ticket.id"
-          >
-            <input
-              type="checkbox"
-              class="ticket-select"
-              :checked="selectedTicketIds.has(ticket.id)"
-              :aria-label="`Select #${ticket.number} (run / move)`"
-              title="Select (run / move)"
-              @click.stop
-              @change="toggleTicketSelected(ticket.id)"
-            />
-            <h3>
-              <span
-                v-if="cardAgentBadge(ticket)"
-                :class="['agent-status', cardAgentBadge(ticket)?.className]"
-                role="img"
-                :aria-label="cardAgentBadge(ticket)?.label"
-                :title="cardAgentBadge(ticket)?.label"
-              >{{ cardAgentBadge(ticket)?.glyph }}</span>
-              <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
-              {{ ticket.title }}
-              <span
-                v-if="isFullAuto(ticket, laneOfTicket(ticket))"
-                class="full-auto-badge"
-                title="Full auto: the next lane's agent starts when this one moves the ticket on"
-              >auto</span>
-              <span
-                v-if="readyLaneNameByTicketId.has(ticket.id)"
-                class="full-auto-badge ready-badge"
-                :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
-              >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
-            </h3>
-            <p v-if="showsField('description') && ticket.description" class="ticket-preview">
-              {{ ticket.description }}
-            </p>
-            <p v-if="showsField('assignee') && ticket.assigneeId" class="ticket-assignee">
-              {{ assigneeName(ticket.assigneeId) }}
-            </p>
-            <ul v-if="showsField('labels') && ticket.labels?.length" class="ticket-labels">
-              <li v-for="label in ticket.labels" :key="label">{{ label }}</li>
-            </ul>
-            <p
-              v-if="
-                (showsField('checklist') && ticket.checklist?.length) ||
-                (showsField('branch') && ticket.branchName) ||
-                (showsField('worktree') && ticket.worktreePath) ||
-                (showsField('version') && ticket.version) ||
-                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
-              "
-              class="ticket-meta"
-            >
-              <span v-if="showsField('checklist') && ticket.checklist?.length">
-                ☑ {{ checklistProgress(ticket.checklist).done }}/{{ checklistProgress(ticket.checklist).total }}
-              </span>
-              <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
-                ⑂ {{ ticket.branchName }}
-              </span>
-              <span
-                v-if="showsField('worktree') && ticket.worktreePath"
-                class="ticket-branch"
-                :title="ticket.worktreePath"
-              >
-                ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
-              </span>
-              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
-              <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
-              <a
-                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
-                :href="ticket.pullRequestUrl"
-                target="_blank"
-                draggable="false"
-                @click.stop
-              >
-                <span
-                  v-if="ticket.pullRequestState"
-                  class="pull-request-dot"
-                  :data-state="ticket.pullRequestState"
-                  :title="pullRequestStatusLabel(ticket.pullRequestState)"
-                ></span>
-                {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
-              </a>
-            </p>
-          </article>
+            :ticket="ticket"
+            :card-fields="preferences.cardFields"
+            :selected="selectedTicketIds.has(ticket.id)"
+            :carried="isCarriedBehind(ticket.id)"
+            :agent-running="Boolean(store.agentRunning[ticket.id])"
+            :full-auto="isFullAuto(ticket, laneOfTicket(ticket))"
+            :ready-lane-name="readyLaneNameByTicketId.get(ticket.id)"
+            :assignee-name="assigneeName(ticket.assigneeId)"
+            @open="openTicketId = $event"
+            @toggle-select="toggleTicketSelected"
+            @drag-start="startTicketDrag"
+            @drag-end="draggedTicketId = null"
+          />
         </div>
 
         <div
