@@ -65,3 +65,9 @@ Settings takes two hops today. `⚙ Settings` (`BoardView.vue:1635`) opens a Set
 
 ## Open questions
 None.
+
+## Rework (2026-11-26) — supersedes D2, D4–D7
+The user picked this PR over #179 (#140) and changed the design:
+- The panel opens centered every time. Its position is component state and is no longer saved to localStorage.
+- The panel is resizable with native CSS `resize: both` from the bottom-right grip, 680×520 by default and 420×280 at minimum. Inline `max-width`/`max-height` derived from its position keep it inside the window.
+- Accordions are replaced by a side-by-side layout like macOS System Settings: a fixed 168px sidebar (icon + label, the selected section highlighted) and a scrolling content pane on the right. The selected section (`selectedSettingsSection`) lasts for the app session and defaults to Metrics.

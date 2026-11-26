@@ -2289,8 +2289,8 @@ span.ticket-image-thumb {
 
 /* Settings panel (#145): Metrics renders inline so the panel grows instead of
    clipping an absolute popover. minmax(0, 1fr) tracks (here and on
-   .ui-demo-body) keep the wide table from stretching the 320px panel; the
-   popover scrolls it sideways instead. */
+   .ui-demo-body) keep the wide table from stretching the panel; the popover
+   scrolls it sideways instead. */
 .ui-demo-panel .metrics-menu {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2521,8 +2521,14 @@ span.ticket-image-thumb {
   z-index: 250;
   display: flex;
   flex-direction: column;
-  width: 320px;
-  max-height: calc(100vh - 16px);
+  /* Native corner grip. Inline max-width/max-height (from the panel's position)
+     stop a resize from running off the window's right or bottom edge. */
+  resize: both;
+  overflow: hidden;
+  width: 680px;
+  height: 520px;
+  min-width: 420px;
+  min-height: 280px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface-raised);
@@ -2553,11 +2559,55 @@ span.ticket-image-thumb {
   padding: 0 10px;
 }
 
+/* Side-by-side like macOS System Settings: fixed sidebar, scrolling content. */
+.settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-sidebar {
+  display: flex;
+  flex: 0 0 168px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+}
+
+.settings-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--color-text);
+  background: transparent;
+  text-align: left;
+}
+
+.settings-sidebar-item:not(.selected):hover {
+  background: var(--color-surface-overlay);
+}
+
+.settings-sidebar-item.selected {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent);
+}
+
+.settings-sidebar-icon {
+  width: 1.25em;
+  text-align: center;
+}
+
 .ui-demo-body {
   display: grid;
+  flex: 1;
   grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 8px;
-  min-height: 0;
+  min-width: 0;
   padding: 12px;
   overflow-y: auto;
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
   UI_DEMO_CONTROLS,
@@ -7,9 +7,8 @@ import {
   clampValue,
   resetUiDemo,
   saveUiDemo,
-  settingsSectionsOpen,
+  selectedSettingsSection,
   uiDemoPanelOpen,
-  uiDemoPanelPosition,
   uiDemoValues,
   type SettingsSection,
   type UiDemoControl
@@ -17,8 +16,15 @@ import {
 
 import InfoTip from './InfoTip.vue'
 
-const DEFAULT_OFFSET_FROM_EDGE = 24
+const SECTIONS: { id: SettingsSection; icon: string; label: string }[] = [
+  { id: 'metrics', icon: '📊', label: 'Metrics' },
+  { id: 'display', icon: '👁', label: 'Display' },
+  { id: 'ui', icon: '🎚', label: 'UI Settings' }
+]
+
 const panel = ref<HTMLElement | null>(null)
+// Component state, not module state: the panel opens centered every time (#145).
+const position = ref({ x: 0, y: 0 })
 
 watch(
   uiDemoValues,
@@ -31,7 +37,7 @@ watch(
 
 const clampBetween = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-const clampIntoViewport =(x: number, y: number) => {
+const clampIntoViewport = (x: number, y: number) => {
   const panelWidth = panel.value?.offsetWidth ?? 0
   const panelHeight = panel.value?.offsetHeight ?? 0
   const maxX = Math.max(0, window.innerWidth - panelWidth)
@@ -41,11 +47,16 @@ const clampIntoViewport =(x: number, y: number) => {
   return { x: clampedX, y: clampedY }
 }
 
+const centerInViewport = () => {
+  const panelWidth = panel.value?.offsetWidth ?? 0
+  const panelHeight = panel.value?.offsetHeight ?? 0
+  const centeredX = (window.innerWidth - panelWidth) / 2
+  const centeredY = (window.innerHeight - panelHeight) / 2
+  position.value = clampIntoViewport(centeredX, centeredY)
+}
+
 const keepInViewport = () => {
-  const current = uiDemoPanelPosition.value
-  const fallbackX = window.innerWidth - (panel.value?.offsetWidth ?? 0) - DEFAULT_OFFSET_FROM_EDGE
-  const start = current ?? { x: fallbackX, y: 80 }
-  uiDemoPanelPosition.value = clampIntoViewport(start.x, start.y)
+  position.value = clampIntoViewport(position.value.x, position.value.y)
 }
 
 let dragOffset: { x: number; y: number } | null = null
@@ -55,8 +66,7 @@ const startDrag = (event: PointerEvent) => {
   const isPrimaryButton = event.button === 0
   if (!isPrimaryButton) return
   if ((event.target as HTMLElement).closest('button, .info-tip')) return
-  const position = uiDemoPanelPosition.value ?? { x: 0, y: 0 }
-  dragOffset = { x: event.clientX - position.x, y: event.clientY - position.y }
+  dragOffset = { x: event.clientX - position.value.x, y: event.clientY - position.value.y }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
 }
 
@@ -64,13 +74,11 @@ const drag = (event: PointerEvent) => {
   if (!dragOffset) return
   const nextX = event.clientX - dragOffset.x
   const nextY = event.clientY - dragOffset.y
-  uiDemoPanelPosition.value = clampIntoViewport(nextX, nextY)
+  position.value = clampIntoViewport(nextX, nextY)
 }
 
 const endDrag = () => {
-  if (!dragOffset) return
   dragOffset = null
-  saveUiDemo()
 }
 
 const commitNumber = (control: UiDemoControl, event: Event) => {
@@ -91,15 +99,8 @@ const setChoice = (control: UiDemoControl, event: Event) => {
   uiDemoValues[control.key] = clampValue(control, (event.target as HTMLSelectElement).value)
 }
 
-// Expanding a section grows the panel; clamp so its bottom stays on screen.
-const rememberSectionOpen = async (section: SettingsSection, event: Event) => {
-  settingsSectionsOpen[section] = (event.target as HTMLDetailsElement).open
-  await nextTick()
-  keepInViewport()
-}
-
 onMounted(() => {
-  keepInViewport()
+  centerInViewport()
   window.addEventListener('resize', keepInViewport)
 })
 
@@ -112,7 +113,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
     class="ui-demo-panel"
     role="dialog"
     aria-label="Settings"
-    :style="{ left: `${uiDemoPanelPosition?.x ?? 0}px`, top: `${uiDemoPanelPosition?.y ?? 0}px` }"
+    :style="{
+      left: `${position.x}px`,
+      top: `${position.y}px`,
+      maxWidth: `calc(100vw - ${position.x}px)`,
+      maxHeight: `calc(100vh - ${position.y}px)`
+    }"
   >
     <header
       class="ui-demo-titlebar"
@@ -129,34 +135,25 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
         ✕
       </button>
     </header>
-    <div class="ui-demo-body">
-      <details
-        class="lane-settings-section"
-        :open="settingsSectionsOpen.metrics"
-        @toggle="rememberSectionOpen('metrics', $event)"
-      >
-        <summary class="eyebrow">Metrics</summary>
-        <div class="lane-settings-section-body">
-          <slot name="metrics" />
-        </div>
-      </details>
-      <details
-        class="lane-settings-section"
-        :open="settingsSectionsOpen.display"
-        @toggle="rememberSectionOpen('display', $event)"
-      >
-        <summary class="eyebrow">Display</summary>
-        <div class="lane-settings-section-body">
-          <slot name="display" />
-        </div>
-      </details>
-      <details
-        class="lane-settings-section"
-        :open="settingsSectionsOpen.ui"
-        @toggle="rememberSectionOpen('ui', $event)"
-      >
-        <summary class="eyebrow">UI Settings</summary>
-        <div class="lane-settings-section-body">
+    <div class="settings-layout">
+      <nav class="settings-sidebar" aria-label="Settings sections">
+        <button
+          v-for="section in SECTIONS"
+          :key="section.id"
+          type="button"
+          class="settings-sidebar-item"
+          :class="{ selected: selectedSettingsSection === section.id }"
+          :aria-current="selectedSettingsSection === section.id ? 'true' : undefined"
+          @click="selectedSettingsSection = section.id"
+        >
+          <span class="settings-sidebar-icon" aria-hidden="true">{{ section.icon }}</span>
+          {{ section.label }}
+        </button>
+      </nav>
+      <div class="ui-demo-body">
+        <slot v-if="selectedSettingsSection === 'metrics'" name="metrics" />
+        <slot v-else-if="selectedSettingsSection === 'display'" name="display" />
+        <template v-else>
           <label v-for="control in UI_DEMO_CONTROLS" :key="control.key" class="ui-demo-row">
             <span>{{ control.label }}</span>
             <template v-if="control.kind === 'range'">
@@ -186,8 +183,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
             </select>
           </label>
           <button class="secondary" @click="resetUiDemo">Reset</button>
-        </div>
-      </details>
+        </template>
+      </div>
     </div>
   </section>
 </template>
