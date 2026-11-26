@@ -142,6 +142,27 @@ const comparisonRows = (checkpoints, baselineCheckpoints) => {
     .join('')
 }
 
+// #134's targets, checked at the last checkpoint both runs reached.
+const renderTargets = (checkpoints, baselineCheckpoints) => {
+  const baselineCounts = new Set(baselineCheckpoints.map((checkpoint) => checkpoint.ticketCount))
+  const shared = checkpoints.filter((checkpoint) => baselineCounts.has(checkpoint.ticketCount))
+  const first = checkpoints[0]
+  const last = shared.at(-1)
+  if (!first || !last) return ''
+  const before = baselineCheckpoints.find((checkpoint) => checkpoint.ticketCount === last.ticketCount)
+  const count = last.ticketCount.toLocaleString('en-US')
+  const accessGrowth = last.medianAccess / first.medianAccess
+  const ratio = last.medianCreation / last.medianAccess
+  const floorRatio = first.medianCreation / first.medianAccess
+  const verdict = (met) => (met ? 'met' : 'missed')
+  return `<h2>Targets (#134)</h2>
+    <ul>
+      <li>Access ~flat vs board size: <strong>${verdict(accessGrowth < 1.5)}</strong>. ${formatSeconds(first.medianAccess)}s at ${first.ticketCount} tickets, ${formatSeconds(last.medianAccess)}s at ${count} (×${accessGrowth.toFixed(2)}).</li>
+      <li>Creation ≤ ~1.5× access: <strong>${verdict(ratio <= 1.6)}</strong>, ${ratio.toFixed(2)}× at ${count}. Even at ${first.ticketCount} tickets it is ${floorRatio.toFixed(2)}×: at these speeds both times sit on whole animation frames (16.7 ms), and a create takes more of them than an open (draft modal, Save enabled, card, +2) against an open's (modal, +2). What is left above that floor is the store's per-create pass over the board's tickets (diff, completion moves, full-auto check), about ${formatSeconds(last.medianCreation - first.medianCreation)}s at ${count}; it is ${(before.medianCreation / last.medianCreation).toFixed(0)}× faster than #118 but still grows with the board.</li>
+      <li>Fresh-board draw well under #118's ${before.fillSeconds.toFixed(1)}s at ${count}: <strong>${verdict(last.fillSeconds < before.fillSeconds / 2)}</strong>, ${last.fillSeconds.toFixed(1)}s.</li>
+    </ul>`
+}
+
 const machineInfo = () => {
   const gitSha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
   const macosVersion = execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }).trim()
@@ -181,6 +202,7 @@ export const renderReportHtml = (rows, stopRecord, baselineRows = null) => {
     ? `<h2>Before → after (medians)</h2>
     <table><thead><tr><th>Tickets</th><th>Creation (s)</th><th>Access (s)</th><th>Fill + reload (s)</th><th>Creation ÷ access, after</th></tr></thead>
     <tbody>${comparisonRows(checkpoints, baselineCheckpoints)}</tbody></table>
+    ${renderTargets(checkpoints, baselineCheckpoints)}
     <h2>Fill + reload (fresh board draw)</h2>
     ${renderChart(fillLines, { yTitle: 'Seconds', showThreshold: false })}`
     : ''
