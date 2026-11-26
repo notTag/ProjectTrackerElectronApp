@@ -248,7 +248,7 @@ From left to right:
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Settings** | Opens the Settings modal. Its **Board Settings** section holds **📊 Metrics** (the Dashboard's panel (2.1) for this project only, shown inline in the modal) and **⚙ Display** (closes Settings, opens the Display settings modal (3.5)). Its **UI Settings** section holds **🎚 UI Settings** (closes Settings, opens the UI tuning panel). Escape or a backdrop click closes it |
+| **⚙ Settings** | Opens the Settings modal: three collapsible sections, **Metrics** (the Dashboard's table (2.1) for this project only, loads when the section opens), **Display** (3.5) and **UI Settings** (the UI tuning controls). All start collapsed; each section's open state is shared across boards and kept until the app restarts (`settingsModalSectionsOpen` in `src/modalWidth.ts`). Edge-resizable like every modal. Done, Escape or a backdrop click closes it |
 
 ### 3.2 Notices and errors
 
@@ -317,18 +317,16 @@ From left to right:
   - Without rules: shows when the ticket completed (3.8 Next Lane) in this lane while unarmed. Unticking an item clears it.
   - Never shown when the Next Lane doesn't resolve to another lane on the board, or after the ticket moves.
 
-### 3.5 Display settings modal (⚙ Display)
+### 3.5 Display settings (⚙ Settings → Display section)
 
 - **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
-- **Done** closes the modal. So do clicking the backdrop and Escape.
 - These settings are per user and per board. They're kept separate from the board, which is shared.
 
-#### UI Settings panel (⚙ Settings → 🎚 UI Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
+#### UI Settings (⚙ Settings → UI Settings section) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **🎚 UI Settings** in the Settings modal closes the modal and opens a floating panel. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
-- Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Reopening puts it back where it was.
+- Inline in the Settings modal's UI Settings section. Modal radius / opacity preview live on the Settings modal itself; card and lane knobs preview through the backdrop.
 - Each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
   - Opacity 0–100%: modals, swimlanes, ticket cards. Fades the background only, text stays solid.
@@ -367,7 +365,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both ticket modals (not the Lane settings modal) and kept until the app restarts. Not shown in the graph side panel. (`src/components/ExpandToggle.vue`, state in `src/modalWidth.ts`)
 
-**Drag to resize:** the left or right edge of the New ticket, Open ticket (board view), and Lane settings modals (cursor turns to ↔) drags the width anywhere from the default (760px ticket, 560px lane) up to the window width minus the backdrop padding. These three modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`vEdgeResize` in `src/modalWidth.ts`, limits in `.modal.resizable` in `src/styles.css`)
+**Drag to resize:** the left or right edge of every modal (cursor turns to ↔) drags the width anywhere from the default (760px ticket, 560px others) up to the window width minus the backdrop padding. Modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`vEdgeResize` in `src/modalWidth.ts`, limits in `.modal.resizable` in `src/styles.css`)
 
 **Ticket fields** closed-eye button (left of Expand, same closed-eye icon as the fields button in the Lane settings modal (3.9); this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
 
@@ -455,7 +453,7 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.9 Lane settings modal (⚙ on a lane)
 
 - **Expand / Collapse** button (top right): widens the modal to 85% of the window, same button as the ticket modal (3.8). Its own state, separate from the ticket modals, kept until the app restarts (`laneModalExpanded`) (#98).
-- **Closed-eye button** (left of Expand): checkboxes for this lane's settings fields, this lane only (`hiddenLaneModalFieldsByLane`). The Display modal list is the default; a field hidden there shows disabled with "Hidden for the whole board". Display-only. Lane name always shows.
+- **Closed-eye button** (left of Expand): checkboxes for this lane's settings fields, this lane only (`hiddenLaneModalFieldsByLane`). The Display settings list (3.5) is the default; a field hidden there shows disabled with "Hidden for the whole board". Display-only. Lane name always shows.
 - **Lane name** input, for renaming.
 - Fields below the name sit in 3 collapsable sections, **Agent**, **Orchestrator**, **Auto Run** (native `<details>`: click the header, or Enter/Space with it focused; chevron rotates when open). All open by default. Open/closed is shared by every lane and kept until the app restarts (`laneModalSectionsOpen` in `src/modalWidth.ts`, #136). A section with every field hidden (closed-eye or Display) isn't shown. Collapsing keeps values: a focused prompt blurs and stores on the header click. A collapsed Orchestrator header still shows the missing-token warning.
 - **Agent** section:

@@ -10,6 +10,7 @@ import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import ProjectToolbar from '@/components/ProjectToolbar.vue'
 import ThemePicker from '@/components/ThemePicker.vue'
+import { closeIfPressStartedOnBackdrop, notePressTarget, vEdgeResize } from '@/modalWidth'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -691,7 +692,7 @@ const renderMarkdown = (markdown: string | null) => {
     </section>
 
     <div v-if="onboardingOpen" class="modal-backdrop">
-      <section class="modal">
+      <section v-edge-resize class="modal resizable">
         <p class="eyebrow">First launch</p>
         <h2>Choose your projects folder</h2>
         <p>Select the folder where your local projects live. You can skip this and use the seed snapshot until you scan.</p>
@@ -713,8 +714,13 @@ const renderMarkdown = (markdown: string | null) => {
       </section>
     </div>
 
-    <div v-if="directoryPendingRemoval" class="modal-backdrop" @click.self="directoryPendingRemoval = null">
-      <section class="modal">
+    <div
+      v-if="directoryPendingRemoval"
+      class="modal-backdrop"
+      @pointerdown="notePressTarget"
+      @click.self="closeIfPressStartedOnBackdrop(() => (directoryPendingRemoval = null))"
+    >
+      <section v-edge-resize class="modal resizable">
         <p class="eyebrow">Remove scan directory</p>
         <h2>Would you like to delete this item?</h2>
         <code>{{ directoryPendingRemoval }}</code>

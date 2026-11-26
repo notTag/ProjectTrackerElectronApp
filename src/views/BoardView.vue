@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { laneModalExpanded, laneModalSectionsOpen, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
+import {
+  closeIfPressStartedOnBackdrop,
+  detailsOpen,
+  laneModalExpanded,
+  laneModalSectionsOpen,
+  notePressTarget,
+  settingsModalSectionsOpen,
+  ticketModalExpanded,
+  vEdgeResize
+} from '@/modalWidth'
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
@@ -14,7 +23,6 @@ import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
-import { uiDemoPanelOpen } from '@/uiDemo'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -141,18 +149,7 @@ const laneFilterMenuOpen = ref(false)
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
-const boardSettingsOpen = ref(false)
 const settingsOpen = ref(false)
-// Swap, never stack: Display replaces Settings rather than opening over it.
-const openDisplaySettings = () => {
-  settingsOpen.value = false
-  boardSettingsOpen.value = true
-}
-// The UI panel has no backdrop, so it opens once Settings closes and the board stays live.
-const openUiSettingsPanel = () => {
-  settingsOpen.value = false
-  uiDemoPanelOpen.value = true
-}
 
 // nextLaneId stays null until the user picks one, so the field follows the
 // Status lane's default as Status changes. Images wait as Files until Save,
@@ -201,9 +198,7 @@ const anyModalOpen = computed(
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
         lanePendingDeletion.value
-    ) ||
-    boardSettingsOpen.value ||
-    settingsOpen.value
+    ) || settingsOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -680,25 +675,11 @@ watch(
   { immediate: true }
 )
 
-// click fires on the common ancestor of press + release, so dragging a resizable
-// modal's edge and letting go over the backdrop would otherwise close the modal.
-let pressStartedOnBackdrop = false
-const notePressTarget = (event: PointerEvent) => {
-  const isEdgeResize = event.defaultPrevented
-  pressStartedOnBackdrop = event.target === event.currentTarget && !isEdgeResize
-}
-const closeIfPressStartedOnBackdrop = (close: () => void) => {
-  const startedOnBackdrop = pressStartedOnBackdrop
-  pressStartedOnBackdrop = false
-  if (startedOnBackdrop) close()
-}
-
 const closeModals = () => {
   openTicketId.value = null
   openLaneId.value = null
   ticketDraft.value = null
   laneDraftName.value = null
-  boardSettingsOpen.value = false
   settingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
@@ -763,11 +744,6 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   }
   if (laneFilterMenuOpen.value) {
     laneFilterMenuOpen.value = false
-    event.preventDefault()
-    return
-  }
-  if (uiDemoPanelOpen.value) {
-    uiDemoPanelOpen.value = false
     event.preventDefault()
     return
   }
@@ -1636,8 +1612,6 @@ const runTicketAgent = (ticket: Ticket) => {
     </div>
   </header>
 
-  <UiSettingsPanel v-if="uiDemoPanelOpen" />
-
   <main class="app-shell board-shell">
     <MessageBanners />
 
@@ -1908,84 +1882,105 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </main>
 
-  <div v-if="boardSettingsOpen" class="modal-backdrop" @click.self="boardSettingsOpen = false">
-    <section class="modal lane-modal">
-      <div class="label-with-tip">
-        <p class="eyebrow">Swimlane</p>
-        <InfoTip text="Show/Hide Swimlane's" />
-      </div>
-      <ul class="card-field-list">
-        <li v-for="lane in laneColumns" :key="lane.id">
-          <label>
-            <input
-              type="checkbox"
-              :checked="!laneIsHidden(lane.id)"
-              @change="toggleLaneVisibility(lane.id)"
-            />
-            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
-          </label>
-        </li>
-      </ul>
-
-      <hr />
-
-      <span class="label-with-tip">
-        <p class="eyebrow">Ticket Card</p>
-        <InfoTip text="Show/Hide Ticket Card fields" />
-      </span>
-      <ul class="card-field-list">
-        <li>
-          <label>
-            <input type="checkbox" checked disabled />
-            Title
-          </label>
-        </li>
-        <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
-          <label>
-            <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
-            {{ field.label }}
-          </label>
-        </li>
-      </ul>
-
-      <hr />
-
-      <span class="label-with-tip">
-        <p class="eyebrow">Swim lane Settings</p>
-        <InfoTip text="Show/Hide Swim lane Settings fields" />
-      </span>
-      <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
-      <ul class="card-field-list">
-        <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
-          <label>
-            <input
-              type="checkbox"
-              :checked="laneFieldShownOnBoard(field.id)"
-              @change="toggleLaneFieldOnBoard(field.id)"
-            />
-            {{ field.label }}
-          </label>
-        </li>
-      </ul>
-
-      <div class="modal-actions">
-        <button @click="boardSettingsOpen = false">Done</button>
-      </div>
-    </section>
-  </div>
-
-  <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
-    <section class="modal lane-modal settings-modal">
+  <div
+    v-if="settingsOpen"
+    class="modal-backdrop"
+    @pointerdown="notePressTarget"
+    @click.self="closeIfPressStartedOnBackdrop(() => (settingsOpen = false))"
+  >
+    <section v-edge-resize class="modal lane-modal settings-modal resizable">
       <p class="eyebrow">Board Settings</p>
-      <MetricsPanel :project-paths="[projectPath]" scope="board" />
-      <button class="secondary button-with-icon" title="Choose what ticket cards show" @click="openDisplaySettings">
-        <EyeOffIcon /> Display
-      </button>
-      <hr />
-      <p class="eyebrow">UI Settings</p>
-      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="openUiSettingsPanel">
-        🎚 UI Settings
-      </button>
+      <details
+        class="lane-settings-section"
+        :open="settingsModalSectionsOpen.metrics"
+        @toggle="settingsModalSectionsOpen.metrics = detailsOpen($event)"
+      >
+        <summary class="eyebrow">Metrics</summary>
+        <div class="lane-settings-section-body">
+          <MetricsPanel v-if="settingsModalSectionsOpen.metrics" :project-paths="[projectPath]" scope="board" inline />
+        </div>
+      </details>
+      <details
+        class="lane-settings-section"
+        :open="settingsModalSectionsOpen.display"
+        @toggle="settingsModalSectionsOpen.display = detailsOpen($event)"
+      >
+        <summary class="eyebrow">Display</summary>
+        <div class="lane-settings-section-body">
+          <div class="label-with-tip">
+            <p class="eyebrow">Swimlane</p>
+            <InfoTip text="Show/Hide Swimlane's" />
+          </div>
+          <ul class="card-field-list">
+            <li v-for="lane in laneColumns" :key="lane.id">
+              <label>
+                <input
+                  type="checkbox"
+                  :checked="!laneIsHidden(lane.id)"
+                  @change="toggleLaneVisibility(lane.id)"
+                />
+                {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
+              </label>
+            </li>
+          </ul>
+
+          <hr />
+
+          <span class="label-with-tip">
+            <p class="eyebrow">Ticket Card</p>
+            <InfoTip text="Show/Hide Ticket Card fields" />
+          </span>
+          <ul class="card-field-list">
+            <li>
+              <label>
+                <input type="checkbox" checked disabled />
+                Title
+              </label>
+            </li>
+            <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
+              <label>
+                <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
+                {{ field.label }}
+              </label>
+            </li>
+          </ul>
+
+          <hr />
+
+          <span class="label-with-tip">
+            <p class="eyebrow">Swim lane Settings</p>
+            <InfoTip text="Show/Hide Swim lane Settings fields" />
+          </span>
+          <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
+          <ul class="card-field-list">
+            <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
+              <label>
+                <input
+                  type="checkbox"
+                  :checked="laneFieldShownOnBoard(field.id)"
+                  @change="toggleLaneFieldOnBoard(field.id)"
+                />
+                {{ field.label }}
+              </label>
+            </li>
+          </ul>
+        </div>
+      </details>
+      <details
+        class="lane-settings-section"
+        :open="settingsModalSectionsOpen.uiSettings"
+        @toggle="settingsModalSectionsOpen.uiSettings = detailsOpen($event)"
+      >
+        <summary class="eyebrow">
+          <span class="label-with-tip">
+            UI Settings
+            <InfoTip text="Changes save automatically as you edit, on this machine only. Reset restores the defaults." />
+          </span>
+        </summary>
+        <div class="lane-settings-section-body">
+          <UiSettingsPanel />
+        </div>
+      </details>
       <div class="modal-actions">
         <button @click="settingsOpen = false">Done</button>
       </div>
@@ -2060,8 +2055,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="laneDraftName !== null" class="modal-backdrop" @click.self="laneDraftName = null">
-    <section class="modal lane-modal">
+  <div v-if="laneDraftName !== null" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (laneDraftName = null))">
+    <section v-edge-resize class="modal lane-modal resizable">
       <p class="eyebrow">New swim lane</p>
       <input v-model="laneDraftName" class="ticket-title-input" placeholder="Name" @keyup.enter="saveLaneDraft" />
       <div class="modal-actions">
@@ -2437,8 +2432,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="ticketPendingDeletion" class="modal-backdrop" @click.self="ticketPendingDeletion = null">
-    <section class="modal" role="alertdialog" aria-labelledby="delete-ticket-question">
+  <div v-if="ticketPendingDeletion" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (ticketPendingDeletion = null))">
+    <section v-edge-resize class="modal resizable" role="alertdialog" aria-labelledby="delete-ticket-question">
       <p class="eyebrow">Delete ticket</p>
       <p id="delete-ticket-question">
         Are you sure you want to delete ticket #{{ ticketPendingDeletion.number }}?
@@ -2450,8 +2445,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="autoRunConfirmLane" class="modal-backdrop" @click.self="autoRunConfirmLaneId = null">
-    <section class="modal" role="alertdialog" aria-labelledby="auto-run-confirm-question">
+  <div v-if="autoRunConfirmLane" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (autoRunConfirmLaneId = null))">
+    <section v-edge-resize class="modal resizable" role="alertdialog" aria-labelledby="auto-run-confirm-question">
       <p class="eyebrow">Auto Run · {{ autoRunConfirmLane.name }}</p>
       <p id="auto-run-confirm-question" class="auto-run-question">
         Run {{ autoRunTickets(autoRunConfirmLane).length }} separate
@@ -2859,8 +2854,8 @@ const runTicketAgent = (ticket: Ticket) => {
     </section>
   </div>
 
-  <div v-if="lanePendingDeletion" class="modal-backdrop" @click.self="lanePendingDeletionId = null">
-    <section class="modal" role="alertdialog" aria-labelledby="delete-lane-question">
+  <div v-if="lanePendingDeletion" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (lanePendingDeletionId = null))">
+    <section v-edge-resize class="modal resizable" role="alertdialog" aria-labelledby="delete-lane-question">
       <p class="eyebrow">Delete lane</p>
       <p id="delete-lane-question">Are you sure you want to delete the {{ lanePendingDeletion.name }} lane?</p>
       <p v-if="pendingLaneTicketCount" class="field-hint">

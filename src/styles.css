@@ -2276,30 +2276,12 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
-/* Settings modal (#137): Metrics renders inline so the modal grows instead of
-   clipping an absolute popover. */
-.settings-modal {
-  width: auto;
-  min-width: min(420px, 100%);
-  max-width: 100%;
-  align-items: flex-start;
-}
-
-.settings-modal .modal-actions {
-  align-self: stretch;
-}
-
-.settings-modal .metrics-menu {
+/* Settings modal Metrics accordion (#140): a wide table scrolls inside the
+   section so the modal width stays user-controlled. */
+.metrics-popover-inline {
   display: grid;
-  justify-items: start;
   gap: 8px;
-  max-width: 100%;
-}
-
-.settings-modal .metrics-popover {
-  position: static;
-  max-width: 100%;
-  box-shadow: none;
+  overflow-x: auto;
 }
 
 /* The titlebar selector is for the Dashboard header's Metrics popover. */
@@ -2508,51 +2490,13 @@ span.ticket-image-thumb {
   width: auto;
 }
 
-.ui-demo-panel {
-  position: fixed;
-  /* Above the sticky titlebar (100) so the panel can't be dragged under its
-     window-drag region and lost, and above modal backdrops (200) so modal
-     knobs can be tuned live over an open modal; below message toasts (300)
-     and page find (1000). */
-  z-index: 250;
-  width: 320px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface-raised);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-}
-
-.ui-demo-titlebar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 6px 6px 12px;
-  border-bottom: 1px solid var(--color-border);
-  cursor: move;
-  user-select: none;
-  touch-action: none;
-}
-
-/* Static so the bubble anchors to the titlebar's left edge and fits the 320px panel. */
-.ui-demo-titlebar .info-tip {
-  position: static;
-  cursor: default;
-}
-
-/* Direct child only: the ✕. A descendant selector would bleed onto the ⓘ button. */
-.ui-demo-titlebar > button {
-  min-height: 28px;
-  padding: 0 10px;
-}
-
 .ui-demo-body {
   display: grid;
   gap: 8px;
-  padding: 12px;
 }
 
-.ui-demo-row {
+/* Two classes to outrank `.lane-modal label` (column flex) inside the Settings modal. */
+.ui-demo-body .ui-demo-row {
   display: grid;
   grid-template-columns: 9rem minmax(0, 1fr) 4rem;
   align-items: center;

@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { reactive } from 'vue'
 
 // Live look-tuning knobs for the board. Each control owns one `--ui-*` CSS var on
 // :root; styles.css falls back to today's literals, so an unset var changes nothing.
@@ -109,8 +109,7 @@ export const normalizeUiDemoValues = (stored: unknown): UiDemoValues => {
 
 const STORAGE_KEY = 'project-tracker-ui-demo'
 
-type PanelPosition = { x: number; y: number }
-type StoredUiDemo = { values?: unknown; position?: unknown }
+type StoredUiDemo = { values?: unknown }
 
 const readStored = (): StoredUiDemo => {
   try {
@@ -121,20 +120,9 @@ const readStored = (): StoredUiDemo => {
   }
 }
 
-const readPosition = (stored: unknown): PanelPosition | null => {
-  const candidate = stored as Partial<PanelPosition> | null
-  const x = candidate?.x
-  const y = candidate?.y
-  const isValid = Number.isFinite(x) && Number.isFinite(y)
-  return isValid ? { x: x as number, y: y as number } : null
-}
-
 const initialStored = readStored()
 
 export const uiDemoValues = reactive<UiDemoValues>(normalizeUiDemoValues(initialStored.values))
-export const uiDemoPanelPosition = ref<PanelPosition | null>(readPosition(initialStored.position))
-// Module scope so the panel's open state survives BoardView remounts within a session.
-export const uiDemoPanelOpen = ref(false)
 
 export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
   const rootStyle = document.documentElement.style
@@ -145,7 +133,7 @@ export const applyUiDemo = (values: UiDemoValues = uiDemoValues) => {
 
 export const saveUiDemo = () => {
   try {
-    const payload = { values: { ...uiDemoValues }, position: uiDemoPanelPosition.value }
+    const payload = { values: { ...uiDemoValues } }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   } catch {
     // Storage full or unavailable: the knobs still work for this session.

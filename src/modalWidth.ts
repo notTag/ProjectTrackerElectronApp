@@ -13,6 +13,23 @@ export const laneModalSectionsOpen = reactive<Record<LaneModalSection, boolean>>
   orchestrator: true,
   autoRun: true
 })
+// Settings modal accordions. Collapsed by default: Metrics runs git/gh per project on open.
+export const settingsModalSectionsOpen = reactive({ metrics: false, display: false, uiSettings: false })
+export const detailsOpen = (event: Event) => (event.target as HTMLDetailsElement).open
+
+// click fires on the common ancestor of press + release, so dragging a resizable
+// modal's edge and letting go over the backdrop would otherwise close the modal.
+// ponytail: module-level flag, fine while only one backdrop can be pressed at a time.
+let pressStartedOnBackdrop = false
+export const notePressTarget = (event: PointerEvent) => {
+  const isEdgeResize = event.defaultPrevented
+  pressStartedOnBackdrop = event.target === event.currentTarget && !isEdgeResize
+}
+export const closeIfPressStartedOnBackdrop = (close: () => void) => {
+  const startedOnBackdrop = pressStartedOnBackdrop
+  pressStartedOnBackdrop = false
+  if (startedOnBackdrop) close()
+}
 
 // Half on the backdrop, half on the modal: a scrolling modal's right edge is its
 // scrollbar, so there only the outer half is grabbable.

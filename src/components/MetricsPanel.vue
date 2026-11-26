@@ -9,6 +9,8 @@ const props = defineProps<{
   projectPaths: string[]
   // Which view this is, so each remembers its own open state.
   scope: 'dashboard' | 'board'
+  // Rendered inside another surface (Settings accordion): no toggle, no popover, always open.
+  inline?: boolean
 }>()
 
 const storageKey = `metrics-panel-open:${props.scope}`
@@ -73,6 +75,11 @@ const closeOnOutsideClick = (event: PointerEvent) => {
 }
 
 onMounted(() => {
+  if (props.inline) {
+    open.value = true
+    void load()
+    return
+  }
   window.addEventListener('pointerdown', closeOnOutsideClick)
   if (readStoredOpen()) setOpen(true)
 })
@@ -124,11 +131,11 @@ const showTotals = computed(() => props.scope === 'dashboard' && rows.value.leng
 </script>
 
 <template>
-  <div ref="rootRef" class="filter-menu metrics-menu">
-    <button class="secondary" :class="{ active: open }" :aria-expanded="open" @click="setOpen(!open)">
+  <div ref="rootRef" :class="inline ? 'metrics-inline' : 'filter-menu metrics-menu'">
+    <button v-if="!inline" class="secondary" :class="{ active: open }" :aria-expanded="open" @click="setOpen(!open)">
       📊 Metrics
     </button>
-    <section v-if="open" class="filter-popover metrics-popover" aria-label="Metrics">
+    <section v-if="open" :class="inline ? 'metrics-popover-inline' : 'filter-popover metrics-popover'" aria-label="Metrics">
       <div class="metrics-popover-header">
         <strong>Metrics</strong>
         <button class="secondary" title="Pull fresh numbers" :disabled="loading" @click="load">↻</button>
