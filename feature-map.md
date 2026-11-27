@@ -272,7 +272,8 @@ From left to right:
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.
-- **Clear**: appears when any filter is set and resets the text, lane and assignee filters.
+- **Clear**: appears when any filter is set (any text in the box, spaces included) and resets the text, lane and assignee filters. Column toggles aren't touched.
+- The text box, Swim lane filter, Assigned to me and each column toggle can be hidden from Display → **Ticket Dashboard** (3.5). Hiding one with a filter set clears that filter. Hiding a column toggle hides only the button, not the column. With the text box hidden, ⌘⇧F does nothing.
 - **View switch**: a two-button slider for **Graph view** and **Swimlane view** (the default). Switching closes any open ticket.
 
 ### 3.4 Swimlane view
@@ -319,6 +320,7 @@ From left to right:
 
 ### 3.5 Display settings (⚙ Settings → Display)
 
+- **Ticket Dashboard** (first): a checkbox per filter bar control (Ticket filter box, Swim lane filter, Assigned to me, No status toggle, GitHub Issues toggle). All on by default; unchecking hides it from the filter bar (3.3). Saved per user in `BoardPreferences.hiddenFilterControls` (`BOARD_FILTER_CONTROLS` in `projectTypes.ts`). The GitHub Issues row shows even before issues are imported.
 - **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
@@ -415,7 +417,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
-- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119).
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119). The tip bubble is a manual popover in the top layer, anchored to its ⓘ with CSS anchor positioning, so a modal's overflow never clips it; near the right or bottom edge it flips to stay on screen (#138).
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
@@ -537,7 +539,7 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.12 Graph view
 
 - A workflow editor for the board. Each **Swim lane** is a node ("Swim lane · N", N = its ticket count). Tickets themselves are not shown.
-- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). Moving a node never reorders the swimlane columns. A click without movement selects the lane.
+- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). The No status node moves the same way. Moving a node never reorders the swimlane columns. A click without movement selects the lane.
 - **Connecting**: every node has a dot on its left and right edge. Drag from either dot and an arrow follows the pointer; release on any dot of another lane to set the origin lane's Next Lane to it. A lane has at most one outgoing arrow: connecting again replaces it. Releasing on empty canvas or on the origin lane changes nothing.
 - **Transitions**: an arrow from a lane's right dot to its Next Lane's left dot. Arrows pointing back left loop below the nodes. Click an arrow to select it, then press Delete/Backspace or its **×** to clear that lane's Next Lane.
 - **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
@@ -612,7 +614,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
 - Every IPC handler checks which page sent the request: the `file://` page in packaged builds, the dev server URL (`VITE_DEV_SERVER_URL`, port picked per checkout) in development. The web server's equivalent is its request guard (4.8).
-- Payloads are type-checked, and paths are normalized to POSIX absolute paths.
+- Payloads are type-checked, and paths are normalized to POSIX absolute paths. A rejected ticket or lane patch names the first bad key: `Invalid lane update payload: rejected key "<key>".` (`rejectedPatchKey` in `electron/ipcHandlers.ts`)
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
 - Child processes get their arguments as an array, never through a shell.

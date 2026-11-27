@@ -1897,6 +1897,16 @@ export const TICKET_CARD_FIELDS = [
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
 
+export const BOARD_FILTER_CONTROLS = [
+  { id: 'query', label: 'Ticket filter box' },
+  { id: 'lanes', label: 'Swim lane filter' },
+  { id: 'mine', label: 'Assigned to me' },
+  { id: 'noStatus', label: 'No status toggle' },
+  { id: 'githubIssues', label: 'GitHub Issues toggle' }
+] as const
+
+export type BoardFilterControl = (typeof BOARD_FILTER_CONTROLS)[number]['id']
+
 // Display-only: hiding a field here never changes what the agent prompt sends.
 export const TICKET_MODAL_FIELDS = [
   { id: 'status', label: 'Status' },
@@ -2051,6 +2061,7 @@ export interface BoardPreferences {
   // laneId → lane settings fields hidden in that lane only, on top of
   // hiddenLaneModalFields (the eye button in that lane's settings).
   hiddenLaneModalFieldsByLane: Record<string, LaneModalField[]>
+  hiddenFilterControls: BoardFilterControl[]
 }
 
 const ALL_CARD_FIELDS = TICKET_CARD_FIELDS.map((field) => field.id)
@@ -2072,7 +2083,8 @@ export const createDefaultBoardPreferences = (): BoardPreferences => ({
   knownCardFields: [...ALL_CARD_FIELDS],
   hiddenModalFields: [],
   hiddenLaneModalFields: [],
-  hiddenLaneModalFieldsByLane: {}
+  hiddenLaneModalFieldsByLane: {},
+  hiddenFilterControls: []
 })
 
 // Spread over the defaults rather than returned as-is, so preferences saved
@@ -2110,6 +2122,14 @@ export const toggleCardField = (preferences: BoardPreferences, field: TicketCard
 export const toggleModalField = (preferences: BoardPreferences, field: TicketModalField): BoardPreferences => ({
   ...preferences,
   hiddenModalFields: toggleInList(preferences.hiddenModalFields, field)
+})
+
+export const toggleFilterControl = (
+  preferences: BoardPreferences,
+  control: BoardFilterControl
+): BoardPreferences => ({
+  ...preferences,
+  hiddenFilterControls: toggleInList(preferences.hiddenFilterControls, control)
 })
 
 export const toggleLaneModalField = (preferences: BoardPreferences, field: LaneModalField): BoardPreferences => ({
