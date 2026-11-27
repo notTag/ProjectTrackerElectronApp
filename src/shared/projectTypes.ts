@@ -228,18 +228,9 @@ export interface SwimLane {
   // sentence like "a new PRD folder in the project". Optional so lanes saved
   // before it existed still load.
   outputTarget?: string
-  // Appended to the generated orchestrator prompt under "Lane instructions".
-  // Folded into the current prompt on the first edit, and unused while a
-  // current or default prompt is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
-  // A markdown file appended to the orchestrator prompt at launch as additional
-  // context; it never replaces the prompt. Empty means the lane folder's
-  // AgentOrchestratorPrompt.md. Optional so older lanes load.
   orchestratorFilePath?: string
-  // The orchestrator prompt as edited; launch-time {{tokens}} are filled in.
-  // Empty means the lane's default prompt. Optional so older lanes load.
   currentAgentOrchestratorPrompt?: string
-  // Set only by Save as default. Empty means the app-generated prompt.
   defaultAgentOrchestratorPrompt?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
@@ -742,7 +733,6 @@ const fileNamePart = (value: string, fallback: string): string => {
 
 export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
 
-// The agent file mirrors the agent prompt; the orchestrator file is read-only context.
 export type LaneMarkdownKind = 'agent' | 'orchestrator'
 
 // Only unindented markers start a rule: indented sub-bullets and sub-steps stay
@@ -1119,8 +1109,6 @@ export interface OrchestratorPromptContext {
   lanes: SwimLane[]
   terminalId: string
   terminalLabel: string
-  // The lane's orchestrator markdown file, read by main at launch. Appended
-  // after the prompt, never in place of it.
   additionalContext?: OrchestratorAdditionalContext
 }
 
@@ -1344,19 +1332,14 @@ const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts
   return template.replace(/\{\{\w+\}\}/g, (token) => valueByToken[token] ?? token)
 }
 
-// The app-generated prompt for the lane, with launch-time tokens in place of
-// the tickets, lanes and terminal section.
 export const orchestratorPromptTemplate = (lane: SwimLane, context: OrchestratorPromptContext): string =>
   renderOrchestratorPrompt(lane, ORCHESTRATOR_PROMPT_TOKENS, context)
 
-// Blank counts as unset everywhere a saved prompt is chosen.
 const nonBlankPrompt = (prompt: string | undefined): string => (prompt?.trim() ? prompt : '')
 
-// What the box falls back to while the lane has no current prompt.
 export const defaultOrchestratorPrompt = (lane: SwimLane, context: OrchestratorPromptContext): string =>
   nonBlankPrompt(lane.defaultAgentOrchestratorPrompt) || orchestratorPromptTemplate(lane, context)
 
-// Restore app default: no saved prompts, so the lane runs the generated one.
 export const APP_ORCHESTRATOR_PROMPT_PATCH = {
   defaultAgentOrchestratorPrompt: '',
   currentAgentOrchestratorPrompt: ''

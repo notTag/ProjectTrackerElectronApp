@@ -5,8 +5,6 @@
 export const SCHEMA_VERSION = 7
 // First version with closing lanes; opening an older file seeds and backfills them once.
 export const CLOSING_LANES_SCHEMA_VERSION = 5
-// First version with current/default orchestrator prompts; opening an older file
-// copies each lane's orchestrator_prompt_override into its current prompt once.
 export const CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION = 7
 
 export const SCHEMA_SQL = `

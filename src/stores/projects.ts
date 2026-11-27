@@ -398,7 +398,6 @@ export const useProjectsStore = defineStore('projects', {
       return { filePath: saved.filePath, laneUpdated }
     },
 
-    // The context is optional: a failed read launches without it.
     async readLaneOrchestratorContext(projectPath: string, lane: SwimLane) {
       try {
         const filePath = lane.orchestratorFilePath ?? ''

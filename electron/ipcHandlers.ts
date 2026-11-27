@@ -7,7 +7,7 @@
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { readOrchestratorContext, resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
@@ -52,6 +52,14 @@ import {
   type ProjectWritePatch,
   type ScanProgress
 } from '../src/shared/projectTypes.js'
+
+const realPathOrSelf = (directory: string) => {
+  try {
+    return realpathSync(directory)
+  } catch {
+    return directory
+  }
+}
 
 export const APP_NAME = 'Project Tracker'
 
@@ -790,10 +798,11 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     },
 
     'lane:save-agent-markdown': (request, { repository }) => {
-      const { projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
+      const { kind, projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
         string,
         unknown
       >
+      if (kind !== undefined && kind !== 'agent') throw new Error('Only the agent markdown file is saved.')
       const fields = [projectPath, laneName, requestedFilePath, content, previousContent]
       const fieldsAreStrings = fields.every((field) => typeof field === 'string')
       if (!fieldsAreStrings) throw new Error('Invalid save request.')
@@ -817,8 +826,6 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       return saveAgentMarkdown(filePath, content as string, previousContent as string)
     },
 
-    // Context is optional, so anything short of a readable file in a scanned
-    // directory launches without it instead of failing the Auto Run.
     'lane:read-orchestrator-context': (request, { repository }) => {
       const { projectPath, laneName, filePath: requestedFilePath } = (request ?? {}) as Record<string, unknown>
       const fields = [projectPath, laneName, requestedFilePath]
@@ -838,8 +845,15 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       } catch {
         return null
       }
-      if (!isInsideAny(filePath, scanDirectoriesOf(repository))) return null
-      const content = readOrchestratorContext(filePath)
+      let realFilePath: string
+      try {
+        realFilePath = realpathSync(filePath)
+      } catch {
+        return null
+      }
+      const realScanDirectories = scanDirectoriesOf(repository).map(realPathOrSelf)
+      if (!isInsideAny(realFilePath, realScanDirectories)) return null
+      const content = readOrchestratorContext(realFilePath)
       return content.trim() ? toPlainJson({ filePath, content }) : null
     }
   }

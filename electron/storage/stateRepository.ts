@@ -108,7 +108,6 @@ const needsOrchestratorOverrideCopy = (laneRow: Row): boolean => {
   return override.trim() !== '' && current === ''
 }
 
-// Unparseable snapshots are left as they are: a swap to one already refuses it.
 const withOrchestratorOverridesCopied = (lanesJson: string): string => {
   let laneRows: unknown
   try {
@@ -442,9 +441,6 @@ export class StateRepository {
     return Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
   }
 
-  // Runs before recordSchemaVersion bumps the stored version, so a current
-  // prompt the user later resets to '' is never refilled from the old column.
-  // Workflow snapshots get the same copy: a swap inserts their rows as stored.
   private copyOrchestratorOverridesOnce() {
     if (this.storedSchemaVersion() >= CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION) return
     this.run(

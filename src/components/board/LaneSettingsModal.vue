@@ -121,13 +121,11 @@ const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
   editLane(lane, { autoRunAgentId, autoRunModel: undefined, ...orchestratorModelPatch })
 }
 
-// Save as default's text, or the generated prompt when the lane has none.
 const openLaneDefaultOrchestratorPrompt = computed(() => {
   const context = orchestratorContextFor(autoRunTerminal(props.lane))
   return defaultOrchestratorPrompt(props.lane, context)
 })
 
-// Blank counts as no current prompt, the same as at launch.
 const openLaneCurrentOrchestratorPrompt = computed(() => {
   const currentPrompt = props.lane.currentAgentOrchestratorPrompt ?? ''
   return currentPrompt.trim() ? currentPrompt : ''
@@ -144,10 +142,6 @@ const openLaneOrchestratorPrompt = computed(
 
 const openLaneMissingOrchestratorTokens = computed(() => orchestratorPromptMissingTokens(openLaneOrchestratorPrompt.value))
 
-// Saving the default unchanged, or clearing the box, keeps the lane following
-// its default, so a new default (or an app update to the generated one) still
-// arrives and the old extras stay. An edit folds the extras into the current
-// prompt, since they are already part of the text the user just saved.
 const orchestratorPromptPatch = (text: string): Partial<Omit<SwimLane, 'id'>> => {
   const trimmedText = text.trim()
   const matchesDefault = trimmedText === openLaneDefaultOrchestratorPrompt.value.trim()
@@ -155,9 +149,6 @@ const orchestratorPromptPatch = (text: string): Partial<Omit<SwimLane, 'id'>> =>
   return { currentAgentOrchestratorPrompt: text, orchestratorPrompt: '' }
 }
 
-// Live copies of each prompt box, and of the agent markdown path, because the
-// inputs only commit on blur: autosave has to write what is on screen, not what
-// state held before the blur.
 const lanePromptSources: Record<LaneMarkdownKind, () => string> = {
   agent: () => props.lane.agentPrompt ?? '',
   orchestrator: () => openLaneOrchestratorPrompt.value
@@ -175,9 +166,6 @@ const openLaneOrchestratorDiffersFromDefault = computed(() => {
   return typedPrompt !== '' && typedPrompt !== openLaneDefaultOrchestratorPrompt.value.trim()
 })
 
-// One watch per field, not one getter returning an array: a fresh array on
-// every board refresh would reset the draft mid-typing, and the path an
-// autosave stores must not reset the prompt being typed.
 for (const kind of ['agent', 'orchestrator'] as const) {
   watch(lanePromptSources[kind], (prompt) => (lanePromptDraft.value[kind] = prompt), { immediate: true })
 }
@@ -197,10 +185,6 @@ const flushMarkdownSave = () => {
 }
 
 type LanePromptPatch = Partial<Omit<SwimLane, 'id'>>
-// Typed text not stored on the lane yet. Blur stores it; closing or switching
-// lanes without a blur (Escape) stores it here, so the lane never lags its file.
-// The patch is built while its lane is open: the orchestrator one compares
-// against that lane's default.
 const uncommittedPrompts: Partial<Record<LaneMarkdownKind, { lane: SwimLane; patch: LanePromptPatch }>> = {}
 
 const lanePromptPatch = (kind: LaneMarkdownKind, text: string): LanePromptPatch =>
@@ -306,8 +290,6 @@ const onAgentFilePathChange = (lane: SwimLane, event: Event) => {
   if (lanePromptDraft.value.agent.trim()) scheduleAgentMarkdownSave(lane)
 }
 
-// The box text becomes the default. Current is cleared, since it would only
-// repeat the default, and so are the old extras the text already holds.
 const saveOrchestratorPromptAsDefault = (lane: SwimLane) => {
   delete uncommittedPrompts.orchestrator
   const typedPrompt = lanePromptDraft.value.orchestrator

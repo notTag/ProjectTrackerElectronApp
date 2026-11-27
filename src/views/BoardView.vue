@@ -388,8 +388,10 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
   }
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  const additionalContext = await store.readLaneOrchestratorContext(projectPath.value, lane)
-  const orchestratorContext = { ...orchestratorContextFor(terminal), additionalContext }
+  const boardPath = projectPath.value
+  const generatedContext = orchestratorContextFor(terminal)
+  const additionalContext = await store.readLaneOrchestratorContext(boardPath, lane)
+  const orchestratorContext = { ...generatedContext, additionalContext }
   const orchestratorSettings = {
     orchestratorAgentId: picks.orchestratorAgentId || undefined,
     orchestratorModel: picks.orchestratorModel
@@ -403,7 +405,7 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
     orchestratorChoice.model
   )
   const launch = store.autoRunLane(
-    projectPath.value,
+    boardPath,
     lane.id,
     terminal.id,
     terminal.label,

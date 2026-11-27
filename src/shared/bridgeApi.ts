@@ -135,7 +135,6 @@ export interface ProjectTrackerBridge {
     content: string,
     previousContent: string
   ): Promise<{ filePath: string }>
-  // Null when the lane's orchestrator file is missing, blank or unreadable.
   readLaneOrchestratorContext(
     projectPath: string,
     laneName: string,

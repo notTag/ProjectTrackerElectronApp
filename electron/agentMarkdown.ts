@@ -62,19 +62,17 @@ export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string =>
 
 const readIfExists = (filePath: string): string => (existsSync(filePath) ? readFileSync(filePath, 'utf8') : '')
 
-// Missing or unreadable (a directory, no permission) reads as no context.
+const isAppWrittenPromptCopy = (content: string) => content.includes('{{ticket_numbers}}')
+
 export const readOrchestratorContext = (filePath: string): string => {
   try {
-    return readFileSync(filePath, 'utf8')
+    const content = readFileSync(filePath, 'utf8')
+    return isAppWrittenPromptCopy(content) ? '' : content
   } catch {
     return ''
   }
 }
 
-// The file mirrors the agent prompt box, so every autosave replaces it. A file holding
-// anything other than what this lane last wrote may be a hand-written guide or
-// an edit made in an editor, so it is left alone and the save fails instead,
-// until the box holds the same text (the user pasted the edits in).
 export const saveAgentMarkdown = (filePath: string, content: string, previousContent: string) => {
   const existing = readIfExists(filePath)
   const isBlank = existing.trim() === ''

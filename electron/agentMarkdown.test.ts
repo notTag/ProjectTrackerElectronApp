@@ -166,4 +166,11 @@ describe('readOrchestratorContext', () => {
     expect(readOrchestratorContext(path.join(projectPath, 'missing.md'))).toBe('')
     expect(readOrchestratorContext(projectPath)).toBe('')
   })
+
+  it('skips a prompt copy written by the app before #168', () => {
+    const projectPath = freshProjectPath()
+    const contextPath = path.join(projectPath, 'AgentOrchestratorPrompt.md')
+    writeFileSync(contextPath, 'You are the Auto Run orchestrator.\nTickets: {{ticket_numbers}}\n')
+    expect(readOrchestratorContext(contextPath)).toBe('')
+  })
 })

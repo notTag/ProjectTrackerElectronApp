@@ -1242,7 +1242,6 @@ describe('closed_at triggers (#27)', () => {
     const copiedSnapshot = JSON.parse(String(snapshotJson)) as Record<string, unknown>[]
     expect(copiedSnapshot.map((row) => row.current_agent_orchestrator_prompt)).toEqual(['Snapshot {{tickets}}', undefined])
 
-    // Already at the current version: a prompt the user reset stays reset.
     repository.updateSwimLane(projectPath, 'in-dev', { currentAgentOrchestratorPrompt: '' })
     new StateRepository(userDataPath)
     expect(currentPrompt('in-dev')).toBe('')
