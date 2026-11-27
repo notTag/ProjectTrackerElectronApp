@@ -539,7 +539,7 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.12 Graph view
 
 - A workflow editor for the board. Each **Swim lane** is a node ("Swim lane · N", N = its ticket count). Tickets themselves are not shown.
-- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). Moving a node never reorders the swimlane columns. A click without movement selects the lane.
+- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). The No status node moves the same way. Moving a node never reorders the swimlane columns. A click without movement selects the lane.
 - **Connecting**: every node has a dot on its left and right edge. Drag from either dot and an arrow follows the pointer; release on any dot of another lane to set the origin lane's Next Lane to it. A lane has at most one outgoing arrow: connecting again replaces it. Releasing on empty canvas or on the origin lane changes nothing.
 - **Transitions**: an arrow from a lane's right dot to its Next Lane's left dot. Arrows pointing back left loop below the nodes. Click an arrow to select it, then press Delete/Backspace or its **×** to clear that lane's Next Lane.
 - **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
@@ -614,7 +614,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
 - Every IPC handler checks which page sent the request: the `file://` page in packaged builds, the dev server URL (`VITE_DEV_SERVER_URL`, port picked per checkout) in development. The web server's equivalent is its request guard (4.8).
-- Payloads are type-checked, and paths are normalized to POSIX absolute paths.
+- Payloads are type-checked, and paths are normalized to POSIX absolute paths. A rejected ticket or lane patch names the first bad key: `Invalid lane update payload: rejected key "<key>".` (`rejectedPatchKey` in `electron/ipcHandlers.ts`)
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
 - Child processes get their arguments as an array, never through a shell.
