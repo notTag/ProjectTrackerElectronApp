@@ -67,9 +67,9 @@
 | `TicketModal.vue` | `ticket`, `boardView`, `nextLaneOptionsFor` | `close`, `delete(ticket)` | Owns checklist/link/image drafts, fields menu, version + PR edit, agent run. Resets drafts on `ticket.id` change (mirror l.187/642) |
 | `NewTicketModal.vue` | `draft` (v-model), `nextLaneOptionsFor` | `close`, `saved` | Owns staged images |
 | `LaneSettingsModal.vue` | `lane` | `close`, `delete(lane)` | See autosave above |
-| `DisplaySettingsModal.vue` | `laneColumns` | `close` | |
-| `BoardSettingsModal.vue` | — | `close`, `open-display`, `open-ui-panel` | Keeps the swap-not-stack rule |
-| `ConfirmDeleteModal.vue` | `title`, `message`, `confirmLabel` | `confirm`, `cancel` | Shared by ticket + lane delete. Focuses its Cancel button on mount (today: `deleteConfirmCancelButton` / `laneDeleteConfirmCancelButton`) |
+| `DisplaySettings.vue` | — | — | Display section of the Settings panel (`UiSettingsPanel` `#display` slot). Was a modal until #145 moved Display into the panel |
+| ~~`BoardSettingsModal.vue`~~ | | | Dropped: #145 replaced the Board Settings modal with the floating Settings panel |
+| `ConfirmDeleteModal.vue` | `eyebrow`, `questionId` + default slot (the question) | `confirm`, `cancel` | Shared by ticket + lane delete. Focuses its Cancel button on mount |
 | `AutoRunConfirmModal.vue` | `lane`, `tickets` | `close`, `confirm(payload)` | Owns agent/model/orchestrator/terminal picks and seeds them on mount the way `askToAutoRunLane` does now |
 - The new swim lane prompt (11 lines) stays inline in BoardView.
 - Optional and zero-risk: rename `boardSettingsOpen` → `displaySettingsOpen` and `settingsOpen` → `boardSettingsOpen` in BoardView. Do it in its own commit.
@@ -79,7 +79,7 @@
 2. `BoardLanes` (largest risk: pointer and drag state).
 3. `TicketModal` + `NewTicketModal`.
 4. `LaneSettingsModal`.
-5. `DisplaySettingsModal`, `BoardSettingsModal`, `ConfirmDeleteModal`, `AutoRunConfirmModal`.
+5. `DisplaySettings`, `ConfirmDeleteModal`, `AutoRunConfirmModal`.
 6. Measure BoardView. Must be under 600 lines.
 7. Run the app on an isolated DB copy and exercise everything (checklist below).
 
