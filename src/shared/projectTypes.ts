@@ -1185,7 +1185,10 @@ export const ORCHESTRATOR_PROMPT_TOKENS = {
   tickets: '{{tickets}}',
   ticketNumbers: '{{ticket_numbers}}',
   lanes: '{{lanes}}',
-  terminal: '{{terminal}}'
+  terminal: '{{terminal}}',
+  laneName: '{{lane_name}}',
+  laneId: '{{lane_id}}',
+  pollStep: '{{poll_step}}'
 } as const
 
 type OrchestratorPromptParts = Record<keyof typeof ORCHESTRATOR_PROMPT_TOKENS, string>
@@ -1201,13 +1204,17 @@ const ORCHESTRATOR_TOKEN_MEANINGS: Record<keyof typeof ORCHESTRATOR_PROMPT_TOKEN
   tickets: 'one line per launched ticket: number, title, tab, branch, handoff tabs',
   ticketNumbers: 'comma-separated ticket numbers, e.g. for SQL IN (…)',
   lanes: 'board lanes: id — name — agent work yes/no',
-  terminal: "the lane's Auto Run terminal tab section (list/close recipes)"
+  terminal: "the lane's Auto Run terminal tab section (list/close recipes)",
+  laneName: "this lane's name",
+  laneId: "this lane's id",
+  pollStep: "Loop step 1, from the lane's Orchestrator poll setting"
 }
+
+const ORCHESTRATOR_TOKEN_KEYS = Object.keys(ORCHESTRATOR_PROMPT_TOKENS) as (keyof typeof ORCHESTRATOR_PROMPT_TOKENS)[]
 
 // The "Variables:" block for the Orchestrator prompt ⓘ tip (#112).
 export const orchestratorPromptTokenHelp = (): string => {
-  const tokenKeys = Object.keys(ORCHESTRATOR_PROMPT_TOKENS) as (keyof typeof ORCHESTRATOR_PROMPT_TOKENS)[]
-  const tokenLines = tokenKeys.map((key) => {
+  const tokenLines = ORCHESTRATOR_TOKEN_KEYS.map((key) => {
     const token = ORCHESTRATOR_PROMPT_TOKENS[key]
     const requiredMark = REQUIRED_ORCHESTRATOR_TOKENS.includes(token) ? ' (required)' : ''
     return `${token}: ${ORCHESTRATOR_TOKEN_MEANINGS[key]}${requiredMark}`
@@ -1227,20 +1234,12 @@ const renderOrchestratorPrompt = (
     "SELECT number, title, lane_id, branch_name, pull_request_url, json_extract(agent_run_json, '$.tabTitle') AS tab_title, description FROM tickets",
     `WHERE project_path = ${sqlStringLiteral(context.projectPath)} AND number IN (${parts.ticketNumbers});`
   ].join(' ')
-  const pollMinutes = orchestratorPollMinutes(lane)
-  const pollSeconds = pollMinutes * 60
-  const gatherStep = orchestratorPollActive(lane)
-    ? `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`
-    : [
-        '1. On start, gather the state above once. Then do not poll, sleep, loop or schedule wake-ups: end your turn and wait.',
-        '   Gather the state again only when a message from a ticket agent arrives.'
-      ].join('\n')
   // Double quotes only around the DB path, which needs $HOME expanded; the SQL
   // carries the project path, so it gets literal single quotes.
   const ticketQuery = `sqlite3 -readonly "${TRACKER_DATABASE_PATH}" ${shellQuote(ticketSql)}`
 
   return [
-    `You are the Auto Run orchestrator for the "${lane.name}" lane of ${context.projectPath}.`,
+    `You are the Auto Run orchestrator for the "${parts.laneName}" lane of ${context.projectPath}.`,
     'You report only. Never write to the database, never move tickets, never edit files, never answer or message the ticket agents.',
     ['Watch these tickets until each one is done:', parts.tickets].join('\n'),
     ['Board lanes (id — name — agent work):', parts.lanes].join('\n'),
@@ -1252,13 +1251,13 @@ const renderOrchestratorPrompt = (
     parts.terminal,
     [
       'Loop:',
-      gatherStep,
+      parts.pollStep,
       '2. On the first pass, and whenever a ticket changed since the last one, print one line per ticket:',
       '   #<N> <title> — lane: <name> — agent: running | not running | unknown — open PRs: <urls> — closed/merged PRs: <urls> — needs you: <question or no>',
       '3. Needs you = its description has a "## Open questions" section that is not empty and not "None",',
-      `   or its tab is gone while it is still in the ${lane.id} lane.`,
+      `   or its tab is gone while it is still in the ${parts.laneId} lane.`,
       '4. Done = it is in a lane with agent work: no, or its PR is merged. When a ticket becomes done, close its tab and say so.',
-      `   Close this lane's tab only after the ticket query shows the ticket has left the ${lane.id} lane, never on a done message alone:`,
+      `   Close this lane's tab only after the ticket query shows the ticket has left the ${parts.laneId} lane, never on a done message alone:`,
       '   re-run the ticket query first. Close handoff tabs only once the ticket is done: they are the next lane\'s running agents.',
       '   A merged ticket still in this lane keeps its tab: report it instead. Never close when more than one open tab matches the title.',
       '5. When every ticket is done, print a final summary (each ticket: final lane, PR url and state) and exit only when nothing needs the user.',
@@ -1270,7 +1269,20 @@ const renderOrchestratorPrompt = (
     .join('\n\n')
 }
 
+const orchestratorPollStep = (lane: SwimLane): string => {
+  if (!orchestratorPollActive(lane)) {
+    return [
+      '1. On start, gather the state above once. Then do not poll, sleep, loop or schedule wake-ups: end your turn and wait.',
+      '   Gather the state again only when a message from a ticket agent arrives.'
+    ].join('\n')
+  }
+  const pollMinutes = orchestratorPollMinutes(lane)
+  const pollSeconds = pollMinutes * 60
+  return `1. On start, then every ${pollMinutes} minutes (sleep ${pollSeconds}), gather the state above.`
+}
+
 const orchestratorPromptParts = (
+  lane: SwimLane,
   entries: AutoRunLaunchEntry[],
   context: OrchestratorPromptContext
 ): OrchestratorPromptParts => {
@@ -1306,19 +1318,18 @@ const orchestratorPromptParts = (
     tickets: ticketLines.join('\n'),
     ticketNumbers,
     lanes: laneLines.join('\n'),
-    terminal: tabSection(context, ticketNumbers)
+    terminal: tabSection(context, ticketNumbers),
+    laneName: lane.name,
+    laneId: lane.id,
+    pollStep: orchestratorPollStep(lane)
   }
 }
 
 // One pass, so a ticket title that happens to contain a token is never
 // expanded a second time. Unknown {{…}} is left as typed.
 const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts): string => {
-  const valueByToken: Record<string, string> = {
-    [ORCHESTRATOR_PROMPT_TOKENS.tickets]: parts.tickets,
-    [ORCHESTRATOR_PROMPT_TOKENS.ticketNumbers]: parts.ticketNumbers,
-    [ORCHESTRATOR_PROMPT_TOKENS.lanes]: parts.lanes,
-    [ORCHESTRATOR_PROMPT_TOKENS.terminal]: parts.terminal
-  }
+  const tokenValuePairs = ORCHESTRATOR_TOKEN_KEYS.map((key) => [ORCHESTRATOR_PROMPT_TOKENS[key], parts[key]])
+  const valueByToken: Record<string, string> = Object.fromEntries(tokenValuePairs)
   return template.replace(/\{\{\w+\}\}/g, (token) => valueByToken[token] ?? token)
 }
 
@@ -1333,6 +1344,12 @@ const nonBlankPrompt = (prompt: string | undefined): string => (prompt?.trim() ?
 // What the box falls back to while the lane has no current prompt.
 export const defaultOrchestratorPrompt = (lane: SwimLane, context: OrchestratorPromptContext): string =>
   nonBlankPrompt(lane.defaultAgentOrchestratorPrompt) || orchestratorPromptTemplate(lane, context)
+
+// Restore app default: no saved prompts, so the lane runs the generated one.
+export const APP_ORCHESTRATOR_PROMPT_PATCH = {
+  defaultAgentOrchestratorPrompt: '',
+  currentAgentOrchestratorPrompt: ''
+} as const satisfies Partial<SwimLane>
 
 const withAdditionalContext = (prompt: string, additionalContext: OrchestratorAdditionalContext | undefined): string => {
   const content = additionalContext?.content.trim()
@@ -1349,7 +1366,7 @@ export const orchestratorPrompt = (
   entries: AutoRunLaunchEntry[],
   context: OrchestratorPromptContext
 ): string => {
-  const parts = orchestratorPromptParts(entries, context)
+  const parts = orchestratorPromptParts(lane, entries, context)
   const currentPrompt = nonBlankPrompt(lane.currentAgentOrchestratorPrompt)
   const savedDefaultPrompt = nonBlankPrompt(lane.defaultAgentOrchestratorPrompt)
   const savedPrompt = currentPrompt || savedDefaultPrompt

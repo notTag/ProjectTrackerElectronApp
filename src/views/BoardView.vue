@@ -39,6 +39,7 @@ import {
   orchestratorAgentChoice,
   orchestratorPromptMissingTokens,
   defaultOrchestratorPrompt,
+  APP_ORCHESTRATOR_PROMPT_PATCH,
   type OrchestratorPromptContext,
   checklistProgress,
   clampLaneWidth,
@@ -107,7 +108,7 @@ const agentPromptTip =
   'Instructions given to the agent each time it starts on a ticket in this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
   "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
-  "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Edits apply to this lane; Save as default keeps the text as the lane's default, and Reset to default goes back to it. With no default saved, the app generates the prompt." +
+  "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Edits apply to this lane; Save as default keeps the text as the lane's default, Reset to default goes back to it, and Restore app default drops it for the app-generated prompt. With no default saved, the app generates the prompt." +
   '\n\nThe Agent Orchestrator markdown file below (default SwimlaneAgentPrompt/<lane>/AgentOrchestratorPrompt.md) is additional prompt context added after this text at launch. It does not replace it.' +
   `\n\n${orchestratorPromptTokenHelp()}`
 
@@ -1275,6 +1276,11 @@ const openLaneCurrentOrchestratorPrompt = computed(() => {
   return currentPrompt.trim() ? currentPrompt : ''
 })
 
+const openLaneHasSavedOrchestratorDefault = computed(() => {
+  const savedDefault = openLane.value?.defaultAgentOrchestratorPrompt ?? ''
+  return savedDefault.trim() !== ''
+})
+
 const openLaneOrchestratorPrompt = computed(
   () => openLaneCurrentOrchestratorPrompt.value || openLaneDefaultOrchestratorPrompt.value
 )
@@ -1440,6 +1446,11 @@ const saveOrchestratorPromptAsDefault = (lane: SwimLane) => {
   delete uncommittedPrompts.orchestrator
   const typedPrompt = lanePromptDraft.value.orchestrator
   editLane(lane, { defaultAgentOrchestratorPrompt: typedPrompt, currentAgentOrchestratorPrompt: '', orchestratorPrompt: '' })
+}
+
+const restoreAppOrchestratorPrompt = (lane: SwimLane) => {
+  delete uncommittedPrompts.orchestrator
+  editLane(lane, APP_ORCHESTRATOR_PROMPT_PATCH)
 }
 
 const autoRunSplit = (lane: SwimLane) => {
@@ -2604,7 +2615,10 @@ const runTicketAgent = (ticket: Ticket) => {
             Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
           </span>
           <div
-            v-if="showsLaneField('orchestratorPrompt', openLane.id) && (openLaneOrchestratorDiffersFromDefault || openLaneCurrentOrchestratorPrompt)"
+            v-if="
+              showsLaneField('orchestratorPrompt', openLane.id) &&
+              (openLaneOrchestratorDiffersFromDefault || openLaneCurrentOrchestratorPrompt || openLaneHasSavedOrchestratorDefault)
+            "
             class="lane-prompt-actions"
           >
             <button
@@ -2622,6 +2636,14 @@ const runTicketAgent = (ticket: Ticket) => {
               @click="editLane(openLane, { currentAgentOrchestratorPrompt: '' })"
             >
               Reset to default
+            </button>
+            <button
+              v-if="openLaneHasSavedOrchestratorDefault"
+              class="secondary lane-prompt-restore-app-default"
+              type="button"
+              @click="restoreAppOrchestratorPrompt(openLane)"
+            >
+              Restore app default
             </button>
           </div>
 

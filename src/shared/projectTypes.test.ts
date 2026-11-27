@@ -20,6 +20,7 @@ import {
   orchestratorPromptMissingTokens,
   orchestratorPromptTemplate,
   defaultOrchestratorPrompt,
+  APP_ORCHESTRATOR_PROMPT_PATCH,
   orchestratorPromptTokenHelp,
   ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
@@ -1734,12 +1735,20 @@ describe('Auto Run orchestrator', () => {
   describe('orchestratorPromptTemplate', () => {
     const allTokens = Object.values(ORCHESTRATOR_PROMPT_TOKENS)
 
-    it('names the lane and holds every launch-time token', () => {
+    it('holds every launch-time token in place of the lane name, id and poll step', () => {
       const template = orchestratorPromptTemplate(inDev, context('ghostty', 'Ghostty'))
-      expect(template).toContain('"In Development" lane')
-      expect(template).toContain('still in the in-dev lane')
+      expect(template).toContain('"{{lane_name}}" lane')
+      expect(template).toContain('still in the {{lane_id}} lane')
+      expect(template).toContain('has left the {{lane_id}} lane')
+      expect(template).toContain('Loop:\n{{poll_step}}\n2.')
+      expect(template).not.toContain('In Development')
+      expect(template).not.toContain('sleep')
       for (const token of allTokens) expect(template).toContain(token)
       expect(template).not.toContain('osascript')
+    })
+
+    it('does not require the lane or poll tokens', () => {
+      expect(orchestratorPromptMissingTokens('{{tickets}} {{ticket_numbers}}')).toEqual([])
     })
 
     it('includes existing lane instructions', () => {
@@ -1816,6 +1825,27 @@ describe('Auto Run orchestrator', () => {
       expect(withContext).toBe('Watch 12, 13\n\nAdditional context (from /code/app/notes.md):\nPing me on Slack.')
       const generatedWithContext = orchestratorPrompt(inDev, entries, { ...ghostty, additionalContext })
       expect(generatedWithContext.startsWith(generated)).toBe(true)
+    })
+
+    it('fills the lane and poll tokens at launch, so a saved prompt follows renames and the poll stepper', () => {
+      const saved = '{{lane_name}} ({{lane_id}}) {{ticket_numbers}}\n{{poll_step}}'
+      const polling = { ...inDev, currentAgentOrchestratorPrompt: saved, orchestratorPollActive: true, orchestratorPollMinutes: 3 }
+      expect(orchestratorPrompt(polling, entries, ghostty)).toBe(
+        'In Development (in-dev) 12, 13\n1. On start, then every 3 minutes (sleep 180), gather the state above.'
+      )
+      const renamedNeverPolls = { ...polling, name: 'Building', orchestratorPollActive: false }
+      const filled = orchestratorPrompt(renamedNeverPolls, entries, ghostty)
+      expect(filled.startsWith('Building (in-dev) 12, 13\n1. On start, gather the state above once.')).toBe(true)
+      expect(filled).toContain('Gather the state again only when a message from a ticket agent arrives.')
+      expect(filled).not.toContain('{{')
+    })
+
+    it('restoring the app default runs the generated prompt again', () => {
+      const saved = { ...inDev, currentAgentOrchestratorPrompt: 'Current {{tickets}}', defaultAgentOrchestratorPrompt: 'Default {{tickets}}' }
+      const restored = { ...saved, ...APP_ORCHESTRATOR_PROMPT_PATCH }
+      expect(restored.defaultAgentOrchestratorPrompt).toBe('')
+      expect(orchestratorPrompt(restored, entries, ghostty)).toBe(generated)
+      expect(defaultOrchestratorPrompt(restored, ghostty)).toBe(orchestratorPromptTemplate(inDev, ghostty))
     })
 
     it('skips a blank or absent context file', () => {
@@ -2025,11 +2055,11 @@ describe('Auto Run orchestrator', () => {
       expect(launch.command).not.toContain('do not poll')
     })
 
-    it('previews the waiting step in the template for a lane that never polls', () => {
+    it('previews the poll step as a token, so the template is the same whatever the poll setting', () => {
       const neverPolls = { ...inDev, orchestratorPollActive: false }
       const template = orchestratorPromptTemplate(neverPolls, context('ghostty'))
-      expect(template).toContain('gather the state above once')
-      expect(template).not.toContain('(sleep ')
+      expect(template).toContain('{{poll_step}}')
+      expect(template).toBe(orchestratorPromptTemplate(inDev, context('ghostty')))
     })
 
     it("runs the run's agent with the prompt single-quoted, under the lane's orchestrator title", () => {
