@@ -493,7 +493,12 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const scanDirectories = scanDirectoriesOf(repository)
       const readMarkdown = (kind: LaneMarkdownKind, filePath: string) => {
         const markdownTarget = { kind, projectPath: normalized, laneName: lane.name, filePath }
-        const resolvedPath = resolveAgentMarkdownPath(markdownTarget)
+        let resolvedPath: string
+        try {
+          resolvedPath = resolveAgentMarkdownPath(markdownTarget)
+        } catch {
+          return ''
+        }
         const readable = isInsideAny(resolvedPath, scanDirectories)
         return readable ? readLaneMarkdown(markdownTarget) : ''
       }
@@ -514,11 +519,20 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, entryId } = (payload ?? {}) as { projectPath?: unknown; entryId?: unknown }
       if (typeof projectPath !== 'string' || typeof entryId !== 'string') throw new Error('Invalid lane store add payload.')
       const normalized = assertScannedProjectPath(repository, projectPath)
-      repository.addLaneFromStore(normalized, entryId, (prompts) => {
-        const laneFolder = { projectPath: normalized, laneName: prompts.laneName }
-        writeMissingLaneMarkdown({ ...laneFolder, kind: 'agent' }, prompts.agentMarkdown)
-        writeMissingLaneMarkdown({ ...laneFolder, kind: 'orchestrator' }, prompts.orchestratorMarkdown)
-      })
+      const writtenFiles: string[] = []
+      try {
+        repository.addLaneFromStore(normalized, entryId, (prompts) => {
+          const laneFolder = { projectPath: normalized, laneName: prompts.laneName }
+          for (const kind of ['agent', 'orchestrator'] as const) {
+            const markdown = kind === 'agent' ? prompts.agentMarkdown : prompts.orchestratorMarkdown
+            const written = writeMissingLaneMarkdown({ ...laneFolder, kind }, markdown)
+            if (written) writtenFiles.push(written)
+          }
+        })
+      } catch (error) {
+        for (const filePath of writtenFiles) rmSync(filePath, { force: true })
+        throw error
+      }
       return toPlainJson(repository.getState())
     },
 

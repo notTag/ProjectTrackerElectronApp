@@ -104,6 +104,13 @@ describe('lane-store:* handlers (#146)', () => {
     expect(call('lane-store:list')).toEqual([expect.objectContaining({ id: entry.id })])
   })
 
+  it('saves a lane whose prompt file field is not a .md path, without that prompt', () => {
+    const { call, repository, sourcePath } = setUp()
+    repository.updateSwimLane(sourcePath, 'review', { agentFilePath: 'notes/review.txt' })
+    const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }
+    expect(call('lane-store:list')).toEqual([expect.objectContaining({ id: entry.id })])
+  })
+
   it('writes no file for a lane saved without prompt files', () => {
     const { call, sourcePath, targetPath } = setUp()
     const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }

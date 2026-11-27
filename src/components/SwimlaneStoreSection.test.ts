@@ -29,11 +29,14 @@ describe('SwimlaneStoreSection', () => {
   const seed = createSeedState()
   const projectPath = seed.snapshot.projects[0].path
 
-  const render = async (laneIds: string[], agentRunning = false) => {
+  const render = async (laneIds: string[], agentRunning = false, firstLaneName?: string) => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = useProjectsStore()
-    const board = getBoard(seed, projectPath)
+    const seededBoard = getBoard(seed, projectPath)
+    const [firstLane, ...otherLanes] = seededBoard.lanes
+    const renamedFirstLane = { ...firstLane, name: firstLaneName ?? firstLane.name }
+    const board = { ...seededBoard, lanes: [renamedFirstLane, ...otherLanes] }
     const ticket = { id: 't1', number: 1, laneId: board.lanes[0].id, title: 'T', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
     store.state = { ...seed, boards: { [projectPath]: { ...board, tickets: [ticket] } } }
     if (agentRunning) store.agentRunning = { t1: true }
@@ -59,5 +62,10 @@ describe('SwimlaneStoreSection', () => {
   it('disables + while an agent runs on the board', async () => {
     const html = await render(['fresh-lane'], true)
     expect(html).toMatch(/aria-label="Add Lane fresh-lane to this workflow" title="An agent or orchestrator is running[^"]*" disabled/)
+  })
+
+  it('disables + when another board lane uses the same prompt folder', async () => {
+    const html = await render(['fresh-lane'], false, 'Lane fresh-lane')
+    expect(html).toMatch(/aria-label="Add Lane fresh-lane to this workflow" title="Another lane here already uses[^"]*" disabled/)
   })
 })

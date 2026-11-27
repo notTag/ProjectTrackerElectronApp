@@ -2,14 +2,16 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useRowConfirm, type RowAction } from '@/components/rowConfirm'
-import type { LaneStoreEntry } from '@/shared/projectTypes'
+import { laneFolderName, type LaneStoreEntry } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
 
 const props = defineProps<{ projectPath: string }>()
 
 const store = useProjectsStore()
 const entries = computed(() => store.laneStoreEntries)
-const boardLaneIds = computed(() => new Set(store.board(props.projectPath).lanes.map((lane) => lane.id)))
+const boardLanes = computed(() => store.board(props.projectPath).lanes)
+const boardLaneIds = computed(() => new Set(boardLanes.value.map((lane) => lane.id)))
+const boardLaneFolders = computed(() => new Set(boardLanes.value.map((lane) => laneFolderName(lane.name))))
 const agentsRunning = computed(() => store.boardAgentsRunning(props.projectPath))
 const { start, cancel, pendingActionOf } = useRowConfirm()
 const confirmButtonRef = ref<HTMLButtonElement[]>([])
@@ -17,6 +19,8 @@ const loadError = ref('')
 
 const addBlockedReason = (entry: LaneStoreEntry): string => {
   if (boardLaneIds.value.has(entry.laneId)) return 'Already in this workflow'
+  const promptFolder = laneFolderName(entry.name)
+  if (boardLaneFolders.value.has(promptFolder)) return `Another lane here already uses the "${promptFolder}" prompt folder`
   if (agentsRunning.value) return 'An agent or orchestrator is running on this board. Lanes can be added once it finishes.'
   return ''
 }
@@ -27,11 +31,18 @@ const askToConfirm = async (entry: LaneStoreEntry, action: RowAction) => {
   confirmButtonRef.value[0]?.focus()
 }
 
-const confirmBlockedReason = (entry: LaneStoreEntry, action: RowAction): string =>
-  action === 'add' ? addBlockedReason(entry) : ''
+const rows = computed(() =>
+  entries.value.map((entry) => {
+    const pendingAction = pendingActionOf(entry.id)
+    const addBlocked = addBlockedReason(entry)
+    const confirmBlocked = pendingAction === 'add' ? addBlocked : ''
+    return { entry, pendingAction, addBlocked, confirmBlocked }
+  })
+)
 
 const confirm = async (entry: LaneStoreEntry, action: RowAction) => {
-  if (confirmBlockedReason(entry, action)) return
+  const confirmBlocked = action === 'add' && addBlockedReason(entry)
+  if (confirmBlocked) return
   cancel()
   if (action === 'delete') await store.deleteLaneStoreEntry(entry.id)
   else await store.addLaneFromStore(props.projectPath, entry.id)
@@ -58,26 +69,22 @@ onMounted(() => {
       No saved swimlanes yet. Use "Save to Store" in a swimlane's settings.
     </p>
     <ul v-else class="swimlane-store-list">
-      <li v-for="entry in entries" :key="entry.id" class="swimlane-store-row">
+      <li v-for="{ entry, pendingAction, addBlocked, confirmBlocked } in rows" :key="entry.id" class="swimlane-store-row">
         <span class="swimlane-store-name">{{ entry.name }}</span>
-        <template v-if="pendingActionOf(entry.id)">
-          <button
-            ref="confirmButtonRef"
-            class="secondary swimlane-store-button"
-            :class="{ danger: pendingActionOf(entry.id) === 'delete' }"
-            :aria-label="pendingActionOf(entry.id) === 'delete' ? `Confirm delete ${entry.name}` : `Confirm add ${entry.name}`"
-            :title="
-              confirmBlockedReason(entry, pendingActionOf(entry.id)!) ||
-              (pendingActionOf(entry.id) === 'delete' ? 'Delete from the store' : 'Add to this workflow')
-            "
-            :disabled="Boolean(confirmBlockedReason(entry, pendingActionOf(entry.id)!))"
-            @click="confirm(entry, pendingActionOf(entry.id)!)"
-            @blur="cancel"
-            @keydown.escape.stop="cancel"
-          >
-            ✓
-          </button>
-        </template>
+        <button
+          v-if="pendingAction"
+          ref="confirmButtonRef"
+          class="secondary swimlane-store-button"
+          :class="{ danger: pendingAction === 'delete' }"
+          :aria-label="pendingAction === 'delete' ? `Confirm delete ${entry.name}` : `Confirm add ${entry.name}`"
+          :title="confirmBlocked || (pendingAction === 'delete' ? 'Delete from the store' : 'Add to this workflow')"
+          :disabled="Boolean(confirmBlocked)"
+          @click="confirm(entry, pendingAction)"
+          @blur="cancel"
+          @keydown.escape.stop="cancel"
+        >
+          ✓
+        </button>
         <template v-else>
           <button
             class="secondary swimlane-store-button"
@@ -90,8 +97,8 @@ onMounted(() => {
           <button
             class="secondary swimlane-store-button"
             :aria-label="`Add ${entry.name} to this workflow`"
-            :title="addBlockedReason(entry) || 'Add to this workflow'"
-            :disabled="Boolean(addBlockedReason(entry))"
+            :title="addBlocked || 'Add to this workflow'"
+            :disabled="Boolean(addBlocked)"
             @click="askToConfirm(entry, 'add')"
           >
             +

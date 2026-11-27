@@ -467,8 +467,7 @@ export const useProjectsStore = defineStore('projects', {
         () => undefined
       )
       const entry = await saved
-      const otherEntries = this.laneStoreEntries.filter((stored) => stored.id !== entry.id)
-      this.laneStoreEntries = [...otherEntries, entry].sort((a, b) => a.name.localeCompare(b.name))
+      await this.loadLaneStore()
       return entry
     },
 
