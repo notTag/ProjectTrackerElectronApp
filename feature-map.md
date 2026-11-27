@@ -232,7 +232,7 @@ When nothing matches: "No projects match the current view. Adjust filters or add
 
 ## 3. Board view (`/board/:projectPath`)
 
-Source: `src/views/BoardView.vue` and `src/components/TicketGraph.vue`. There is one board per project. A new board starts with lanes **Idea, PRD, In Development, In PR, In Dev, In QA, In Production**, plus a virtual **No status** column that always exists.
+Source: `src/views/BoardView.vue` (orchestration), `src/components/board/` (titlebar, filters, lanes, modals) and `src/components/TicketGraph.vue`. There is one board per project. A new board starts with lanes **Idea, PRD, In Development, In PR, In Dev, In QA, In Production**, plus a virtual **No status** column that always exists.
 
 ### 3.1 Title strip
 
@@ -267,7 +267,7 @@ From left to right:
 - The active workflow's name (3.1 Workflow picker), as a bold label.
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
-  - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
+  - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`board/BoardFilters.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
 - **Swim lane** multi-select popover ("All swim lanes", one lane's name, or "N lanes"): check any set of lanes to show only those columns, in board order. None checked, or all checked, shows every lane. Lanes hidden by the Display toggles aren't listed, and a pick is ignored while its lane is hidden. Closes on outside click, focus leaving it, or Escape. Ids of deleted lanes are ignored. Resets when switching to another project's board.
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
@@ -279,7 +279,7 @@ From left to right:
 
 - When the board has no lanes: "No swim lanes yet." with a **Create swim lane** button.
 - Otherwise the columns are No status followed by the board's lanes in order. Hidden columns and the lane filter apply.
-- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while any lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `BoardView.vue` / `styles.css`)
+- **"+" add zone** after the last lane, one lane wide (260 px). Invisible until hovered: a bordered **+** slides in from the right, and stays 3 s after the pointer leaves (re-entering cancels the hide). Clicking it opens the New swim lane modal (3.7). Reachable by Tab (shown on focus). Opacity-only under Reduce Motion. Hidden while any lane filter is set, and inert (but keeps its space, so lanes don't jump) during a lane drag. (`.lane-add-zone` in `board/BoardLanes.vue` / `styles.css`)
 
 #### Lane column
 
@@ -300,7 +300,7 @@ From left to right:
   - Dragging an unchecked card moves only that card.
   - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
   - Moved tickets stay checked.
-  - **Stack ghost** (2+ tickets carried): the drag image is the dragged card with up to 2 offset card edges behind it (3 layers max) and an accent count badge with the carried count. The other carried cards fade and shrink in place (`.ticket-carried`) until `dragend`. The count is every checked visible ticket, including ones already in the drop lane (`carriedTicketIds` in `projectTypes.ts`, `startTicketDrag` in `BoardView.vue`). Reduce Motion drops the fade/shrink transition; the ghost and dimming stay. An unchecked card, or the only checked one, uses the browser's default drag image.
+  - **Stack ghost** (2+ tickets carried): the drag image is the dragged card with up to 2 offset card edges behind it (3 layers max) and an accent count badge with the carried count. The other carried cards fade and shrink in place (`.ticket-carried`) until `dragend`. The count is every checked visible ticket, including ones already in the drop lane (`carriedTicketIds` in `projectTypes.ts`, `startTicketDrag` in `board/BoardLanes.vue`). Reduce Motion drops the fade/shrink transition; the ghost and dimming stay. An unchecked card, or the only checked one, uses the browser's default drag image.
 - The title always shows (a locked, checked **Title** row in Display). These fields show only when switched on in Display:
   - **#number**
   - **Description** preview
@@ -369,7 +369,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Drag to resize:** the left or right edge of the New ticket, Open ticket (board view), and Lane settings modals (cursor turns to ↔) drags the width anywhere from the default (760px ticket, 560px lane) up to the window width minus the backdrop padding. These three modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`vEdgeResize` in `src/modalWidth.ts`, limits in `.modal.resizable` in `src/styles.css`)
 
-**Ticket fields** closed-eye button (left of Expand, same closed-eye icon as the fields button in the Lane settings modal (3.9); this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/views/BoardView.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
+**Ticket fields** closed-eye button (left of Expand, same closed-eye icon as the fields button in the Lane settings modal (3.9); this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/components/board/TicketModal.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
 
 **Fields** (each saves when changed or when it loses focus; every edit updates `updatedAt`):
 
@@ -473,7 +473,7 @@ In graph view this opens as a side panel instead of a centered modal.
     - Unedited: shows the generated prompt with launch-time tokens `{{tickets}}`, `{{ticket_numbers}}`, `{{lanes}}`, `{{terminal}}`. Same renderer as the launch, so the preview can't drift.
     - Leaving the textarea with changed text saves it as the lane's override (`swim_lanes.orchestrator_prompt_override`); at launch each token is filled in once, unknown `{{…}}` is left as typed. Text equal to the default (trimmed) saves nothing.
     - Old per-lane extras (`orchestrator_prompt`) show inside the prompt under **Lane instructions** and fold into the override on first edit.
-    - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone. Bordered like the title strip buttons (`.lane-prompt-reset` in `src/styles.css`, button in `src/views/BoardView.vue`).
+    - **Reset to default** button, only while an override is set: back to the generated prompt. No confirm, the edited text is gone. Bordered like the title strip buttons (`.lane-prompt-reset` in `src/styles.css`, button in `src/components/board/LaneSettingsModal.vue`).
     - Missing `{{tickets}}` or `{{ticket_numbers}}`: red hint, launch still runs.
     - An override has lane name, id, project path and poll minutes typed in. Renaming the lane or changing the poll doesn't update it; Reset picks them up.
   - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): the Orchestrator prompt box (override or generated) autosaves here with the same rules as the Agent prompt, except it is always replaced (no other-content check: the generated text changes with the app, and the file is never read back); default file is `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`. The text is stored with the same override rules as leaving the box, so typing back to the default doesn't create an override. The file is a copy for versioning and review: the launch prompt never reads or names it, so the orchestrator gets its prompt once. Ticket agents never see it.
