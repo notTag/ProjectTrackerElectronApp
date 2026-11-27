@@ -410,8 +410,6 @@ export class StateRepository {
     this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
   }
 
-  // #144 renamed the built-in workflow from "Default". Keyed on its fixed id so
-  // a user-made "Default" stays; skipped where the new name would clash.
   private renameLegacyDefaultWorkflow() {
     this.run(
       `UPDATE workflows SET name = ?

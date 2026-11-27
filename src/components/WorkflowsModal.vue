@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { activeWorkflow, boardWorkflows, workflowNameProblem } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
 
-// Escape is handled by the board's window keydown, which closes every modal.
 const props = defineProps<{ projectPath: string }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -17,10 +16,20 @@ const agentsRunning = computed(() => store.boardAgentsRunning(props.projectPath)
 const AGENTS_RUNNING_TITLE =
   'An agent or orchestrator is running on this board. Workflows can be switched once it finishes.'
 
+const createTitle = computed(() => {
+  if (agentsRunning.value) return AGENTS_RUNNING_TITLE
+  return draftProblem.value || 'Copy the current lanes into a new workflow'
+})
+
+const listRef = ref<HTMLUListElement | null>(null)
+onMounted(() => listRef.value?.querySelector('button')?.focus())
+
 const nameInputRef = ref<HTMLInputElement | null>(null)
-// Null while the create tile shows; a string while naming a new workflow.
 const draftName = ref<string | null>(null)
-const draftProblem = computed(() => workflowNameProblem(draftName.value ?? '', workflows.value))
+const draftProblem = computed(() => {
+  if (draftName.value === null) return ''
+  return workflowNameProblem(draftName.value, workflows.value)
+})
 
 const workflowTitle = (workflowId: string) => {
   if (workflowId === active.value.id) return 'Active workflow'
@@ -50,9 +59,9 @@ const submitDraft = async () => {
 
 <template>
   <div class="modal-backdrop" @click.self="emit('close')">
-    <section class="modal workflows-modal" role="dialog" aria-labelledby="workflows-modal-title">
+    <section class="modal workflows-modal" role="dialog" aria-modal="true" aria-labelledby="workflows-modal-title">
       <h2 id="workflows-modal-title">Workflows</h2>
-      <ul class="workflows-list" aria-label="Workflows">
+      <ul ref="listRef" class="workflows-list" aria-label="Workflows">
         <li v-for="workflow in workflows" :key="workflow.id">
           <button
             type="button"
@@ -79,7 +88,7 @@ const submitDraft = async () => {
         <button
           type="submit"
           :disabled="Boolean(draftProblem) || agentsRunning"
-          :title="agentsRunning ? AGENTS_RUNNING_TITLE : draftProblem || 'Copy the current lanes into a new workflow'"
+          :title="createTitle"
         >
           Create
         </button>
@@ -89,7 +98,7 @@ const submitDraft = async () => {
         type="button"
         class="image-dropzone create-tile"
         :disabled="agentsRunning"
-        :title="agentsRunning ? AGENTS_RUNNING_TITLE : 'Copy the current lanes into a new workflow'"
+        :title="createTitle"
         @click="startDraft"
       >
         <span class="image-dropzone-plus" aria-hidden="true">+</span>

@@ -1563,7 +1563,6 @@ export interface WorkflowSummary {
 export const DEFAULT_WORKFLOW_ID = 'default'
 export const DEFAULT_WORKFLOW_NAME = 'Development Workflow'
 
-// Empty string = the name is fine to create.
 export const workflowNameProblem = (name: string, existing: WorkflowSummary[]): string => {
   const trimmedName = name.trim()
   if (!trimmedName) return 'Name the workflow.'

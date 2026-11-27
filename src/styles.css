@@ -506,7 +506,7 @@ button.secondary.lane-prompt-reset:not(:disabled):hover {
   cursor: pointer;
 }
 
-.theme-option:hover {
+.theme-option:not(:disabled):hover {
   background: var(--color-hover);
 }
 
@@ -1129,6 +1129,7 @@ code {
 
 button.workflow-label {
   height: auto;
+  min-height: 0;
   width: auto;
   padding: 0;
   border: 0;
@@ -2045,7 +2046,7 @@ span.ticket-image-thumb {
   border-style: solid;
 }
 
-.image-dropzone:hover,
+.image-dropzone:not(:disabled):hover,
 .image-dropzone:focus-visible {
   border-color: var(--color-accent);
   color: var(--color-text);

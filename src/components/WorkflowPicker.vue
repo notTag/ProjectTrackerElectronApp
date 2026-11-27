@@ -19,8 +19,8 @@ const nameInputRef = ref<HTMLInputElement | null>(null)
 const draftName = ref<string | null>(null)
 
 const trimmedDraftName = computed(() => draftName.value?.trim() ?? '')
-const draftNameTaken = computed(() => Boolean(trimmedDraftName.value) && Boolean(draftProblem.value))
 const draftProblem = computed(() => workflowNameProblem(trimmedDraftName.value, workflows.value))
+const draftNameTaken = computed(() => Boolean(trimmedDraftName.value) && Boolean(draftProblem.value))
 
 const triggerTitle = computed(() =>
   agentsRunning.value
