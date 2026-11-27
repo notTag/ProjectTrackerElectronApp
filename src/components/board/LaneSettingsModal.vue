@@ -238,18 +238,28 @@ onBeforeUnmount(() => {
   commitTypedPrompts()
 })
 
+// Seeded lane ids repeat across projects, and the save state outlives a board switch.
+const laneMarkdownSavedKey = (boardPath: string, lane: SwimLane, kind: LaneMarkdownKind) =>
+  `${boardPath}:${lane.id}:${kind}`
+
 // Only the file (and its path, the first time) is written here. The prompt
 // itself is stored on blur, as before: storing it mid-typing would re-render
 // the box under the cursor.
-const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind, prompt: string, filePath: string) => {
-  const savedKey = `${lane.id}:${kind}`
+const saveLaneMarkdown = async (
+  boardPath: string,
+  lane: SwimLane,
+  kind: LaneMarkdownKind,
+  prompt: string,
+  filePath: string
+) => {
+  const savedKey = laneMarkdownSavedKey(boardPath, lane, kind)
   const previousPrompt = props.saveState.lastSaved.get(savedKey) ?? ''
   const setStatus = (status: LaneMarkdownStatus) => {
     // The modal may have switched lanes mid-save; don't show this lane's result on another.
     if (props.lane.id === lane.id) laneMarkdownStatus.value[kind] = status
   }
   try {
-    const saved = await store.saveLaneMarkdown(projectPath.value, lane, kind, prompt, previousPrompt, filePath)
+    const saved = await store.saveLaneMarkdown(boardPath, lane, kind, prompt, previousPrompt, filePath)
     // Recorded even if the lane update failed: the file holds this text now.
     props.saveState.lastSaved.set(savedKey, prompt)
     if (saved.laneUpdated) setStatus({ savedMessage: `Saved to ${saved.filePath}`, error: '' })
@@ -260,9 +270,10 @@ const saveLaneMarkdown = async (lane: SwimLane, kind: LaneMarkdownKind, prompt: 
 }
 
 // Everything is captured now, not when the timer fires: by then the modal may
-// show another lane.
+// show another lane, or the route another project.
 const scheduleLaneMarkdownSave = (lane: SwimLane, kind: LaneMarkdownKind) => {
-  const savedKey = `${lane.id}:${kind}`
+  const boardPath = projectPath.value
+  const savedKey = laneMarkdownSavedKey(boardPath, lane, kind)
   const { lastSaved } = props.saveState
   // Before the first save the file should hold the stored prompt: the lane
   // keeps it until blur commits the new text.
@@ -272,7 +283,7 @@ const scheduleLaneMarkdownSave = (lane: SwimLane, kind: LaneMarkdownKind) => {
   const run = () => {
     delete pendingMarkdownSaves[kind]
     // One write at a time, in order: a slow save must not land after a newer one.
-    saveState.queue = saveState.queue.then(() => saveLaneMarkdown(lane, kind, prompt, filePath))
+    saveState.queue = saveState.queue.then(() => saveLaneMarkdown(boardPath, lane, kind, prompt, filePath))
   }
   const existing = pendingMarkdownSaves[kind]
   if (existing) clearTimeout(existing.timer)
