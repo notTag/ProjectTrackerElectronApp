@@ -368,7 +368,7 @@ const autoRunTicketCount = (lane: SwimLane) => runnableCountByLaneId.value.get(l
 const autoRunConfirmLaneId = ref<string | null>(null)
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
 
-const confirmAutoRunLane = (picks: AutoRunPicks) => {
+const confirmAutoRunLane = async (picks: AutoRunPicks) => {
   const lane = autoRunConfirmLane.value
   autoRunConfirmLaneId.value = null
   if (!lane) return
@@ -388,7 +388,10 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
   }
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
   for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
-  const orchestratorContext = orchestratorContextFor(terminal)
+  const boardPath = projectPath.value
+  const generatedContext = orchestratorContextFor(terminal)
+  const additionalContext = await store.readLaneOrchestratorContext(boardPath, lane)
+  const orchestratorContext = { ...generatedContext, additionalContext }
   const orchestratorSettings = {
     orchestratorAgentId: picks.orchestratorAgentId || undefined,
     orchestratorModel: picks.orchestratorModel
@@ -402,7 +405,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
     orchestratorChoice.model
   )
   const launch = store.autoRunLane(
-    projectPath.value,
+    boardPath,
     lane.id,
     terminal.id,
     terminal.label,

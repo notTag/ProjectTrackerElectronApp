@@ -3,7 +3,6 @@ import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
   Clearable,
-  LaneMarkdownKind,
   ProjectRecord,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -158,15 +157,12 @@ export const projectTrackerApi = {
     return bridge().readProjectReadme(path)
   },
 
-  saveLaneMarkdown(
-    kind: LaneMarkdownKind,
-    projectPath: string,
-    laneName: string,
-    filePath: string,
-    content: string,
-    previousContent: string
-  ) {
-    return bridge().saveLaneMarkdown(kind, projectPath, laneName, filePath, content, previousContent)
+  saveLaneMarkdown(projectPath: string, laneName: string, filePath: string, content: string, previousContent: string) {
+    return bridge().saveLaneMarkdown(projectPath, laneName, filePath, content, previousContent)
+  },
+
+  readLaneOrchestratorContext(projectPath: string, laneName: string, filePath: string) {
+    return bridge().readLaneOrchestratorContext(projectPath, laneName, filePath)
   },
 
   fetchProjectGithub(githubUrl: string) {

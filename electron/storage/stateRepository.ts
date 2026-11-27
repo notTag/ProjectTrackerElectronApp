@@ -35,6 +35,7 @@ import {
   ADDED_COLUMNS,
   CLOSED_AT_TRIGGERS_SQL,
   CLOSING_LANES_SCHEMA_VERSION,
+  CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION,
   PATH_KIND_HIDDEN,
   PATH_KIND_SCAN,
   PATH_KIND_THIRD_PARTY,
@@ -101,6 +102,30 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 }
 const jsonOrNull = (value: unknown) => (value ? JSON.stringify(value) : null)
 
+const needsOrchestratorOverrideCopy = (laneRow: Row): boolean => {
+  const override = asText(laneRow.orchestrator_prompt_override) ?? ''
+  const current = asText(laneRow.current_agent_orchestrator_prompt) ?? ''
+  return override.trim() !== '' && current === ''
+}
+
+const withOrchestratorOverridesCopied = (lanesJson: string): string => {
+  let laneRows: unknown
+  try {
+    laneRows = JSON.parse(lanesJson)
+  } catch {
+    return lanesJson
+  }
+  if (!Array.isArray(laneRows)) return lanesJson
+  const rows = laneRows as Row[]
+  if (!rows.some(needsOrchestratorOverrideCopy)) return lanesJson
+  const copiedRows = rows.map((laneRow) =>
+    needsOrchestratorOverrideCopy(laneRow)
+      ? { ...laneRow, current_agent_orchestrator_prompt: laneRow.orchestrator_prompt_override }
+      : laneRow
+  )
+  return JSON.stringify(copiedRows)
+}
+
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
@@ -109,7 +134,8 @@ const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
     outputTarget: lane.outputTarget ?? '',
     orchestratorPrompt: lane.orchestratorPrompt ?? '',
     orchestratorFilePath: lane.orchestratorFilePath ?? '',
-    orchestratorPromptOverride: lane.orchestratorPromptOverride ?? ''
+    currentAgentOrchestratorPrompt: lane.currentAgentOrchestratorPrompt ?? '',
+    defaultAgentOrchestratorPrompt: lane.defaultAgentOrchestratorPrompt ?? ''
   })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
@@ -173,7 +199,8 @@ const laneFromRow = (row: Row): SwimLane => ({
     outputTarget: String(row.output_target),
     orchestratorPrompt: String(row.orchestrator_prompt),
     orchestratorFilePath: String(row.orchestrator_file_path ?? ''),
-    orchestratorPromptOverride: String(row.orchestrator_prompt_override ?? ''),
+    currentAgentOrchestratorPrompt: String(row.current_agent_orchestrator_prompt ?? ''),
+    defaultAgentOrchestratorPrompt: String(row.default_agent_orchestrator_prompt ?? ''),
     autoRunAgentId: asText(row.auto_run_agent_id),
     autoRunTerminalId: asText(row.auto_run_terminal_id),
     autoRunWorktrees: asBool(row.auto_run_worktrees),
@@ -277,6 +304,7 @@ export class StateRepository {
       this.addMissingColumns()
       this.db.exec(CLOSED_AT_TRIGGERS_SQL)
       this.seedClosingLanesOnce()
+      this.copyOrchestratorOverridesOnce()
       this.renameLegacyDefaultWorkflow()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
@@ -404,10 +432,32 @@ export class StateRepository {
   // fires swim_lanes_closed_at_on_flag, which backfills closed_at for the
   // tickets already in it — approximate, since updated_at moves on every edit.
   private seedClosingLanesOnce() {
-    const storedVersion = Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
-    if (storedVersion >= CLOSING_LANES_SCHEMA_VERSION) return
+    if (this.storedSchemaVersion() >= CLOSING_LANES_SCHEMA_VERSION) return
     const placeholders = SEEDED_CLOSING_LANE_IDS.map(() => '?').join(', ')
     this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
+  }
+
+  private storedSchemaVersion(): number {
+    return Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
+  }
+
+  private copyOrchestratorOverridesOnce() {
+    if (this.storedSchemaVersion() >= CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION) return
+    this.run(
+      `UPDATE swim_lanes SET current_agent_orchestrator_prompt = orchestrator_prompt_override
+       WHERE trim(orchestrator_prompt_override) <> '' AND current_agent_orchestrator_prompt = ''`
+    )
+    const workflows = this.select('SELECT project_path, id, lanes_json FROM workflows')
+    for (const workflow of workflows) {
+      const lanesJson = String(workflow.lanes_json)
+      const copiedLanesJson = withOrchestratorOverridesCopied(lanesJson)
+      if (copiedLanesJson === lanesJson) continue
+      this.run('UPDATE workflows SET lanes_json = ? WHERE project_path = ? AND id = ?', [
+        copiedLanesJson,
+        String(workflow.project_path),
+        String(workflow.id)
+      ])
+    }
   }
 
   private renameLegacyDefaultWorkflow() {
@@ -790,15 +840,18 @@ export class StateRepository {
   private upsertLaneRow(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
+         current_agent_orchestrator_prompt, default_agent_orchestrator_prompt,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
          orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, graph_position_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
-         orchestrator_prompt = excluded.orchestrator_prompt, orchestrator_prompt_override = excluded.orchestrator_prompt_override,
+         orchestrator_prompt = excluded.orchestrator_prompt,
+         current_agent_orchestrator_prompt = excluded.current_agent_orchestrator_prompt,
+         default_agent_orchestrator_prompt = excluded.default_agent_orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
@@ -814,7 +867,8 @@ export class StateRepository {
         lane.agentFilePath,
         lane.outputTarget ?? '',
         lane.orchestratorPrompt ?? '',
-        lane.orchestratorPromptOverride ?? '',
+        lane.currentAgentOrchestratorPrompt ?? '',
+        lane.defaultAgentOrchestratorPrompt ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,

@@ -25,13 +25,13 @@ import {
   orchestratorPollActive,
   orchestratorPollMinutes,
   orchestratorPromptMissingTokens,
-  orchestratorPromptTemplate,
+  defaultOrchestratorPrompt,
+  APP_ORCHESTRATOR_PROMPT_PATCH,
   orchestratorPromptTokenHelp,
   plural,
   steppedOrchestratorPoll,
   toggleLaneModalFieldInLane,
   updateLaneInBoard,
-  LANE_MARKDOWN_FILE_PATH_FIELD,
   LANE_MODAL_FIELDS,
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
@@ -56,7 +56,8 @@ const agentPromptTip =
   'Instructions given to the agent each time it starts on a ticket in this lane. Autosaves as markdown to the Agent markdown file below (default SwimlaneAgentPrompt/<lane>/). With no prompt typed, the agent is pointed at that file instead.' +
   "\n\nNo {{variables}}: tokens aren't filled in here; ticket details are added automatically."
 const orchestratorPromptTip =
-  "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Leave empty to use the generated default template." +
+  "Instructions for this lane's orchestrator session, which dispatches and monitors ticket agents. Edits apply to this lane; Save as default keeps the text as the lane's default, Reset to default goes back to it, and Restore app default drops it for the app-generated prompt. With no default saved, the app generates the prompt." +
+  '\n\nThe Agent Orchestrator markdown file below (default SwimlaneAgentPrompt/<lane>/AgentOrchestratorPrompt.md) is additional prompt context added after this text at launch. It does not replace it.' +
   `\n\n${orchestratorPromptTokenHelp()}`
 
 // Lane settings modal fields. The Display modal's list is every lane's default;
@@ -120,88 +121,70 @@ const changeLaneAutoRunAgent = (lane: SwimLane, autoRunAgentId: string) => {
   editLane(lane, { autoRunAgentId, autoRunModel: undefined, ...orchestratorModelPatch })
 }
 
-const openLaneOrchestratorTemplate = computed(() => {
+const openLaneDefaultOrchestratorPrompt = computed(() => {
   const context = orchestratorContextFor(autoRunTerminal(props.lane))
-  return orchestratorPromptTemplate(props.lane, context)
+  return defaultOrchestratorPrompt(props.lane, context)
 })
 
-// Blank counts as no override, the same as at launch.
-const openLaneOrchestratorOverride = computed(() => {
-  const override = props.lane.orchestratorPromptOverride ?? ''
-  return override.trim() ? override : ''
+const openLaneCurrentOrchestratorPrompt = computed(() => {
+  const currentPrompt = props.lane.currentAgentOrchestratorPrompt ?? ''
+  return currentPrompt.trim() ? currentPrompt : ''
 })
 
-const openLaneMissingOrchestratorTokens = computed(() => {
-  const override = openLaneOrchestratorOverride.value
-  return override ? orchestratorPromptMissingTokens(override) : []
+const openLaneHasSavedOrchestratorDefault = computed(() => {
+  const savedDefault = props.lane.defaultAgentOrchestratorPrompt ?? ''
+  return savedDefault.trim() !== ''
 })
 
-// Saving the untouched template, or clearing the box, keeps the lane on the
-// generated prompt, so app updates to it still arrive and the old extras stay.
-// An edit folds the extras into the override, since they are already part of
-// the text the user just saved.
+const openLaneOrchestratorPrompt = computed(
+  () => openLaneCurrentOrchestratorPrompt.value || openLaneDefaultOrchestratorPrompt.value
+)
+
+const openLaneMissingOrchestratorTokens = computed(() => orchestratorPromptMissingTokens(openLaneOrchestratorPrompt.value))
+
 const orchestratorPromptPatch = (text: string): Partial<Omit<SwimLane, 'id'>> => {
   const trimmedText = text.trim()
-  const isUnchangedTemplate = trimmedText === openLaneOrchestratorTemplate.value.trim()
-  if (!trimmedText || isUnchangedTemplate) return { orchestratorPromptOverride: '' }
-  return { orchestratorPromptOverride: text, orchestratorPrompt: '' }
+  const matchesDefault = trimmedText === openLaneDefaultOrchestratorPrompt.value.trim()
+  if (!trimmedText || matchesDefault) return { currentAgentOrchestratorPrompt: '' }
+  return { currentAgentOrchestratorPrompt: text, orchestratorPrompt: '' }
 }
 
-// Live copies of each prompt + markdown file pair, because the inputs only
-// commit on blur: autosave has to write what is on screen, not what state held
-// before the blur.
+const lanePromptSources: Record<LaneMarkdownKind, () => string> = {
+  agent: () => props.lane.agentPrompt ?? '',
+  orchestrator: () => openLaneOrchestratorPrompt.value
+}
+const agentFilePathSource = () => props.lane.agentFilePath ?? ''
+const lanePromptDraft = ref<Record<LaneMarkdownKind, string>>({ agent: '', orchestrator: '' })
+const agentFilePathDraft = ref('')
+
 type LaneMarkdownStatus = { savedMessage: string; error: string }
 const idleMarkdownStatus = (): LaneMarkdownStatus => ({ savedMessage: '', error: '' })
-const laneMarkdownDraft = ref<Record<LaneMarkdownKind, { prompt: string; filePath: string }>>({
-  agent: { prompt: '', filePath: '' },
-  orchestrator: { prompt: '', filePath: '' }
-})
-const laneMarkdownStatus = ref<Record<LaneMarkdownKind, LaneMarkdownStatus>>({
-  agent: idleMarkdownStatus(),
-  orchestrator: idleMarkdownStatus()
-})
+const agentMarkdownStatus = ref<LaneMarkdownStatus>(idleMarkdownStatus())
 
-// The orchestrator box shows the full prompt (override or generated), so that
-// is what its file gets.
-const laneMarkdownSources: Record<LaneMarkdownKind, { prompt: () => string; filePath: () => string }> = {
-  agent: {
-    prompt: () => props.lane.agentPrompt ?? '',
-    filePath: () => props.lane.agentFilePath ?? ''
-  },
-  orchestrator: {
-    prompt: () => openLaneOrchestratorOverride.value || openLaneOrchestratorTemplate.value,
-    filePath: () => props.lane.orchestratorFilePath ?? ''
-  }
-}
+const openLaneOrchestratorDiffersFromDefault = computed(() => {
+  const typedPrompt = lanePromptDraft.value.orchestrator.trim()
+  return typedPrompt !== '' && typedPrompt !== openLaneDefaultOrchestratorPrompt.value.trim()
+})
 
 for (const kind of ['agent', 'orchestrator'] as const) {
-  const source = laneMarkdownSources[kind]
-  // One watch per field, not one getter returning an array: a fresh array on
-  // every board refresh would reset the draft mid-typing, and the path an
-  // autosave stores must not reset the prompt being typed.
-  watch(source.prompt, (prompt) => (laneMarkdownDraft.value[kind].prompt = prompt), { immediate: true })
-  watch(source.filePath, (filePath) => (laneMarkdownDraft.value[kind].filePath = filePath), { immediate: true })
+  watch(lanePromptSources[kind], (prompt) => (lanePromptDraft.value[kind] = prompt), { immediate: true })
 }
+watch(agentFilePathSource, (filePath) => (agentFilePathDraft.value = filePath), { immediate: true })
 
 // Autosave once typing pauses. 1s sits in the usual 1-2s autosave range: long
 // enough not to write mid-word, short enough to land before the modal closes.
 const MARKDOWN_AUTOSAVE_DELAY_MS = 1000
 
 type PendingMarkdownSave = { timer: ReturnType<typeof setTimeout>; run: () => void }
-const pendingMarkdownSaves: Partial<Record<LaneMarkdownKind, PendingMarkdownSave>> = {}
+let pendingMarkdownSave: PendingMarkdownSave | undefined
 
-const flushMarkdownSaves = () => {
-  for (const pending of Object.values(pendingMarkdownSaves)) {
-    clearTimeout(pending.timer)
-    pending.run()
-  }
+const flushMarkdownSave = () => {
+  if (!pendingMarkdownSave) return
+  clearTimeout(pendingMarkdownSave.timer)
+  pendingMarkdownSave.run()
 }
 
 type LanePromptPatch = Partial<Omit<SwimLane, 'id'>>
-// Typed text not stored on the lane yet. Blur stores it; closing or switching
-// lanes without a blur (Escape) stores it here, so the lane never lags its file.
-// The patch is built while its lane is open: the orchestrator one compares
-// against that lane's template.
 const uncommittedPrompts: Partial<Record<LaneMarkdownKind, { lane: SwimLane; patch: LanePromptPatch }>> = {}
 
 const lanePromptPatch = (kind: LaneMarkdownKind, text: string): LanePromptPatch =>
@@ -222,44 +205,37 @@ watch(
   () => props.lane.id,
   () => {
     laneFieldsMenuOpen.value = false
-    flushMarkdownSaves()
+    flushMarkdownSave()
     commitTypedPrompts()
-    laneMarkdownStatus.value = { agent: idleMarkdownStatus(), orchestrator: idleMarkdownStatus() }
+    agentMarkdownStatus.value = idleMarkdownStatus()
     // The source watches only fire on a changed value, so two lanes storing the
     // same prompt would otherwise hand one lane's typed text to the next.
     for (const kind of ['agent', 'orchestrator'] as const) {
-      const source = laneMarkdownSources[kind]
-      laneMarkdownDraft.value[kind] = { prompt: source.prompt(), filePath: source.filePath() }
+      lanePromptDraft.value[kind] = lanePromptSources[kind]()
     }
+    agentFilePathDraft.value = agentFilePathSource()
   }
 )
 onBeforeUnmount(() => {
-  flushMarkdownSaves()
+  flushMarkdownSave()
   commitTypedPrompts()
 })
 
 // Seeded lane ids repeat across projects, and the save state outlives a board switch.
-const laneMarkdownSavedKey = (boardPath: string, lane: SwimLane, kind: LaneMarkdownKind) =>
-  `${boardPath}:${lane.id}:${kind}`
+const agentMarkdownSavedKey = (boardPath: string, lane: SwimLane) => `${boardPath}:${lane.id}`
 
 // Only the file (and its path, the first time) is written here. The prompt
 // itself is stored on blur, as before: storing it mid-typing would re-render
 // the box under the cursor.
-const saveLaneMarkdown = async (
-  boardPath: string,
-  lane: SwimLane,
-  kind: LaneMarkdownKind,
-  prompt: string,
-  filePath: string
-) => {
-  const savedKey = laneMarkdownSavedKey(boardPath, lane, kind)
+const saveAgentMarkdown = async (boardPath: string, lane: SwimLane, prompt: string, filePath: string) => {
+  const savedKey = agentMarkdownSavedKey(boardPath, lane)
   const previousPrompt = props.saveState.lastSaved.get(savedKey) ?? ''
   const setStatus = (status: LaneMarkdownStatus) => {
     // The modal may have switched lanes mid-save; don't show this lane's result on another.
-    if (props.lane.id === lane.id) laneMarkdownStatus.value[kind] = status
+    if (props.lane.id === lane.id) agentMarkdownStatus.value = status
   }
   try {
-    const saved = await store.saveLaneMarkdown(boardPath, lane, kind, prompt, previousPrompt, filePath)
+    const saved = await store.saveLaneMarkdown(boardPath, lane, prompt, previousPrompt, filePath)
     // Recorded even if the lane update failed: the file holds this text now.
     props.saveState.lastSaved.set(savedKey, prompt)
     if (saved.laneUpdated) setStatus({ savedMessage: `Saved to ${saved.filePath}`, error: '' })
@@ -271,43 +247,58 @@ const saveLaneMarkdown = async (
 
 // Everything is captured now, not when the timer fires: by then the modal may
 // show another lane, or the route another project.
-const scheduleLaneMarkdownSave = (lane: SwimLane, kind: LaneMarkdownKind) => {
+const scheduleAgentMarkdownSave = (lane: SwimLane) => {
   const boardPath = projectPath.value
-  const savedKey = laneMarkdownSavedKey(boardPath, lane, kind)
+  const savedKey = agentMarkdownSavedKey(boardPath, lane)
   const { lastSaved } = props.saveState
   // Before the first save the file should hold the stored prompt: the lane
   // keeps it until blur commits the new text.
-  if (!lastSaved.has(savedKey)) lastSaved.set(savedKey, laneMarkdownSources[kind].prompt())
-  const { prompt, filePath } = laneMarkdownDraft.value[kind]
+  if (!lastSaved.has(savedKey)) lastSaved.set(savedKey, lanePromptSources.agent())
+  const prompt = lanePromptDraft.value.agent
+  const filePath = agentFilePathDraft.value
   const saveState = props.saveState
   const run = () => {
-    delete pendingMarkdownSaves[kind]
+    pendingMarkdownSave = undefined
     // One write at a time, in order: a slow save must not land after a newer one.
-    saveState.queue = saveState.queue.then(() => saveLaneMarkdown(boardPath, lane, kind, prompt, filePath))
+    saveState.queue = saveState.queue.then(() => saveAgentMarkdown(boardPath, lane, prompt, filePath))
   }
-  const existing = pendingMarkdownSaves[kind]
-  if (existing) clearTimeout(existing.timer)
-  pendingMarkdownSaves[kind] = { timer: setTimeout(run, MARKDOWN_AUTOSAVE_DELAY_MS), run }
+  if (pendingMarkdownSave) clearTimeout(pendingMarkdownSave.timer)
+  pendingMarkdownSave = { timer: setTimeout(run, MARKDOWN_AUTOSAVE_DELAY_MS), run }
 }
 
-const onLaneMarkdownPromptInput = (lane: SwimLane, kind: LaneMarkdownKind, event: Event) => {
+const onLanePromptInput = (lane: SwimLane, kind: LaneMarkdownKind, event: Event) => {
   const text = (event.target as HTMLTextAreaElement).value
-  laneMarkdownDraft.value[kind].prompt = text
+  lanePromptDraft.value[kind] = text
   uncommittedPrompts[kind] = { lane, patch: lanePromptPatch(kind, text) }
-  scheduleLaneMarkdownSave(lane, kind)
+}
+
+const onAgentPromptInput = (lane: SwimLane, event: Event) => {
+  onLanePromptInput(lane, 'agent', event)
+  scheduleAgentMarkdownSave(lane)
 }
 
 const storeTypedPrompts = () => {
   commitTypedPrompts()
-  flushMarkdownSaves()
+  flushMarkdownSave()
 }
 
 // A new path gets the current text, unless there is none: linking an existing
 // guide with an empty prompt must not try to write over it.
-const onLaneMarkdownPathChange = (lane: SwimLane, kind: LaneMarkdownKind, event: Event) => {
+const onAgentFilePathChange = (lane: SwimLane, event: Event) => {
   const filePath = (event.target as HTMLInputElement).value
-  editLane(lane, { [LANE_MARKDOWN_FILE_PATH_FIELD[kind]]: filePath })
-  if (laneMarkdownDraft.value[kind].prompt.trim()) scheduleLaneMarkdownSave(lane, kind)
+  editLane(lane, { agentFilePath: filePath })
+  if (lanePromptDraft.value.agent.trim()) scheduleAgentMarkdownSave(lane)
+}
+
+const saveOrchestratorPromptAsDefault = (lane: SwimLane) => {
+  delete uncommittedPrompts.orchestrator
+  const typedPrompt = lanePromptDraft.value.orchestrator
+  editLane(lane, { defaultAgentOrchestratorPrompt: typedPrompt, currentAgentOrchestratorPrompt: '', orchestratorPrompt: '' })
+}
+
+const restoreAppOrchestratorPrompt = (lane: SwimLane) => {
+  delete uncommittedPrompts.orchestrator
+  editLane(lane, APP_ORCHESTRATOR_PROMPT_PATCH)
 }
 
 // BoardView's single Escape handler calls this at its place in the order.
@@ -383,9 +374,9 @@ defineExpose({
               id="lane-agent-prompt"
               aria-labelledby="lane-agent-prompt-label"
               class="agent-prompt"
-              :value="laneMarkdownDraft.agent.prompt"
+              :value="lanePromptDraft.agent"
               placeholder="Instructions for the agent that handles tickets in this lane — format, required sections, clarifying questions to ask..."
-              @input="onLaneMarkdownPromptInput(lane, 'agent', $event)"
+              @input="onAgentPromptInput(lane, $event)"
               @change="storeTypedPrompts"
             />
           </label>
@@ -396,11 +387,11 @@ defineExpose({
               class="agent-file-path"
               :value="lane.agentFilePath"
               placeholder="/Users/you/Projects/thing/docs/agent-prompt.md"
-              @input="laneMarkdownDraft.agent.filePath = ($event.target as HTMLInputElement).value"
-              @change="onLaneMarkdownPathChange(lane, 'agent', $event)"
+              @input="agentFilePathDraft = ($event.target as HTMLInputElement).value"
+              @change="onAgentFilePathChange(lane, $event)"
             />
-            <span v-if="laneMarkdownStatus.agent.error" class="field-hint field-error">{{ laneMarkdownStatus.agent.error }}</span>
-            <span v-else-if="laneMarkdownStatus.agent.savedMessage" class="field-hint">{{ laneMarkdownStatus.agent.savedMessage }}</span>
+            <span v-if="agentMarkdownStatus.error" class="field-hint field-error">{{ agentMarkdownStatus.error }}</span>
+            <span v-else-if="agentMarkdownStatus.savedMessage" class="field-hint">{{ agentMarkdownStatus.savedMessage }}</span>
           </label>
 
           <label v-if="showsLaneField('output', lane.id)">
@@ -441,23 +432,47 @@ defineExpose({
               id="lane-orchestrator-prompt"
               aria-labelledby="lane-orchestrator-prompt-label"
               class="agent-prompt orchestrator-prompt"
-              :value="laneMarkdownDraft.orchestrator.prompt"
+              :value="lanePromptDraft.orchestrator"
               spellcheck="false"
-              @input="onLaneMarkdownPromptInput(lane, 'orchestrator', $event)"
+              @input="onLanePromptInput(lane, 'orchestrator', $event)"
               @change="storeTypedPrompts"
             />
           </label>
           <span v-if="openLaneMissingOrchestratorTokens.length" class="field-hint field-error">
             Missing {{ openLaneMissingOrchestratorTokens.join(', ') }}: the orchestrator won't know which tickets to watch.
           </span>
-          <button
-            v-if="showsLaneField('orchestratorPrompt', lane.id) && openLaneOrchestratorOverride"
-            class="secondary lane-prompt-reset"
-            type="button"
-            @click="editLane(lane, { orchestratorPromptOverride: '' })"
+          <div
+            v-if="
+              showsLaneField('orchestratorPrompt', lane.id) &&
+              (openLaneOrchestratorDiffersFromDefault || openLaneCurrentOrchestratorPrompt || openLaneHasSavedOrchestratorDefault)
+            "
+            class="lane-prompt-actions"
           >
-            Reset to default
-          </button>
+            <button
+              v-if="openLaneOrchestratorDiffersFromDefault"
+              class="secondary lane-prompt-save-default"
+              type="button"
+              @click="saveOrchestratorPromptAsDefault(lane)"
+            >
+              Save as default
+            </button>
+            <button
+              v-if="openLaneCurrentOrchestratorPrompt"
+              class="secondary lane-prompt-reset"
+              type="button"
+              @click="editLane(lane, { currentAgentOrchestratorPrompt: '' })"
+            >
+              Reset to default
+            </button>
+            <button
+              v-if="openLaneHasSavedOrchestratorDefault"
+              class="secondary lane-prompt-restore-app-default"
+              type="button"
+              @click="restoreAppOrchestratorPrompt(lane)"
+            >
+              Restore app default
+            </button>
+          </div>
 
           <label v-if="showsLaneField('orchestratorFile', lane.id)">
             Agent Orchestrator markdown file
@@ -465,18 +480,11 @@ defineExpose({
               class="agent-file-path"
               :value="lane.orchestratorFilePath ?? ''"
               placeholder="/Users/you/Projects/thing/docs/orchestrator.md"
-              @input="laneMarkdownDraft.orchestrator.filePath = ($event.target as HTMLInputElement).value"
-              @change="onLaneMarkdownPathChange(lane, 'orchestrator', $event)"
+              @change="editLane(lane, { orchestratorFilePath: ($event.target as HTMLInputElement).value })"
             />
-            <span v-if="laneMarkdownStatus.orchestrator.error" class="field-hint field-error">
-              {{ laneMarkdownStatus.orchestrator.error }}
-            </span>
-            <span v-else-if="laneMarkdownStatus.orchestrator.savedMessage" class="field-hint">
-              {{ laneMarkdownStatus.orchestrator.savedMessage }}
-            </span>
-            <span v-else class="field-hint">
-              The prompt above autosaves here, for versioning or review. Left empty it's
-              SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
+            <span class="field-hint">
+              Additional prompt context: at launch, this file's text is added after the prompt above. It never
+              replaces the prompt. Left empty it's SwimlaneAgentPrompt/&lt;lane&gt;/AgentOrchestratorPrompt.md.
             </span>
           </label>
 

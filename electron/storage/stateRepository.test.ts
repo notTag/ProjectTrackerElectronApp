@@ -47,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', currentAgentOrchestratorPrompt: 'Watch {{tickets}}', defaultAgentOrchestratorPrompt: 'Track {{ticket_numbers}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -127,8 +127,10 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].orchestratorPrompt).toBe('')
     expect(board?.lanes[1].orchestratorFilePath).toBe('docs/orch.md')
     expect(board?.lanes[0].orchestratorFilePath).toBe('')
-    expect(board?.lanes[1].orchestratorPromptOverride).toBe('Watch {{tickets}}')
-    expect(board?.lanes[0].orchestratorPromptOverride).toBe('')
+    expect(board?.lanes[1].currentAgentOrchestratorPrompt).toBe('Watch {{tickets}}')
+    expect(board?.lanes[0].currentAgentOrchestratorPrompt).toBe('')
+    expect(board?.lanes[1].defaultAgentOrchestratorPrompt).toBe('Track {{ticket_numbers}}')
+    expect(board?.lanes[0].defaultAgentOrchestratorPrompt).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
@@ -908,7 +910,8 @@ describe('legacy databases', () => {
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorFilePath).toBe('')
-    expect(state.boards!['/legacy'].lanes[0].orchestratorPromptOverride).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].currentAgentOrchestratorPrompt).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].defaultAgentOrchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
@@ -1209,6 +1212,39 @@ describe('closed_at triggers (#27)', () => {
     // in-pr staying 0 proves the old seed is gone; legacy staying 1 proves updates leave the column alone.
     const flags = cli.prepare('SELECT id, waits_for_pull_request_merge AS flag FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all()
     expect(flags).toEqual([{ id: 'legacy', flag: 1 }])
+    cli.close()
+  })
+
+  it('upgrading an older file copies each orchestrator prompt override into the current prompt once', () => {
+    const { userDataPath, projectPath, cli } = setUp()
+    const snapshotRows = [
+      { id: 'planned', name: 'Planned', orchestrator_prompt_override: 'Snapshot {{tickets}}' },
+      { id: 'blank', name: 'Blank', orchestrator_prompt_override: '   ' }
+    ]
+    cli
+      .prepare(`INSERT INTO workflows (id, project_path, name, position, lanes_json) VALUES ('other', ?, 'Other', 1, ?)`)
+      .run(projectPath, JSON.stringify(snapshotRows))
+    cli.exec(`
+      UPDATE swim_lanes SET orchestrator_prompt_override = 'Watch {{tickets}}' WHERE id = 'in-dev';
+      UPDATE swim_lanes SET orchestrator_prompt_override = '  ' WHERE id = 'idea';
+      UPDATE schema_meta SET version = 6;
+    `)
+    const currentPrompt = (laneId: string) =>
+      cli.prepare('SELECT current_agent_orchestrator_prompt AS prompt FROM swim_lanes WHERE id = ?').get(laneId)?.prompt
+
+    const repository = new StateRepository(userDataPath)
+    expect(currentPrompt('in-dev')).toBe('Watch {{tickets}}')
+    expect(currentPrompt('idea')).toBe('')
+    const inDev = repository.getState().boards![projectPath].lanes.find((entry) => entry.id === 'in-dev')
+    expect(inDev?.currentAgentOrchestratorPrompt).toBe('Watch {{tickets}}')
+    expect(inDev?.defaultAgentOrchestratorPrompt).toBe('')
+    const snapshotJson = cli.prepare("SELECT lanes_json FROM workflows WHERE id = 'other'").get()?.lanes_json
+    const copiedSnapshot = JSON.parse(String(snapshotJson)) as Record<string, unknown>[]
+    expect(copiedSnapshot.map((row) => row.current_agent_orchestrator_prompt)).toEqual(['Snapshot {{tickets}}', undefined])
+
+    repository.updateSwimLane(projectPath, 'in-dev', { currentAgentOrchestratorPrompt: '' })
+    new StateRepository(userDataPath)
+    expect(currentPrompt('in-dev')).toBe('')
     cli.close()
   })
 

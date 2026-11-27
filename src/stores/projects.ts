@@ -60,11 +60,9 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type ProjectTrackerState,
-  type LaneMarkdownKind,
   type ScanProgress,
   type SwimLane,
   type Ticket,
-  LANE_MARKDOWN_FILE_PATH_FIELD,
   UNASSIGNED_LANE_ID
 } from '@/shared/projectTypes'
 
@@ -393,19 +391,21 @@ export const useProjectsStore = defineStore('projects', {
 
     // File first, DB second: a failed write throws before the lane is touched.
     // Only a new path is stored; the prompt text is stored on blur.
-    async saveLaneMarkdown(
-      projectPath: string,
-      lane: SwimLane,
-      kind: LaneMarkdownKind,
-      prompt: string,
-      previousPrompt: string,
-      filePath: string
-    ) {
-      const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt, previousPrompt)
-      const filePathField = LANE_MARKDOWN_FILE_PATH_FIELD[kind]
-      const pathIsStored = lane[filePathField] === saved.filePath
-      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { [filePathField]: saved.filePath }))
+    async saveLaneMarkdown(projectPath: string, lane: SwimLane, prompt: string, previousPrompt: string, filePath: string) {
+      const saved = await projectTrackerApi.saveLaneMarkdown(projectPath, lane.name, filePath, prompt, previousPrompt)
+      const pathIsStored = lane.agentFilePath === saved.filePath
+      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { agentFilePath: saved.filePath }))
       return { filePath: saved.filePath, laneUpdated }
+    },
+
+    async readLaneOrchestratorContext(projectPath: string, lane: SwimLane) {
+      try {
+        const filePath = lane.orchestratorFilePath ?? ''
+        const additionalContext = await projectTrackerApi.readLaneOrchestratorContext(projectPath, lane.name, filePath)
+        return additionalContext ?? undefined
+      } catch {
+        return undefined
+      }
     },
 
     // Optimistic: the lane lands in its new slot on drop rather than after the

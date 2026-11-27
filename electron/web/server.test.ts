@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -216,6 +216,40 @@ describe('web server', () => {
     it('updates a project and keeps reads inside the scan directories', async () => {
       expect(await invoke('project:update', { path: projectPath, patch: { notes: 'web notes' } })).toMatchObject({ notes: 'web notes' })
       await expect(invoke('project:read-readme', '/etc')).rejects.toThrow('outside configured scan directories')
+    })
+  })
+
+  describe('orchestrator context', () => {
+    it("reads the lane's file inside the scan directories and skips one that is missing, not markdown or outside", async () => {
+      const scanDirectory = mkdtempSync(path.join(tmpdir(), 'project-tracker-web-context-'))
+      const contextProjectPath = path.join(scanDirectory, 'app')
+      const defaultContextPath = path.join(contextProjectPath, 'SwimlaneAgentPrompt', 'Idea', 'AgentOrchestratorPrompt.md')
+      mkdirSync(path.dirname(defaultContextPath), { recursive: true })
+      writeFileSync(defaultContextPath, 'Ping me on Slack.')
+      writeFileSync(path.join(contextProjectPath, 'blank.md'), '  \n')
+      const outsideDirectory = mkdtempSync(path.join(tmpdir(), 'project-tracker-web-outside-'))
+      writeFileSync(path.join(outsideDirectory, 'secret.md'), 'outside')
+      symlinkSync(path.join(outsideDirectory, 'secret.md'), path.join(contextProjectPath, 'linked.md'))
+      await invoke('project-state:save', { ...seededState(), scanDirectories: [scanDirectory] })
+      const readContext = (filePath: string) =>
+        invoke('lane:read-orchestrator-context', { projectPath: contextProjectPath, laneName: 'Idea', filePath })
+
+      try {
+        const defaultContext = (await readContext('')) as { filePath: string; content: string }
+        expect(defaultContext.content).toBe('Ping me on Slack.')
+        expect(defaultContext.filePath.endsWith('/app/SwimlaneAgentPrompt/Idea/AgentOrchestratorPrompt.md')).toBe(true)
+        for (const skippedPath of ['missing.md', 'blank.md', 'notes.txt', '/etc/outside.md', 'linked.md']) {
+          expect(await readContext(skippedPath)).toBeNull()
+        }
+      } finally {
+        rmSync(scanDirectory, { recursive: true, force: true })
+        rmSync(outsideDirectory, { recursive: true, force: true })
+      }
+    })
+
+    it('refuses an orchestrator save from a tab on the old bundle', async () => {
+      const save = { kind: 'orchestrator', projectPath, laneName: 'Idea', filePath: '', content: 'prompt', previousContent: '' }
+      await expect(invoke('lane:save-agent-markdown', save)).rejects.toThrow('Only the agent markdown file is saved.')
     })
   })
 
