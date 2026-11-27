@@ -1726,11 +1726,6 @@ code {
   font-size: 0.75rem;
 }
 
-/* InfoTip (#102): inline ⓘ beside a field label, same bare-glyph treatment as
-   the ⚙ .icon-button. CSS shows the bubble on hover or keyboard focus
-   (:focus-visible, so a mouse click leaves no sticky tip); .dismissed is set
-   by the first Escape. ponytail: left-anchored, no flip; add a right-anchored
-   variant if a call site sits near a modal's right edge. */
 .label-with-tip {
   display: inline-flex;
   align-items: center;
@@ -1792,6 +1787,7 @@ code {
   top: calc(anchor(bottom) + 4px);
   left: anchor(left);
   position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  position-visibility: anchors-visible;
   margin: 0;
   overflow: visible;
   width: max-content;

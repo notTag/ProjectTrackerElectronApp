@@ -27,7 +27,9 @@ describe('InfoTip', () => {
     const buttonAnchor = html.match(/anchor-name:\s*([^;"]+)/)?.[1]
     const bubbleAnchor = html.match(/position-anchor:\s*([^;"]+)/)?.[1]
 
-    expect(html).toContain('role="tooltip" popover="manual"')
+    const bubbleTag = html.match(/<span[^>]*role="tooltip"[^>]*>/)?.[0]
+
+    expect(bubbleTag).toContain('popover="manual"')
     expect(buttonAnchor).toMatch(/^--tip-/)
     expect(bubbleAnchor).toBe(buttonAnchor)
   })

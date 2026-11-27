@@ -24,8 +24,7 @@ An InfoTip (ⓘ) bubble opened inside a modal is clipped by the modal's edge. Re
 2. Show/hide moves from CSS (`:hover`, `:has(:focus-visible)`) to JS, same rules as today:
 	- `show()` when `!dismissed && (hovered || keyboard-focused)`; else `hide()`
 	- Triggers: wrapper `mouseenter`/`mouseleave`, button `focus`/`blur`, Esc dismiss
-	- Keep `dismissed`, `dismissOnEscape` capture logic, `resetOnMouseLeave`, `resetOnBlur` unchanged (#102/#119); they now also call a single `syncBubble()` that does `showPopover()`/`hidePopover()` (guard with `:popover-open` / try-catch — both throw `InvalidStateError` on wrong state)
-	- `hidePopover()` in `onBeforeUnmount` so a tip open when its modal closes never lingers in the top layer
+	- Keep `dismissed`, `dismissOnEscape` capture logic, `resetOnMouseLeave`, `resetOnBlur` unchanged (#102/#119); they now also call a single `syncBubble()` that calls `togglePopover(isShowing())` (no-op when already in that state), skipped once the bubble is detached so a blur during unmount can't throw
 	- `:focus-visible` check stays (mouse-click focus counts as hover, not keyboard)
 3. Position with CSS anchor positioning
 	- Button: `:style="{ anchorName }"`, `anchorName = '--tip-' + tipId` (Vue 3.5.35 `useId()` → `v-0`, `v-1-0` … → valid dashed ident; no sanitizing needed)
@@ -38,8 +37,8 @@ An InfoTip (ⓘ) bubble opened inside a modal is clipped by the modal's edge. Re
 
 ## Edge cases
 - Mouse path ⓘ → bubble: bubble is still a DOM descendant of the wrapper → `:hover`/`mouseleave` treat it as inside, same as today (4px gap behaves as today)
-- Modal scrolls while tip open: anchor positioning tracks the anchor; no JS listener needed
-- Modal closes / tip unmounts while open: `onBeforeUnmount` hides it
+- Modal scrolls while tip open: anchor positioning tracks the anchor; `position-visibility: anchors-visible` hides the bubble once its ⓘ scrolls out of view
+- Modal closes / tip unmounts while open: removing a popover from the DOM hides it
 - `max-width: min(280px, 70vw)` stays → bubble never wider than viewport
 
 ## Acceptance criteria

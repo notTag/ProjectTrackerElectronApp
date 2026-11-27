@@ -12,7 +12,9 @@ const bubble = ref<HTMLElement>()
 
 const hasKeyboardFocus = () => Boolean(button.value?.matches(':focus-visible'))
 const isShowing = () => !dismissed.value && (hovered.value || hasKeyboardFocus())
-const syncBubble = () => bubble.value?.togglePopover(isShowing())
+const syncBubble = () => {
+  if (bubble.value?.isConnected) bubble.value.togglePopover(isShowing())
+}
 
 const dismissOnEscape = (event: KeyboardEvent) => {
   if (event.key !== 'Escape' || event.defaultPrevented || !isShowing()) return
