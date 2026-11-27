@@ -268,24 +268,25 @@ const isPatchFieldValid = (allowedKeys: Set<string>, key: string, fieldValue: un
   return true
 }
 
-const NOT_AN_OBJECT = '<not an object>'
+const MAX_QUOTED_KEY_LENGTH = 64
 
-// The first key a patch may not carry, so a rejection can name it.
-const rejectedPatchKey = (allowedKeys: Set<string>, value: unknown): string | undefined => {
-  if (!isPlainObject(value)) return NOT_AN_OBJECT
+const patchRejection = (allowedKeys: Set<string>, value: unknown): string | undefined => {
+  if (!isPlainObject(value)) return 'patch must be an object'
   const patchEntries = Object.entries(value)
   const rejectedEntry = patchEntries.find(([key, fieldValue]) => !isPatchFieldValid(allowedKeys, key, fieldValue))
-  return rejectedEntry?.[0]
+  if (!rejectedEntry) return undefined
+  const shortKey = rejectedEntry[0].slice(0, MAX_QUOTED_KEY_LENGTH)
+  return `rejected key ${JSON.stringify(shortKey)}`
 }
 
 const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean =>
-  rejectedPatchKey(allowedKeys, value) === undefined
+  patchRejection(allowedKeys, value) === undefined
 
 const isTicketPatch = (value: unknown): value is TicketWritePatch => isPatchOf(TICKET_PATCH_KEYS, value)
 const isLanePatch = (value: unknown): value is LaneWritePatch => isPatchOf(LANE_PATCH_KEYS, value)
 
-const invalidPatchError = (payloadName: string, rejectedKey: string): Error =>
-  new Error(`Invalid ${payloadName} update payload: rejected key "${rejectedKey}".`)
+const invalidPatchError = (payloadName: string, rejection: string): Error =>
+  new Error(`Invalid ${payloadName} update payload: ${rejection}.`)
 
 const isTicket = (value: unknown): value is Omit<Ticket, 'number'> => {
   if (!isPlainObject(value)) return false
@@ -402,8 +403,8 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     'ticket:update': (payload, { repository }) => {
       const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
       if (typeof id !== 'string') throw new Error('Invalid ticket update payload.')
-      const rejectedKey = rejectedPatchKey(TICKET_PATCH_KEYS, patch)
-      if (rejectedKey !== undefined) throw invalidPatchError('ticket', rejectedKey)
+      const rejection = patchRejection(TICKET_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('ticket', rejection)
       return toPlainJson(repository.updateTicket(id, patch as TicketWritePatch))
     },
 
@@ -452,8 +453,8 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     'lane:update': (payload, { repository }) => {
       const { projectPath, laneId, patch } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown; patch?: unknown }
       if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane update payload.')
-      const rejectedKey = rejectedPatchKey(LANE_PATCH_KEYS, patch)
-      if (rejectedKey !== undefined) throw invalidPatchError('lane', rejectedKey)
+      const rejection = patchRejection(LANE_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('lane', rejection)
       return toPlainJson(repository.updateSwimLane(normalizePath(projectPath), laneId, patch as LaneWritePatch))
     },
 

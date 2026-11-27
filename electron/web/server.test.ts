@@ -180,7 +180,6 @@ describe('web server', () => {
       expect(afterDelete.boards?.[projectPath].lanes.map((lane) => lane.id)).toEqual(['idea'])
     })
 
-    // t139: a graph node drop sends { graphPosition }, including for the unassigned lane.
     it.each([
       ['a normal lane', 'idea'],
       ['the unassigned lane', UNASSIGNED_LANE_ID]
@@ -188,7 +187,8 @@ describe('web server', () => {
       const readLane = async () => {
         const state = (await invoke('project-state:get')) as ProjectTrackerState
         const board = state.boards?.[projectPath]
-        return laneId === UNASSIGNED_LANE_ID ? board?.unassignedLane : board?.lanes.find((lane) => lane.id === laneId)
+        if (laneId === UNASSIGNED_LANE_ID) return board?.unassignedLane
+        return board?.lanes.find((lane) => lane.id === laneId)
       }
 
       const graphPosition = { x: 310, y: 140 }
@@ -205,6 +205,8 @@ describe('web server', () => {
         .rejects.toThrow('Invalid lane update payload: rejected key "graphPosition".')
       await expect(invoke('lane:update', { projectPath, laneId: 'idea', patch: { bogus: 1 } }))
         .rejects.toThrow('rejected key "bogus"')
+      await expect(invoke('lane:update', { projectPath, laneId: 'idea' }))
+        .rejects.toThrow('Invalid lane update payload: patch must be an object.')
       await expect(invoke('ticket:update', { id: 't1', patch: { number: 9 } }))
         .rejects.toThrow('Invalid ticket update payload: rejected key "number".')
     })
