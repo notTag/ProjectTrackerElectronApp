@@ -57,6 +57,7 @@ const describeStop = (checkpoints, stopRecord) => {
 
 // <tag>-scaling-raw.csv sits beside <tag>-scaling-stop.json.
 const readStopRecord = (csvPath) => {
+  if (!csvPath.endsWith('-scaling-raw.csv')) return null
   const stopName = path.basename(csvPath).replace('-scaling-raw.csv', '-scaling-stop.json')
   const stopPath = path.join(path.dirname(csvPath), stopName)
   if (!fs.existsSync(stopPath)) return null
@@ -154,11 +155,13 @@ const renderTargets = (checkpoints, baselineCheckpoints) => {
   const accessGrowth = last.medianAccess / first.medianAccess
   const ratio = last.medianCreation / last.medianAccess
   const floorRatio = first.medianCreation / first.medianAccess
+  const creationAboveFloor = formatSeconds(last.medianCreation - first.medianCreation)
+  const speedupVsBaseline = (before.medianCreation / last.medianCreation).toFixed(0)
   const verdict = (met) => (met ? 'met' : 'missed')
   return `<h2>Targets (#134)</h2>
     <ul>
       <li>Access ~flat vs board size: <strong>${verdict(accessGrowth < 1.5)}</strong>. ${formatSeconds(first.medianAccess)}s at ${first.ticketCount} tickets, ${formatSeconds(last.medianAccess)}s at ${count} (×${accessGrowth.toFixed(2)}).</li>
-      <li>Creation ≤ ~1.5× access: <strong>${verdict(ratio <= 1.6)}</strong>, ${ratio.toFixed(2)}× at ${count}. Even at ${first.ticketCount} tickets it is ${floorRatio.toFixed(2)}×: at these speeds both times sit on whole animation frames (16.7 ms), and a create takes more of them than an open (draft modal, Save enabled, card, +2) against an open's (modal, +2). What is left above that floor (not profiled; most likely the per-create passes over every ticket: the store's diff, completion-move and full-auto checks, and the lane map recompute) is about ${formatSeconds(last.medianCreation - first.medianCreation)}s at ${count}; it is ${(before.medianCreation / last.medianCreation).toFixed(0)}× faster than #118 but still grows with the board.</li>
+      <li>Creation ≤ ~1.5× access: <strong>${verdict(ratio <= 1.5)}</strong>, ${ratio.toFixed(2)}× at ${count}. Even at ${first.ticketCount} tickets it is ${floorRatio.toFixed(2)}×: at these speeds both times sit on whole animation frames (16.7 ms), and a create takes more of them than an open (draft modal, Save enabled, card, +2) against an open's (modal, +2). What is left above that floor (not profiled; most likely the per-create passes over every ticket: the store's diff, completion-move and full-auto checks, and the lane map recompute) is about ${creationAboveFloor}s at ${count}; it is ${speedupVsBaseline}× faster than #118 but still grows with the board.</li>
       <li>Fresh-board draw well under #118's ${before.fillSeconds.toFixed(1)}s at ${count}: <strong>${verdict(last.fillSeconds < before.fillSeconds / 2)}</strong>, ${last.fillSeconds.toFixed(1)}s.</li>
     </ul>`
 }
