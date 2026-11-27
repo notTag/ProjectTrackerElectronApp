@@ -12,6 +12,7 @@ import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import OpenInPicker from '@/components/OpenInPicker.vue'
 import WorkflowPicker from '@/components/WorkflowPicker.vue'
+import WorkflowsModal from '@/components/WorkflowsModal.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
@@ -145,6 +146,7 @@ const laneFilterMenuOpen = ref(false)
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
+const workflowsModalOpen = ref(false)
 
 // nextLaneId stays null until the user picks one, so the field follows the
 // Status lane's default as Status changes. Images wait as Files until Save,
@@ -193,7 +195,8 @@ const anyModalOpen = computed(
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
         lanePendingDeletion.value
-    )
+    ) ||
+    workflowsModalOpen.value
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -710,6 +713,7 @@ const closeModals = () => {
   openLaneId.value = null
   ticketDraft.value = null
   laneDraftName.value = null
+  workflowsModalOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -1728,7 +1732,9 @@ const runTicketAgent = (ticket: Ticket) => {
     <MessageBanners />
 
     <section class="board-filters">
-      <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
+      <button type="button" class="workflow-label" title="Browse, switch and create workflows" @click="workflowsModalOpen = true">
+        {{ activeWorkflowName }}
+      </button>
       <input
         v-if="showsFilterControl('query')"
         ref="filterQueryInput"
@@ -1925,6 +1931,8 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
   </main>
+
+  <WorkflowsModal v-if="workflowsModalOpen" :project-path="projectPath" @close="workflowsModalOpen = false" />
 
   <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (ticketDraft = null))">
     <section v-edge-resize class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">

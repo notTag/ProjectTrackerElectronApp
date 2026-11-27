@@ -245,7 +245,7 @@ From left to right:
 | **Open In** picker | Right of the title; its menu opens rightward. See 1.6 |
 | **⌁ Open** | Right of Open In. Opens the project folder in the Open In app |
 | **← Projects** | Back to the Dashboard. Escape does the same when no modal is open |
-| **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Default**). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
+| **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Development Workflow**; boards whose built-in workflow was stored as "Default" are renamed on startup unless the name is taken). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
@@ -265,7 +265,7 @@ See 1.7. Board notices include:
 
 From left to right:
 
-- The active workflow's name (3.1 Workflow picker), as a bold label.
+- The active workflow's name (3.1 Workflow picker), as a bold label. Clicking it opens the **Workflows** modal: a scrollable list of the board's workflows (active one ✓; click another to switch, disabled while an agent or orchestrator runs) and a solid-bordered **+ Create new Workflow** tile that asks for a unique name and copies the current lanes into a new active workflow. Escape, backdrop click or Close dismiss it.
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`BoardView.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
