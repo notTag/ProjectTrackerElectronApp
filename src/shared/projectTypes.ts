@@ -1888,7 +1888,6 @@ export const TICKET_CARD_FIELDS = [
 
 export type TicketCardField = (typeof TICKET_CARD_FIELDS)[number]['id']
 
-// Board filter bar controls the Display modal can hide. Ids are persisted — add, never rename.
 export const BOARD_FILTER_CONTROLS = [
   { id: 'query', label: 'Ticket filter box' },
   { id: 'lanes', label: 'Swim lane filter' },
@@ -2053,7 +2052,6 @@ export interface BoardPreferences {
   // laneId → lane settings fields hidden in that lane only, on top of
   // hiddenLaneModalFields (the eye button in that lane's settings).
   hiddenLaneModalFieldsByLane: Record<string, LaneModalField[]>
-  // Hidden list so filter bar controls added later show by default.
   hiddenFilterControls: BoardFilterControl[]
 }
 

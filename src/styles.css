@@ -1584,7 +1584,8 @@ code {
 
 /* Scoped through .modal to outrank `.lane-modal label`, which stacks its label
    contents in a column — a checkbox and its text belong on one line. */
-.modal .card-field-list label {
+.modal .card-field-list label,
+.ui-demo-panel .card-field-list label {
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -1754,7 +1755,8 @@ code {
   gap: 6px;
 }
 
-.lane-modal hr {
+.lane-modal hr,
+.ui-demo-panel hr {
   width: 100%;
   margin: 4px 0;
   border: 0;
@@ -1861,6 +1863,11 @@ code {
   margin: 0;
 }
 
+/* ↻ ink sits centred already; the base bottom-padding nudge tuned for ×/⚙ lifts it. */
+.pull-request-status .icon-button {
+  padding: 0;
+}
+
 /* One hue per state, shared by the modal pill and the card dot. */
 :is(.pull-request-pill, .pull-request-dot)[data-state='open'] {
   --pull-request-color: #2da44e;
@@ -1920,6 +1927,11 @@ code {
 
 .ticket-checklist li span {
   flex: 1;
+}
+
+/* Without a width the add-item input falls back to the browser's size=20 and clips its placeholder. */
+.ticket-checklist > input {
+  width: 100%;
 }
 
 .ticket-links li a {
@@ -2174,7 +2186,7 @@ span.ticket-image-thumb {
 .graph-rule textarea { flex: 1; min-height: 0; resize: none; field-sizing: content; }
 .graph-rule-delete { padding: 2px 8px; }
 .graph-rule-add { margin-top: 8px; }
-.graph-list-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
+.graph-list-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
 .modal-backdrop.graph-ticket-panel { left: auto; top: 150px; bottom: 0; right: 0; width: min(440px, 45vw); padding: 0; background: transparent; align-items: stretch; }
 .graph-ticket-panel .ticket-modal { width: 100%; max-height: 100%; border-radius: 0; overflow-y: auto; }
 @media (prefers-reduced-motion: reduce) { .view-switch-slider { transition: none; } }
@@ -2276,34 +2288,27 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
-/* Settings modal (#137): Metrics renders inline so the modal grows instead of
-   clipping an absolute popover. */
-.settings-modal {
-  width: auto;
-  min-width: min(420px, 100%);
-  max-width: 100%;
-  align-items: flex-start;
-}
-
-.settings-modal .modal-actions {
-  align-self: stretch;
-}
-
-.settings-modal .metrics-menu {
+/* Settings panel (#145): Metrics renders inline so the panel grows instead of
+   clipping an absolute popover. minmax(0, 1fr) tracks (here and on
+   .ui-demo-body) keep the wide table from stretching the panel; the popover
+   scrolls it sideways instead. */
+.ui-demo-panel .metrics-menu {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   justify-items: start;
   gap: 8px;
   max-width: 100%;
 }
 
-.settings-modal .metrics-popover {
+.ui-demo-panel .metrics-popover {
   position: static;
   max-width: 100%;
+  overflow-x: auto;
   box-shadow: none;
 }
 
 /* The titlebar selector is for the Dashboard header's Metrics popover. */
-.settings-modal .metrics-popover-header button,
+.ui-demo-panel .metrics-popover-header button,
 .titlebar-actions .metrics-popover-header button {
   min-width: 28px;
   padding: 0 8px;
@@ -2515,7 +2520,16 @@ span.ticket-image-thumb {
      knobs can be tuned live over an open modal; below message toasts (300)
      and page find (1000). */
   z-index: 250;
-  width: 320px;
+  display: flex;
+  flex-direction: column;
+  /* Native corner grip. Inline max-width/max-height (from the panel's position)
+     stop a resize from running off the window's right or bottom edge. */
+  resize: both;
+  overflow: hidden;
+  width: 680px;
+  height: 520px;
+  min-width: 420px;
+  min-height: 280px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface-raised);
@@ -2534,7 +2548,7 @@ span.ticket-image-thumb {
   touch-action: none;
 }
 
-/* Static so the bubble anchors to the titlebar's left edge and fits the 320px panel. */
+/* Static so the bubble anchors to the titlebar's left edge and stays inside the panel. */
 .ui-demo-titlebar .info-tip {
   position: static;
   cursor: default;
@@ -2546,10 +2560,57 @@ span.ticket-image-thumb {
   padding: 0 10px;
 }
 
+/* Side-by-side like macOS System Settings: fixed sidebar, scrolling content. */
+.settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-sidebar {
+  display: flex;
+  flex: 0 0 168px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+}
+
+.settings-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--color-text);
+  background: transparent;
+  text-align: left;
+}
+
+.settings-sidebar-item:not(.selected):hover {
+  background: var(--color-surface-overlay);
+}
+
+.settings-sidebar-item.selected {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent);
+}
+
+.settings-sidebar-icon {
+  width: 1.25em;
+  text-align: center;
+}
+
 .ui-demo-body {
   display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: 8px;
+  min-width: 0;
   padding: 12px;
+  overflow-y: auto;
 }
 
 .ui-demo-row {
