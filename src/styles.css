@@ -1726,11 +1726,6 @@ code {
   font-size: 0.75rem;
 }
 
-/* InfoTip (#102): inline ⓘ beside a field label, same bare-glyph treatment as
-   the ⚙ .icon-button. CSS shows the bubble on hover or keyboard focus
-   (:focus-visible, so a mouse click leaves no sticky tip); .dismissed is set
-   by the first Escape. ponytail: left-anchored, no flip; add a right-anchored
-   variant if a call site sits near a modal's right edge. */
 .label-with-tip {
   display: inline-flex;
   align-items: center;
@@ -1764,7 +1759,6 @@ code {
 }
 
 .info-tip {
-  position: relative;
   display: inline-flex;
 }
 
@@ -1788,11 +1782,14 @@ code {
 }
 
 .info-tip-bubble {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 10;
-  display: none;
+  position: fixed;
+  inset: auto;
+  top: calc(anchor(bottom) + 4px);
+  left: anchor(left);
+  position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  position-visibility: anchors-visible;
+  margin: 0;
+  overflow: visible;
   width: max-content;
   max-width: min(280px, 70vw);
   padding: 6px 8px;
@@ -1804,11 +1801,6 @@ code {
   font-size: 0.75rem;
   font-weight: normal;
   white-space: pre-line;
-}
-
-.info-tip:not(.dismissed):hover .info-tip-bubble,
-.info-tip:not(.dismissed):has(.info-tip-button:focus-visible) .info-tip-bubble {
-  display: block;
 }
 
 .field-hint.field-error {
@@ -2548,9 +2540,7 @@ span.ticket-image-thumb {
   touch-action: none;
 }
 
-/* Static so the bubble anchors to the titlebar's left edge and stays inside the panel. */
 .ui-demo-titlebar .info-tip {
-  position: static;
   cursor: default;
 }
 
