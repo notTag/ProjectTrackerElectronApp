@@ -5,6 +5,8 @@ import { laneModalExpanded, laneModalSectionsOpen, ticketModalExpanded, vEdgeRes
 
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import TicketGraph from '@/components/TicketGraph.vue'
+import TicketCard from '@/components/TicketCard.vue'
+import LaneCardList from '@/components/LaneCardList.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import OfflineBadge from '@/components/OfflineBadge.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
@@ -15,6 +17,7 @@ import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
 import { uiDemoPanelOpen } from '@/uiDemo'
+import { pageFindActive } from '@/pageFind'
 import { useOpenInStore } from '@/stores/openIn'
 import { useProjectsStore } from '@/stores/projects'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
@@ -29,9 +32,7 @@ import {
   addChecklistItem,
   addExternalLink,
   agentForTicket,
-  agentRunBadge,
   canResume,
-  type AgentRunBadge,
   autoRunUsesWorktrees,
   availableAgents,
   buildAutoRunLaunch,
@@ -67,6 +68,7 @@ import {
   hasUnseenAgentResult,
   ticketAgentPrompt,
   ticketSearchText,
+  groupTicketsByLane,
   ticketShellCommand,
   ticketTabTitle,
   currentLaneOf,
@@ -90,7 +92,6 @@ import {
   type TicketModalField,
   toggleHiddenLane,
   updateLaneInBoard,
-  worktreeFolderName,
   type Agent,
   type LaneMarkdownKind,
   LANE_MARKDOWN_FILE_PATH_FIELD,
@@ -536,10 +537,11 @@ const matchesQuery = (ticket: Ticket) => {
   return ticketSearchText(ticket).includes(query)
 }
 
-const ticketsInLane = (laneId: string) =>
-  board.value.tickets.filter(
-    (ticket) => ticket.laneId === laneId && matchesQuery(ticket) && matchesAssignee(ticket)
-  )
+const ticketsByLane = computed(() =>
+  groupTicketsByLane(board.value.tickets, (ticket) => matchesQuery(ticket) && matchesAssignee(ticket))
+)
+const NO_TICKETS: Ticket[] = []
+const laneTickets = (laneId: string) => ticketsByLane.value.get(laneId) ?? NO_TICKETS
 
 // ponytail: in-memory only — a pick for the next run, not ticket data. Persist
 // it (store or board preferences) if it should survive leaving the board.
@@ -552,7 +554,7 @@ const toggleTicketSelected = (ticketId: string) => {
 }
 
 const visibleTicketCount = computed(() =>
-  visibleLanes.value.reduce((total, lane) => total + ticketsInLane(lane.id).length, 0)
+  visibleLanes.value.reduce((total, lane) => total + laneTickets(lane.id).length, 0)
 )
 
 const filtersActive = computed(() =>
@@ -1120,7 +1122,7 @@ const orchestratorPollTooltip = (lane: SwimLane): string => {
   return `The Orchestrator agent will poll running agents every ${pollInterval}.`
 }
 
-const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id)))
+const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => laneTickets(lane.id)))
 
 const carriedIds = computed(() => {
   const ticketId = draggedTicketId.value
@@ -1464,12 +1466,15 @@ const onLaneMarkdownPathChange = (lane: SwimLane, kind: LaneMarkdownKind, event:
 }
 
 const autoRunSplit = (lane: SwimLane) => {
-  const visibleLaneTickets = ticketsInLane(lane.id)
+  const visibleLaneTickets = laneTickets(lane.id)
   const candidates = ticketsToRun(visibleLaneTickets, selectedTicketIds.value)
   return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
 
-const autoRunTickets = (lane: SwimLane) => autoRunSplit(lane).runnable
+const runnableByLaneId = computed(
+  () => new Map(laneColumns.value.map((lane) => [lane.id, autoRunSplit(lane).runnable]))
+)
+const autoRunTickets = (lane: SwimLane) => runnableByLaneId.value.get(lane.id) ?? autoRunSplit(lane).runnable
 
 const autoRunTooltip = (lane: SwimLane) => {
   const terminalLabel = autoRunTerminal(lane).label
@@ -1553,24 +1558,15 @@ const openTicketInShell = (ticket: Ticket) => {
   return store.openIn(projectPath.value, openInStore.selectedId, command, tabTitle)
 }
 
-// Glyphs, not just colour, tell success from failure.
-const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
-  running: { className: 'agent-status-running', label: 'Agent running' },
-  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
-  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
-  interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
-}
-
-const cardAgentBadge = (ticket: Ticket) => {
-  const running = Boolean(store.agentRunning[ticket.id])
-  const badge = agentRunBadge(ticket, running)
-  return badge ? AGENT_BADGES[badge] : null
-}
-
 // A re-running ticket shows the running dot, not its old result, so the lane
 // count leaves it out too.
 const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
-const unseenAgentResultCount = (laneId: string) => ticketsInLane(laneId).filter(showsUnseenResult).length
+const unseenCountByLaneId = computed(() => {
+  const counts = new Map<string, number>()
+  for (const [laneId, tickets] of ticketsByLane.value) counts.set(laneId, tickets.filter(showsUnseenResult).length)
+  return counts
+})
+const unseenAgentResultCount = (laneId: string) => unseenCountByLaneId.value.get(laneId) ?? 0
 
 // Watching the open ticket (not the card click) also covers opening from the
 // graph view, and a run that finishes while its modal is already open.
@@ -1798,7 +1794,7 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleLanes.flatMap(lane => ticketsInLane(lane.id))" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
+    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleTickets" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -1845,7 +1841,7 @@ const runTicketAgent = (ticket: Ticket) => {
           @keydown="moveLaneByKeyboard(lane, $event)"
         >
           <h2 :title="lane.name">{{ lane.name }}</h2>
-          <span class="lane-count">{{ ticketsInLane(lane.id).length }}</span>
+          <span class="lane-count">{{ laneTickets(lane.id).length }}</span>
           <span
             v-if="unseenAgentResultCount(lane.id) > 0"
             class="lane-unseen-count"
@@ -1875,99 +1871,28 @@ const runTicketAgent = (ticket: Ticket) => {
           </button>
         </header>
 
-        <div class="lane-body" @dblclick.self="startTicketDraft(lane.id)">
-          <article
-            v-for="ticket in ticketsInLane(lane.id)"
-            :key="ticket.id"
-            class="ticket"
-            :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
-            draggable="true"
-            @dragstart="startTicketDrag($event, ticket.id)"
-            @dragend="draggedTicketId = null"
-            @click="openTicketId = ticket.id"
-          >
-            <input
-              type="checkbox"
-              class="ticket-select"
-              :checked="selectedTicketIds.has(ticket.id)"
-              :aria-label="`Select #${ticket.number} (run / move)`"
-              title="Select (run / move)"
-              @click.stop
-              @change="toggleTicketSelected(ticket.id)"
-            />
-            <h3>
-              <span
-                v-if="cardAgentBadge(ticket)"
-                :class="['agent-status', cardAgentBadge(ticket)?.className]"
-                role="img"
-                :aria-label="cardAgentBadge(ticket)?.label"
-                :title="cardAgentBadge(ticket)?.label"
-              >{{ cardAgentBadge(ticket)?.glyph }}</span>
-              <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
-              {{ ticket.title }}
-              <span
-                v-if="isFullAuto(ticket, laneOfTicket(ticket))"
-                class="full-auto-badge"
-                title="Full auto: the next lane's agent starts when this one moves the ticket on"
-              >auto</span>
-              <span
-                v-if="readyLaneNameByTicketId.has(ticket.id)"
-                class="full-auto-badge ready-badge"
-                :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
-              >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
-            </h3>
-            <p v-if="showsField('description') && ticket.description" class="ticket-preview">
-              {{ ticket.description }}
-            </p>
-            <p v-if="showsField('assignee') && ticket.assigneeId" class="ticket-assignee">
-              {{ assigneeName(ticket.assigneeId) }}
-            </p>
-            <ul v-if="showsField('labels') && ticket.labels?.length" class="ticket-labels">
-              <li v-for="label in ticket.labels" :key="label">{{ label }}</li>
-            </ul>
-            <p
-              v-if="
-                (showsField('checklist') && ticket.checklist?.length) ||
-                (showsField('branch') && ticket.branchName) ||
-                (showsField('worktree') && ticket.worktreePath) ||
-                (showsField('version') && ticket.version) ||
-                (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
-              "
-              class="ticket-meta"
-            >
-              <span v-if="showsField('checklist') && ticket.checklist?.length">
-                ☑ {{ checklistProgress(ticket.checklist).done }}/{{ checklistProgress(ticket.checklist).total }}
-              </span>
-              <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
-                ⑂ {{ ticket.branchName }}
-              </span>
-              <span
-                v-if="showsField('worktree') && ticket.worktreePath"
-                class="ticket-branch"
-                :title="ticket.worktreePath"
-              >
-                ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
-              </span>
-              <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
-              <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
-              <a
-                v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
-                :href="ticket.pullRequestUrl"
-                target="_blank"
-                draggable="false"
-                @click.stop
-              >
-                <span
-                  v-if="ticket.pullRequestState"
-                  class="pull-request-dot"
-                  :data-state="ticket.pullRequestState"
-                  :title="pullRequestStatusLabel(ticket.pullRequestState)"
-                ></span>
-                {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
-              </a>
-            </p>
-          </article>
-        </div>
+        <LaneCardList
+          v-slot="{ ticket }"
+          :tickets="laneTickets(lane.id)"
+          :render-all="pageFindActive"
+          :keep-mounted-id="draggedTicketId"
+          @dblclick.self="startTicketDraft(lane.id)"
+        >
+          <TicketCard
+            :ticket="ticket"
+            :card-fields="preferences.cardFields"
+            :selected="selectedTicketIds.has(ticket.id)"
+            :carried="isCarriedBehind(ticket.id)"
+            :agent-running="Boolean(store.agentRunning[ticket.id])"
+            :full-auto="isFullAuto(ticket, laneOfTicket(ticket))"
+            :ready-lane-name="readyLaneNameByTicketId.get(ticket.id)"
+            :assignee-name="assigneeName(ticket.assigneeId)"
+            @open="openTicketId = $event"
+            @toggle-select="toggleTicketSelected"
+            @drag-start="startTicketDrag"
+            @drag-end="draggedTicketId = null"
+          />
+        </LaneCardList>
 
         <div
           class="lane-resize-handle"

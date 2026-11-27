@@ -46,6 +46,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 - Enter goes to the next match and Shift+Enter to the previous one. There are also ↑ and ↓ buttons, disabled when nothing matches.
 - Escape or × closes the bar, clears the highlights and puts focus back where it was.
 - The bar closes itself when you switch views.
+- While the bar has a query, virtualized lanes mount every card so off-screen tickets match; closing the bar re-virtualizes (`src/pageFind.ts`).
 
 ### 1.5 Theme picker — `src/components/ThemePicker.vue`
 
@@ -292,6 +293,8 @@ From left to right:
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
+- **Long lanes are virtualized**: a lane over 50 cards mounts only the cards within one screen of its viewport, with spacers for the rest (estimated height, replaced by measured heights). The header count still shows every matching ticket. A card mid-drag stays mounted. Find on page with a query mounts every card so native find sees them (`LaneCardList.vue`, `src/shared/cardWindow.ts`).
+- Tickets are grouped by lane once per change (`groupTicketsByLane` in `projectTypes.ts`); cards, counts, badges and the graph all read that map. Ticket-only writes patch the one row in place, so unchanged cards don't re-render (`TicketCard.vue`).
 
 #### Ticket card
 
@@ -629,7 +632,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
 - `bun run set-version <version> <ticket>...` (`scripts/set-ticket-version.mjs`) stamps one SemVer on many tickets in the tracker DB. Tickets as `12 14 15,16`; a `#` prefix must be quoted (`'#14'`) or the shell treats it as a comment. Project defaults to the main checkout of the cwd repo (works from worktrees); `--project` / `--db` override. All-or-nothing: any number missing for that project → error, nothing written. Prints `#N title: from → to` per ticket. The app picks the change up live.
-- `bun run scale-test [--keep] [--port 9333]` (`scripts/scale-test.mjs`) grows one throwaway board on a `.backup` copy of the live DB (isolated `PROJECT_TRACKER_USER_DATA`) and times ticket create + open through the real UI over CDP at 10…100 (step 10), then every 100, until median-of-3 creation > 5 s, 20,000 tickets or 60 min. Writes a CSV; `scripts/scale-report.mjs` turns it into a PDF via `printToPDF`. Last run: `docs/reports/t118-scaling-report.pdf`.
+- `bun run scale-test [--keep] [--port 9333]` (`scripts/scale-test.mjs`) grows one throwaway board on a `.backup` copy of the live DB (isolated `PROJECT_TRACKER_USER_DATA`) and times ticket create + open through the real UI over CDP at 10…100 (step 10), then every 100, until median-of-3 creation > 5 s, 20,000 tickets or 60 min. Writes a CSV; `scripts/scale-report.mjs` turns it into a PDF via `printToPDF`. `--tag <name>` names the output files. Last runs: `docs/reports/t118-scaling-report.pdf` (before), `docs/reports/t134-scaling-report.pdf` (after #134).
 - CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`

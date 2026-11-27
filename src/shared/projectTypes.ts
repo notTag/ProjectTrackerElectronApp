@@ -445,6 +445,17 @@ export const ticketSearchText = (ticket: Ticket) => {
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
 }
 
+export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticket) => boolean) => {
+  const ticketsByLane = new Map<string, Ticket[]>()
+  for (const ticket of tickets) {
+    if (!keepTicket(ticket)) continue
+    const laneTickets = ticketsByLane.get(ticket.laneId)
+    if (laneTickets) laneTickets.push(ticket)
+    else ticketsByLane.set(ticket.laneId, [ticket])
+  }
+  return ticketsByLane
+}
+
 // A coding agent a ticket can be handed to. `command` is the CLI that takes the
 // prompt as its last argument and runs in the project directory; `headlessArgs`
 // go before the prompt when it runs in the background with nobody watching, and
@@ -2298,6 +2309,7 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
       ticketCreates.push({ kind: 'ticket:create', ticket })
       continue
     }
+    if (ticket === previous) continue
     const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
     if (isEmptyPatch(patch)) continue
     ticketUpdates.push({ kind: 'ticket:update', id: ticket.id, patch: { ...patch, updatedAt: ticket.updatedAt } })
