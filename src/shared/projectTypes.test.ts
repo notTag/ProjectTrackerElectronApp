@@ -86,6 +86,7 @@ import {
   setLaneWidth,
   toggleCardField,
   toggleModalField,
+  toggleFilterControl,
   toggleLaneModalField,
   toggleLaneModalFieldInLane,
   toggleHiddenLane,
@@ -608,6 +609,18 @@ describe('board preferences', () => {
     const savedBeforeLaneFields = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
     expect(savedBeforeLaneFields.hiddenLaneModalFields).toEqual([])
     expect(savedBeforeLaneFields.hiddenLaneModalFieldsByLane).toEqual({})
+  })
+
+  it('hides a filter bar control and shows it again', () => {
+    const original = createDefaultBoardPreferences()
+    const hidden = toggleFilterControl(original, 'mine')
+    expect(hidden.hiddenFilterControls).toEqual(['mine'])
+    expect(toggleFilterControl(hidden, 'mine').hiddenFilterControls).toEqual([])
+  })
+
+  it('reads preferences saved before filter controls could be hidden as all shown', () => {
+    const savedBeforeFilterControls = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
+    expect(savedBeforeFilterControls.hiddenFilterControls).toEqual([])
   })
 
   it('hides a lane settings field on the whole board and shows it again', () => {
