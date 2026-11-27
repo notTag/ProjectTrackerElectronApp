@@ -10,6 +10,7 @@ import AutoRunConfirmModal, { type AutoRunPicks } from '@/components/board/AutoR
 import BoardFilters from '@/components/board/BoardFilters.vue'
 import BoardLanes from '@/components/board/BoardLanes.vue'
 import BoardTitlebar from '@/components/board/BoardTitlebar.vue'
+import WorkflowsModal from '@/components/WorkflowsModal.vue'
 import ConfirmDeleteModal from '@/components/board/ConfirmDeleteModal.vue'
 import DisplaySettings from '@/components/board/DisplaySettings.vue'
 import LaneSettingsModal, { createLaneMarkdownSaveState } from '@/components/board/LaneSettingsModal.vue'
@@ -24,6 +25,7 @@ import {
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
   findAgent,
+  groupTicketsByLane,
   joinNotices,
   orchestratorAgentChoice,
   skippedRunsNotice,
@@ -33,6 +35,7 @@ import {
   TICKET_DESCRIPTION_TEMPLATE,
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
+  type BoardFilterControl,
   type GraphPosition,
   type SwimLane,
   type Ticket
@@ -70,6 +73,7 @@ const laneSettingsComponent = ref<InstanceType<typeof LaneSettingsModal> | null>
 
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
+const workflowsModalOpen = ref(false)
 
 const ticketDraft = ref<TicketDraft | null>(null)
 // Set when a new ticket's staged images fail to upload: shown on that ticket's
@@ -109,7 +113,8 @@ const anyModalOpen = computed(
         laneDraftName.value !== null ||
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
-        lanePendingDeletion.value
+        lanePendingDeletion.value ||
+        workflowsModalOpen.value
     )
 )
 
@@ -151,10 +156,11 @@ const matchesQuery = (ticket: Ticket) => {
   return ticketSearchText(ticket).includes(query)
 }
 
-const ticketsInLane = (laneId: string) =>
-  board.value.tickets.filter(
-    (ticket) => ticket.laneId === laneId && matchesQuery(ticket) && matchesAssignee(ticket)
-  )
+const ticketsByLane = computed(() =>
+  groupTicketsByLane(board.value.tickets, (ticket) => matchesQuery(ticket) && matchesAssignee(ticket))
+)
+const NO_TICKETS: Ticket[] = []
+const ticketsInLane = (laneId: string) => ticketsByLane.value.get(laneId) ?? NO_TICKETS
 
 const visibleTickets = computed(() => visibleLanes.value.flatMap((lane) => ticketsInLane(lane.id)))
 
@@ -169,13 +175,19 @@ const toggleTicketSelected = (ticketId: string) => {
 }
 
 const filtersActive = computed(() =>
-  Boolean(filterQuery.value.trim() || laneFilterNarrows.value || showOnlyMine.value)
+  Boolean(filterQuery.value || laneFilterNarrows.value || showOnlyMine.value)
 )
 
 const clearFilters = () => {
   filterQuery.value = ''
   filterLaneIds.value = []
   showOnlyMine.value = false
+}
+
+const clearFilterOf = (control: BoardFilterControl) => {
+  if (control === 'query') filterQuery.value = ''
+  if (control === 'lanes') filterLaneIds.value = []
+  if (control === 'mine') showOnlyMine.value = false
 }
 
 const switchBoardView = (view: 'lanes' | 'graph') => {
@@ -230,6 +242,7 @@ const closeModals = () => {
   openLaneId.value = null
   ticketDraft.value = null
   laneDraftName.value = null
+  workflowsModalOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -347,7 +360,10 @@ const autoRunSplit = (lane: SwimLane) => {
   return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
 
-const autoRunTicketCount = (lane: SwimLane) => autoRunSplit(lane).runnable.length
+const runnableCountByLaneId = computed(
+  () => new Map(laneColumns.value.map((lane) => [lane.id, autoRunSplit(lane).runnable.length]))
+)
+const autoRunTicketCount = (lane: SwimLane) => runnableCountByLaneId.value.get(lane.id) ?? autoRunSplit(lane).runnable.length
 
 const autoRunConfirmLaneId = ref<string | null>(null)
 const autoRunConfirmLane = computed(() => laneColumns.value.find((lane) => lane.id === autoRunConfirmLaneId.value))
@@ -417,7 +433,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
       <MetricsPanel :project-paths="[projectPath]" scope="board" inline />
     </template>
     <template #display>
-      <DisplaySettings />
+      <DisplaySettings @filter-control-hidden="clearFilterOf" />
     </template>
   </UiSettingsPanel>
 
@@ -437,6 +453,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
       :board-view="boardView"
       @clear="clearFilters"
       @switch-view="switchBoardView"
+      @open-workflows="workflowsModalOpen = true"
     />
 
     <TicketGraph
@@ -472,6 +489,8 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
       @toggle-selected="toggleTicketSelected"
     />
   </main>
+
+  <WorkflowsModal v-if="workflowsModalOpen" :project-path="projectPath" @close="workflowsModalOpen = false" />
 
   <NewTicketModal v-if="ticketDraft" :draft="ticketDraft" @close="ticketDraft = null" @save="saveTicketDraft" />
 

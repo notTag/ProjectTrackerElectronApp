@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { activeWorkflow, GITHUB_IMPORT_LANE_ID, type SwimLane } from '@/shared/projectTypes'
+import {
+  activeWorkflow,
+  GITHUB_IMPORT_LANE_ID,
+  UNASSIGNED_LANE_ID,
+  type BoardFilterControl,
+  type SwimLane
+} from '@/shared/projectTypes'
 import { useBoardContext } from './boardContext'
 
 const props = defineProps<{
@@ -11,12 +17,13 @@ const props = defineProps<{
   filtersActive: boolean
   boardView: 'lanes' | 'graph'
 }>()
-const emit = defineEmits<{ clear: []; switchView: [view: 'lanes' | 'graph'] }>()
+const emit = defineEmits<{ clear: []; switchView: [view: 'lanes' | 'graph']; openWorkflows: [] }>()
 const query = defineModel<string>('query', { required: true })
 const onlyMine = defineModel<boolean>('onlyMine', { required: true })
 const filterLaneIds = defineModel<string[]>('filterLaneIds', { required: true })
 
-const { board, laneColumns, projectPath, laneIsHidden, toggleLaneVisibility, laneTicketTotal } = useBoardContext()
+const { board, laneColumns, projectPath, laneIsHidden, toggleLaneVisibility, showsFilterControl, laneTicketTotal } =
+  useBoardContext()
 
 const activeWorkflowName = computed(() => activeWorkflow(board.value).name)
 const filterQueryInput = ref<HTMLInputElement | null>(null)
@@ -31,6 +38,9 @@ const githubImportLane = computed(
 const toggleableLanes = computed(() =>
   [laneColumns.value[0], githubImportLane.value].filter((lane): lane is SwimLane => Boolean(lane))
 )
+
+const columnToggleControl = (laneId: string): BoardFilterControl =>
+  laneId === UNASSIGNED_LANE_ID ? 'noStatus' : 'githubIssues'
 
 const laneFilterLabel = computed(() => {
   const pickedIds = props.activeFilterLaneIds
@@ -50,6 +60,12 @@ const toggleLaneFilter = (laneId: string) => {
 watch(projectPath, () => {
   laneFilterMenuOpen.value = false
 })
+watch(
+  () => showsFilterControl('lanes'),
+  (shown) => {
+    if (!shown) laneFilterMenuOpen.value = false
+  }
+)
 
 const laneFilterMenuRef = ref<HTMLElement | null>(null)
 const closeLaneFilterMenuOnOutsideClick = (event: PointerEvent) => {
@@ -88,8 +104,11 @@ defineExpose({
 
 <template>
   <section class="board-filters">
-    <span class="workflow-label" title="Active workflow">{{ activeWorkflowName }}</span>
+    <button type="button" class="workflow-label" title="Browse, switch and create workflows" @click="emit('openWorkflows')">
+      {{ activeWorkflowName }}
+    </button>
     <input
+      v-if="showsFilterControl('query')"
       ref="filterQueryInput"
       v-model="query"
       type="search"
@@ -98,7 +117,7 @@ defineExpose({
       :class="{ active: query }"
       placeholder="Filter tickets…"
     />
-    <div ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
+    <div v-if="showsFilterControl('lanes')" ref="laneFilterMenuRef" class="filter-menu" @focusout="closeLaneFilterMenuOnFocusOut">
       <button
         type="button"
         class="filter-trigger"
@@ -121,6 +140,7 @@ defineExpose({
       </div>
     </div>
     <button
+      v-if="showsFilterControl('mine')"
       class="secondary"
       :class="{ active: onlyMine }"
       title="Show only tickets assigned to me"
@@ -128,16 +148,17 @@ defineExpose({
     >
       Assigned to me
     </button>
-    <button
-      v-for="lane in toggleableLanes"
-      :key="lane.id"
-      class="secondary"
-      :class="{ active: !laneIsHidden(lane.id) }"
-      :title="`${laneIsHidden(lane.id) ? 'Show' : 'Hide'} the ${lane.name} column`"
-      @click="toggleLaneVisibility(lane.id)"
-    >
-      {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
-    </button>
+    <template v-for="lane in toggleableLanes" :key="lane.id">
+      <button
+        v-if="showsFilterControl(columnToggleControl(lane.id))"
+        class="secondary"
+        :class="{ active: !laneIsHidden(lane.id) }"
+        :title="`${laneIsHidden(lane.id) ? 'Show' : 'Hide'} the ${lane.name} column`"
+        @click="toggleLaneVisibility(lane.id)"
+      >
+        {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
+      </button>
+    </template>
     <span class="filter-count">{{ visibleTicketCount }} of {{ board.tickets.length }}</span>
     <button v-if="filtersActive" class="secondary" @click="emit('clear')">Clear</button>
     <div class="board-view-switch" role="group" aria-label="Ticket view" :class="{ 'is-graph': boardView === 'graph' }">

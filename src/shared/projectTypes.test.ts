@@ -48,6 +48,7 @@ import {
   getBoard,
   moveLaneInBoard,
   removeLaneFromBoard,
+  workflowNameProblem,
   getUnassignedLane,
   boardLaneColumns,
   normalizeBoard,
@@ -86,6 +87,7 @@ import {
   setLaneWidth,
   toggleCardField,
   toggleModalField,
+  toggleFilterControl,
   toggleLaneModalField,
   toggleLaneModalFieldInLane,
   toggleHiddenLane,
@@ -354,9 +356,16 @@ describe('normalizeBoard', () => {
       lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }],
       tickets: [{ id: 'a', number: 1, laneId: 'idea', title: 'A', description: '', createdAt: '2026-01-01T00:00:00.000Z' }]
     }
-    const withWorkflows = { ...board, workflows: [{ id: 'default', name: 'Default' }, { id: 'w2', name: 'Hotfix' }] }
+    const withWorkflows = { ...board, workflows: [{ id: 'default', name: 'Development Workflow' }, { id: 'w2', name: 'Hotfix' }] }
     expect(removeLaneFromBoard(board, 'idea').tickets[0].laneId).toBe(UNASSIGNED_LANE_ID)
     expect(removeLaneFromBoard(withWorkflows, 'idea').tickets[0].laneId).toBe('idea')
+  })
+
+  it('requires a workflow name that no other workflow uses, ignoring case and spaces', () => {
+    const existing = [{ id: 'default', name: 'Development Workflow' }]
+    expect(workflowNameProblem('  ', existing)).toBe('Name the workflow.')
+    expect(workflowNameProblem(' development workflow ', existing)).toBe('A workflow with that name already exists.')
+    expect(workflowNameProblem('Hotfix', existing)).toBe('')
   })
 
   it('writes no lane change for a ticket parked in another workflow’s lane', () => {
@@ -608,6 +617,18 @@ describe('board preferences', () => {
     const savedBeforeLaneFields = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
     expect(savedBeforeLaneFields.hiddenLaneModalFields).toEqual([])
     expect(savedBeforeLaneFields.hiddenLaneModalFieldsByLane).toEqual({})
+  })
+
+  it('hides a filter bar control and shows it again', () => {
+    const original = createDefaultBoardPreferences()
+    const hidden = toggleFilterControl(original, 'mine')
+    expect(hidden.hiddenFilterControls).toEqual(['mine'])
+    expect(toggleFilterControl(hidden, 'mine').hiddenFilterControls).toEqual([])
+  })
+
+  it('reads preferences saved before filter controls could be hidden as all shown', () => {
+    const savedBeforeFilterControls = getBoardPreferences(stateWith({ hiddenLaneIds: [] }), '/repo')
+    expect(savedBeforeFilterControls.hiddenFilterControls).toEqual([])
   })
 
   it('hides a lane settings field on the whole board and shows it again', () => {

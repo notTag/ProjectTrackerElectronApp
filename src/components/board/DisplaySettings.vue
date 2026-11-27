@@ -1,17 +1,35 @@
 <script setup lang="ts">
 import InfoTip from '@/components/InfoTip.vue'
 import {
+  BOARD_FILTER_CONTROLS,
   toggleCardField,
+  toggleFilterControl,
   toggleLaneModalField,
   LANE_MODAL_FIELDS,
   TICKET_CARD_FIELDS,
+  type BoardFilterControl,
   type LaneModalField,
   type TicketCardField
 } from '@/shared/projectTypes'
 import { useBoardContext } from './boardContext'
 
-const { laneColumns, preferences, savePreferences, laneIsHidden, toggleLaneVisibility, laneTicketTotal } =
-  useBoardContext()
+const emit = defineEmits<{ filterControlHidden: [control: BoardFilterControl] }>()
+
+const {
+  laneColumns,
+  preferences,
+  savePreferences,
+  laneIsHidden,
+  toggleLaneVisibility,
+  showsFilterControl,
+  laneTicketTotal
+} = useBoardContext()
+
+// A hidden control can't be undone from the filter bar, so its filter is cleared with it.
+const toggleFilterControlOnBoard = (control: BoardFilterControl) => {
+  if (showsFilterControl(control)) emit('filterControlHidden', control)
+  savePreferences(toggleFilterControl(preferences.value, control))
+}
 
 const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 const toggleField = (field: TicketCardField) => savePreferences(toggleCardField(preferences.value, field))
@@ -22,6 +40,25 @@ const toggleLaneFieldOnBoard = (field: LaneModalField) => savePreferences(toggle
 </script>
 
 <template>
+  <span class="label-with-tip">
+    <p class="eyebrow">Ticket Dashboard</p>
+    <InfoTip text="Show/Hide filter bar controls" />
+  </span>
+  <ul class="card-field-list">
+    <li v-for="control in BOARD_FILTER_CONTROLS" :key="control.id">
+      <label>
+        <input
+          type="checkbox"
+          :checked="showsFilterControl(control.id)"
+          @change="toggleFilterControlOnBoard(control.id)"
+        />
+        {{ control.label }}
+      </label>
+    </li>
+  </ul>
+
+  <hr />
+
   <div class="label-with-tip">
     <p class="eyebrow">Swimlane</p>
     <InfoTip text="Show/Hide Swimlane's" />

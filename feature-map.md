@@ -46,6 +46,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 - Enter goes to the next match and Shift+Enter to the previous one. There are also ↑ and ↓ buttons, disabled when nothing matches.
 - Escape or × closes the bar, clears the highlights and puts focus back where it was.
 - The bar closes itself when you switch views.
+- While the bar has a query, virtualized lanes mount every card so off-screen tickets match; closing the bar re-virtualizes (`src/pageFind.ts`).
 
 ### 1.5 Theme picker — `src/components/ThemePicker.vue`
 
@@ -244,7 +245,7 @@ From left to right:
 | **Open In** picker | Right of the title; its menu opens rightward. See 1.6 |
 | **⌁ Open** | Right of Open In. Opens the project folder in the Open In app |
 | **← Projects** | Back to the Dashboard. Escape does the same when no modal is open |
-| **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Default**). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
+| **Workflow** picker | Shows the active workflow (a named set of swim lanes with all their settings and prompts; every board starts with **Development Workflow**; boards whose built-in workflow was stored as "Default" are renamed on startup unless the name is taken). Lists the board's workflows, the active one checked; picking one swaps the board's lanes at once. Tickets keep their lane: one whose lane the new workflow lacks shows under No status until you swap back or move it. **Create new Workflow** asks for a name (required, unique on the board), copies the current lanes under the same ids, and makes the copy active. Lane edits always belong to the active workflow. Disabled, with a tooltip, while a lane is launching or a ticket agent is running on the board. Stored in `workflows` and `projects.active_workflow_id`, shared by all members |
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
@@ -264,7 +265,7 @@ See 1.7. Board notices include:
 
 From left to right:
 
-- The active workflow's name (3.1 Workflow picker), as a bold label.
+- The active workflow's name (3.1 Workflow picker), as a bold label. Clicking it opens the **Workflows** modal: a scrollable list of the board's workflows (active one ✓; click another to switch, disabled while an agent or orchestrator runs) and a solid-bordered **+ Create new Workflow** tile that asks for a unique name and copies the current lanes into a new active workflow. Escape, backdrop click or Close dismiss it.
 - **Filter tickets…** text box. It matches the ticket number (`#12`), title, description, labels and branch, ignoring case.
   - **⌘⇧F** (Ctrl+Shift+F) focuses the box and selects its text, from anywhere on the board. Ignored while a modal is open.
   - A theme-coloured **✕** shows inside the box while it has text. Clicking it empties only the text; the lane and assignee filters stay, and focus stays in the box. Escape leaves the box without clearing it. (`board/BoardFilters.vue`, `.filter-query::-webkit-search-cancel-button` in `styles.css`)
@@ -272,7 +273,8 @@ From left to right:
 - **Assigned to me** toggle: shows only tickets assigned to the current user.
 - **Column toggles** for **No status (N)** and, once issues have been imported, **GitHub Issues (N)**. Each one shows or hides that column; N is the total number of tickets in it.
 - **"X of Y"** count: visible tickets out of all tickets.
-- **Clear**: appears when any filter is set and resets the text, lane and assignee filters.
+- **Clear**: appears when any filter is set (any text in the box, spaces included) and resets the text, lane and assignee filters. Column toggles aren't touched.
+- The text box, Swim lane filter, Assigned to me and each column toggle can be hidden from Display → **Ticket Dashboard** (3.5). Hiding one with a filter set clears that filter. Hiding a column toggle hides only the button, not the column. With the text box hidden, ⌘⇧F does nothing.
 - **View switch**: a two-button slider for **Graph view** and **Swimlane view** (the default). Switching closes any open ticket.
 
 ### 3.4 Swimlane view
@@ -291,6 +293,8 @@ From left to right:
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
 - You can drop a ticket on any lane to move it there.
+- **Long lanes are virtualized**: a lane over 50 cards mounts only the cards within one screen of its viewport, with spacers for the rest (estimated height, replaced by measured heights). The header count still shows every matching ticket. A card mid-drag stays mounted. Find on page with a query mounts every card so native find sees them (`LaneCardList.vue`, `src/shared/cardWindow.ts`).
+- Tickets are grouped by lane once per change (`groupTicketsByLane` in `projectTypes.ts`); cards, counts, badges and the graph all read that map. Ticket-only writes patch the one row in place, so unchanged cards don't re-render (`TicketCard.vue`).
 
 #### Ticket card
 
@@ -319,6 +323,7 @@ From left to right:
 
 ### 3.5 Display settings (⚙ Settings → Display)
 
+- **Ticket Dashboard** (first): a checkbox per filter bar control (Ticket filter box, Swim lane filter, Assigned to me, No status toggle, GitHub Issues toggle). All on by default; unchecking hides it from the filter bar (3.3). Saved per user in `BoardPreferences.hiddenFilterControls` (`BOARD_FILTER_CONTROLS` in `projectTypes.ts`). The GitHub Issues row shows even before issues are imported.
 - **Ticket Card**: first row is **Title**, checked and disabled because the title always shows (a static row, not a `TICKET_CARD_FIELDS` entry, so nothing is saved for it). Below it, a checkbox per optional card field (Ticket number, Description, Assignee, Labels, Checklist progress, Branch, Worktree, GitHub PR, Semantic version). All are on by default.
 - **Swim lane settings fields**: a checkbox per Lane settings modal field (flat list, in the modal's order: Agent, then Orchestrator, then Auto Run fields). Hides it in every lane's settings; saved per user in `BoardPreferences.hiddenLaneModalFields`. Display-only: the agent still gets the value.
 - **Columns**: a checkbox per column (No status first, then every lane in board order, each with its ticket count) to show or hide it. New lanes start shown.
@@ -415,7 +420,7 @@ In graph view this opens as a side panel instead of a centered modal.
 
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
-- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119).
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119). The tip bubble is a manual popover in the top layer, anchored to its ⓘ with CSS anchor positioning, so a modal's overflow never clips it; near the right or bottom edge it flips to stay on screen (#138).
 - **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
@@ -537,7 +542,7 @@ In graph view this opens as a side panel instead of a centered modal.
 ### 3.12 Graph view
 
 - A workflow editor for the board. Each **Swim lane** is a node ("Swim lane · N", N = its ticket count). Tickets themselves are not shown.
-- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). Moving a node never reorders the swimlane columns. A click without movement selects the lane.
+- **Moving nodes**: drag a node anywhere on the canvas. Its spot is saved on drop (`swim_lanes.graph_position_json`, `SwimLane.graphPosition`) and kept across view switches and restarts. A lane never dragged sits in its row slot, left to right in board order (`laneGraphPosition` in `projectTypes.ts`). The No status node moves the same way. Moving a node never reorders the swimlane columns. A click without movement selects the lane.
 - **Connecting**: every node has a dot on its left and right edge. Drag from either dot and an arrow follows the pointer; release on any dot of another lane to set the origin lane's Next Lane to it. A lane has at most one outgoing arrow: connecting again replaces it. Releasing on empty canvas or on the origin lane changes nothing.
 - **Transitions**: an arrow from a lane's right dot to its Next Lane's left dot. Arrows pointing back left loop below the nodes. Click an arrow to select it, then press Delete/Backspace or its **×** to clear that lane's Next Lane.
 - **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
@@ -612,7 +617,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 
 - Context isolation is on, Node integration is off, and the renderer is sandboxed. The renderer can only reach the API the preload script exposes.
 - Every IPC handler checks which page sent the request: the `file://` page in packaged builds, the dev server URL (`VITE_DEV_SERVER_URL`, port picked per checkout) in development. The web server's equivalent is its request guard (4.8).
-- Payloads are type-checked, and paths are normalized to POSIX absolute paths.
+- Payloads are type-checked, and paths are normalized to POSIX absolute paths. A rejected ticket or lane patch names the first bad key: `Invalid lane update payload: rejected key "<key>".` (`rejectedPatchKey` in `electron/ipcHandlers.ts`)
 - Project-scoped actions refuse paths outside the configured scan directories: Open In, Auto Run, agent runs and README reads.
 - Open In targets, Auto Run terminals and agents are looked up by id in fixed lists, so the renderer can't choose which program runs.
 - Child processes get their arguments as an array, never through a shell.
@@ -627,7 +632,7 @@ If the prompt starts with `-`, it's prefixed with "Instructions:" so the CLI doe
 - `bun run start:prod` launches a fresh copy of the packaged app.
 - `bun run eval` runs the behavioral prompt evals (see 4.7). It's opt-in and never part of `bun run test` or CI.
 - `bun run set-version <version> <ticket>...` (`scripts/set-ticket-version.mjs`) stamps one SemVer on many tickets in the tracker DB. Tickets as `12 14 15,16`; a `#` prefix must be quoted (`'#14'`) or the shell treats it as a comment. Project defaults to the main checkout of the cwd repo (works from worktrees); `--project` / `--db` override. All-or-nothing: any number missing for that project → error, nothing written. Prints `#N title: from → to` per ticket. The app picks the change up live.
-- `bun run scale-test [--keep] [--port 9333]` (`scripts/scale-test.mjs`) grows one throwaway board on a `.backup` copy of the live DB (isolated `PROJECT_TRACKER_USER_DATA`) and times ticket create + open through the real UI over CDP at 10…100 (step 10), then every 100, until median-of-3 creation > 5 s, 20,000 tickets or 60 min. Writes a CSV; `scripts/scale-report.mjs` turns it into a PDF via `printToPDF`. Last run: `docs/reports/t118-scaling-report.pdf`.
+- `bun run scale-test [--keep] [--port 9333]` (`scripts/scale-test.mjs`) grows one throwaway board on a `.backup` copy of the live DB (isolated `PROJECT_TRACKER_USER_DATA`) and times ticket create + open through the real UI over CDP at 10…100 (step 10), then every 100, until median-of-3 creation > 5 s, 20,000 tickets or 60 min. Writes a CSV; `scripts/scale-report.mjs` turns it into a PDF via `printToPDF`. `--tag <name>` names the output files. Last runs: `docs/reports/t118-scaling-report.pdf` (before), `docs/reports/t134-scaling-report.pdf` (after #134).
 - CI (`.github/workflows/ci.yml`): one `check` job on `ubuntu-latest` runs `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test` and `bun run build` on every PR to `main` and every push to `main`. Bun is pinned to 1.3.11; Node 22 is set up because vitest runs under Node and `node:sqlite` needs ≥ 22.5. `check` is a required status check on `main`. No `.dmg` packaging in CI (needs signing creds).
 
 ### 4.7 Lane prompt evals — `evals/`

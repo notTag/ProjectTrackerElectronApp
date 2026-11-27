@@ -10,6 +10,7 @@ import {
   currentLaneOf,
   getUnassignedLane,
   toggleHiddenLane,
+  type BoardFilterControl,
   UNASSIGNED_LANE_ID,
   type Agent,
   type OrchestratorPromptContext,
@@ -49,6 +50,9 @@ export const useBoardContext = () => {
   const hiddenLaneIds = computed(() => new Set(preferences.value.hiddenLaneIds))
   const laneIsHidden = (laneId: string) => hiddenLaneIds.value.has(laneId)
   const toggleLaneVisibility = (laneId: string) => savePreferences(toggleHiddenLane(preferences.value, laneId))
+
+  const showsFilterControl = (control: BoardFilterControl) =>
+    !preferences.value.hiddenFilterControls.includes(control)
 
   const laneTicketTotal = (laneId: string) =>
     board.value.tickets.filter((ticket) => ticket.laneId === laneId).length
@@ -103,6 +107,7 @@ export const useBoardContext = () => {
     savePreferences,
     laneIsHidden,
     toggleLaneVisibility,
+    showsFilterControl,
     laneTicketTotal,
     editLane,
     laneName,

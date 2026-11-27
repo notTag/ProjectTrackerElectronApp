@@ -1,27 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import LaneCardList from '@/components/LaneCardList.vue'
+import TicketCard from '@/components/TicketCard.vue'
+import { pageFindActive } from '@/pageFind'
 import {
   DEFAULT_LANE_WIDTH,
-  agentRunBadge,
   carriedTicketIds,
-  checklistProgress,
   clampLaneWidth,
   findAgent,
   hasUnseenAgentResult,
   isFullAuto,
   isReadyToMove,
-  isWebUrl,
   moveLaneInBoard,
-  pullRequestLabel,
-  pullRequestStatusLabel,
   setLaneWidth,
   ticketIdsToMove,
-  worktreeFolderName,
   UNASSIGNED_LANE_ID,
-  type AgentRunBadge,
   type SwimLane,
-  type Ticket,
-  type TicketCardField
+  type Ticket
 } from '@/shared/projectTypes'
 import { useBoardContext } from './boardContext'
 
@@ -54,8 +49,6 @@ const {
   laneOfTicket,
   autoRunTerminal
 } = useBoardContext()
-
-const showsField = (field: TicketCardField) => preferences.value.cardFields.includes(field)
 
 // Held as one object so a drag reads its own start point rather than a set of
 // refs that can fall out of sync when a second pointer arrives.
@@ -340,24 +333,15 @@ const readyLaneNameByTicketId = computed(() => {
   return names
 })
 
-// Glyphs, not just colour, tell success from failure.
-const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
-  running: { className: 'agent-status-running', label: 'Agent running' },
-  succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
-  failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
-  interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
-}
-
-const cardAgentBadge = (ticket: Ticket) => {
-  const running = Boolean(store.agentRunning[ticket.id])
-  const badge = agentRunBadge(ticket, running)
-  return badge ? AGENT_BADGES[badge] : null
-}
-
 // A re-running ticket shows the running dot, not its old result, so the lane
 // count leaves it out too.
 const showsUnseenResult = (ticket: Ticket) => !store.agentRunning[ticket.id] && hasUnseenAgentResult(ticket)
-const unseenAgentResultCount = (laneId: string) => props.ticketsInLane(laneId).filter(showsUnseenResult).length
+const unseenCountByLaneId = computed(() => {
+  const counts = new Map<string, number>()
+  for (const lane of props.visibleLanes) counts.set(lane.id, props.ticketsInLane(lane.id).filter(showsUnseenResult).length)
+  return counts
+})
+const unseenAgentResultCount = (laneId: string) => unseenCountByLaneId.value.get(laneId) ?? 0
 
 // Claimed first in BoardView's Escape order: an unhandled Escape leaves the board.
 defineExpose({
@@ -440,99 +424,28 @@ defineExpose({
         </button>
       </header>
 
-      <div class="lane-body" @dblclick.self="emit('newTicket', lane.id)">
-        <article
-          v-for="ticket in ticketsInLane(lane.id)"
-          :key="ticket.id"
-          class="ticket"
-          :class="{ 'ticket-carried': isCarriedBehind(ticket.id) }"
-          draggable="true"
-          @dragstart="startTicketDrag($event, ticket.id)"
-          @dragend="draggedTicketId = null"
-          @click="emit('openTicket', ticket.id)"
-        >
-          <input
-            type="checkbox"
-            class="ticket-select"
-            :checked="selectedTicketIds.has(ticket.id)"
-            :aria-label="`Select #${ticket.number} (run / move)`"
-            title="Select (run / move)"
-            @click.stop
-            @change="emit('toggleSelected', ticket.id)"
-          />
-          <h3>
-            <span
-              v-if="cardAgentBadge(ticket)"
-              :class="['agent-status', cardAgentBadge(ticket)?.className]"
-              role="img"
-              :aria-label="cardAgentBadge(ticket)?.label"
-              :title="cardAgentBadge(ticket)?.label"
-            >{{ cardAgentBadge(ticket)?.glyph }}</span>
-            <span v-if="showsField('number')" class="ticket-number">#{{ ticket.number }}</span>
-            {{ ticket.title }}
-            <span
-              v-if="isFullAuto(ticket, laneOfTicket(ticket))"
-              class="full-auto-badge"
-              title="Full auto: the next lane's agent starts when this one moves the ticket on"
-            >auto</span>
-            <span
-              v-if="readyLaneNameByTicketId.has(ticket.id)"
-              class="full-auto-badge ready-badge"
-              :title="`Move rules and checklist pass; ready to move to ${readyLaneNameByTicketId.get(ticket.id)}`"
-            >ready → {{ readyLaneNameByTicketId.get(ticket.id) }}</span>
-          </h3>
-          <p v-if="showsField('description') && ticket.description" class="ticket-preview">
-            {{ ticket.description }}
-          </p>
-          <p v-if="showsField('assignee') && ticket.assigneeId" class="ticket-assignee">
-            {{ assigneeName(ticket.assigneeId) }}
-          </p>
-          <ul v-if="showsField('labels') && ticket.labels?.length" class="ticket-labels">
-            <li v-for="label in ticket.labels" :key="label">{{ label }}</li>
-          </ul>
-          <p
-            v-if="
-              (showsField('checklist') && ticket.checklist?.length) ||
-              (showsField('branch') && ticket.branchName) ||
-              (showsField('worktree') && ticket.worktreePath) ||
-              (showsField('version') && ticket.version) ||
-              (showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl))
-            "
-            class="ticket-meta"
-          >
-            <span v-if="showsField('checklist') && ticket.checklist?.length">
-              ☑ {{ checklistProgress(ticket.checklist).done }}/{{ checklistProgress(ticket.checklist).total }}
-            </span>
-            <span v-if="showsField('branch') && ticket.branchName" class="ticket-branch">
-              ⑂ {{ ticket.branchName }}
-            </span>
-            <span
-              v-if="showsField('worktree') && ticket.worktreePath"
-              class="ticket-branch"
-              :title="ticket.worktreePath"
-            >
-              ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
-            </span>
-            <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
-            <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
-            <a
-              v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
-              :href="ticket.pullRequestUrl"
-              target="_blank"
-              draggable="false"
-              @click.stop
-            >
-              <span
-                v-if="ticket.pullRequestState"
-                class="pull-request-dot"
-                :data-state="ticket.pullRequestState"
-                :title="pullRequestStatusLabel(ticket.pullRequestState)"
-              ></span>
-              {{ pullRequestLabel(ticket.pullRequestUrl) }} ↗
-            </a>
-          </p>
-        </article>
-      </div>
+      <LaneCardList
+        v-slot="{ ticket }"
+        :tickets="ticketsInLane(lane.id)"
+        :render-all="pageFindActive"
+        :keep-mounted-id="draggedTicketId"
+        @dblclick.self="emit('newTicket', lane.id)"
+      >
+        <TicketCard
+          :ticket="ticket"
+          :card-fields="preferences.cardFields"
+          :selected="selectedTicketIds.has(ticket.id)"
+          :carried="isCarriedBehind(ticket.id)"
+          :agent-running="Boolean(store.agentRunning[ticket.id])"
+          :full-auto="isFullAuto(ticket, laneOfTicket(ticket))"
+          :ready-lane-name="readyLaneNameByTicketId.get(ticket.id)"
+          :assignee-name="assigneeName(ticket.assigneeId)"
+          @open="emit('openTicket', $event)"
+          @toggle-select="emit('toggleSelected', $event)"
+          @drag-start="startTicketDrag"
+          @drag-end="draggedTicketId = null"
+        />
+      </LaneCardList>
 
       <div
         class="lane-resize-handle"
