@@ -168,7 +168,7 @@ watch(
   () => props.ticket.id,
   (_ticketId, previousTicketId) => {
     if (previousTicketId !== undefined) {
-      imageError.value = null
+      imageError.value = props.initialImageError ?? null
       checklistDraft.value = ''
       linkDraft.value = ''
       linkDraftInvalid.value = false
@@ -241,9 +241,11 @@ const editTicketLinks = (ticket: Ticket, change: (links?: string[]) => string[])
 
 const ticketImageUrl = (imagePath: string) => projectTrackerApi.ticketImageUrl(imagePath)
 
+// A later success must not wipe an error another image action raised meanwhile.
 const showImageResult = async (saving: Promise<string | null>) => {
   imageError.value = null
-  imageError.value = await saving
+  const savingError = await saving
+  if (savingError) imageError.value = savingError
 }
 
 const pickTicketImages = (ticket: Ticket) =>

@@ -63,20 +63,24 @@ const showOnlyMine = ref(false)
 // Empty = every lane. Read through activeFilterLaneIds, never directly.
 const filterLaneIds = ref<string[]>([])
 
-const filtersElement = ref<InstanceType<typeof BoardFilters> | null>(null)
-const lanesElement = ref<InstanceType<typeof BoardLanes> | null>(null)
-const ticketModalElement = ref<InstanceType<typeof TicketModal> | null>(null)
-const laneSettingsElement = ref<InstanceType<typeof LaneSettingsModal> | null>(null)
+const filtersComponent = ref<InstanceType<typeof BoardFilters> | null>(null)
+const lanesComponent = ref<InstanceType<typeof BoardLanes> | null>(null)
+const ticketModalComponent = ref<InstanceType<typeof TicketModal> | null>(null)
+const laneSettingsComponent = ref<InstanceType<typeof LaneSettingsModal> | null>(null)
 
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
 
 const ticketDraft = ref<TicketDraft | null>(null)
-// Set when a new ticket's staged images fail to upload: shown on that ticket's modal.
-const newTicketImageError = ref<string | null>(null)
-// An image error belongs to the ticket it happened on, not the next one opened.
+// Set when a new ticket's staged images fail to upload: shown on that ticket's
+// modal only, even if another ticket was open when the upload failed.
+const newTicketImageError = ref<{ ticketId: string; message: string } | null>(null)
 watch(openTicketId, (ticketId) => {
   if (!ticketId) newTicketImageError.value = null
+})
+const openTicketImageError = computed(() => {
+  const uploadError = newTicketImageError.value
+  return uploadError?.ticketId === openTicketId.value ? uploadError.message : null
 })
 
 // Blob URLs pin their File in memory until revoked, so a closed or replaced
@@ -241,15 +245,15 @@ const isFilterShortcut = (event: KeyboardEvent) => {
 const handleBoardKeydown = (event: KeyboardEvent) => {
   if (isFilterShortcut(event)) {
     event.preventDefault()
-    if (!anyModalOpen.value) filtersElement.value?.focus()
+    if (!anyModalOpen.value) filtersComponent.value?.focus()
     return
   }
   if (event.key !== 'Escape') return
   const claimEscape = () => event.preventDefault()
   // Claimed before anything else: an unhandled Escape leaves the board.
-  if (lanesElement.value?.cancelDragOnEscape()) return claimEscape()
-  if (ticketModalElement.value?.closeMenuOnEscape()) return claimEscape()
-  if (laneSettingsElement.value?.closeMenuOnEscape()) return claimEscape()
+  if (lanesComponent.value?.cancelDragOnEscape()) return claimEscape()
+  if (ticketModalComponent.value?.closeMenuOnEscape()) return claimEscape()
+  if (laneSettingsComponent.value?.closeMenuOnEscape()) return claimEscape()
   // The delete confirm sits on top of the ticket modal; Escape backs out of it alone.
   if (ticketPendingDeletion.value) {
     ticketPendingDeletion.value = null
@@ -263,7 +267,7 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
     closeModals()
     return claimEscape()
   }
-  if (filtersElement.value?.closeMenuOnEscape()) return claimEscape()
+  if (filtersComponent.value?.closeMenuOnEscape()) return claimEscape()
   if (uiDemoPanelOpen.value) {
     uiDemoPanelOpen.value = false
     return claimEscape()
@@ -271,7 +275,7 @@ const handleBoardKeydown = (event: KeyboardEvent) => {
   // The shortcut lands people in the filter, so Escape there should only leave
   // the filter, not the board. A search input's default Escape action clears
   // its value; preventDefault keeps the text.
-  if (filtersElement.value?.blurInputOnEscape(event.target)) return claimEscape()
+  if (filtersComponent.value?.blurInputOnEscape(event.target)) return claimEscape()
   void router.push('/')
 }
 
@@ -297,8 +301,13 @@ const saveTicketDraft = async (draft: TicketDraftSave) => {
   const imageError = await saveImageFiles(projectPath.value, { id: ticketId }, draft.files)
   // The draft modal is gone, so show an upload failure on the ticket it belongs to.
   if (!imageError) return
-  newTicketImageError.value = imageError
+  newTicketImageError.value = { ticketId, message: imageError }
   openTicketId.value = ticketId
+}
+
+const startLaneDraftAt = (graphPosition: GraphPosition) => {
+  laneDraftGraphPosition.value = graphPosition
+  laneDraftName.value = ''
 }
 
 const saveLaneDraft = async () => {
@@ -416,7 +425,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
     <MessageBanners />
 
     <BoardFilters
-      ref="filtersElement"
+      ref="filtersComponent"
       v-model:query="filterQuery"
       v-model:only-mine="showOnlyMine"
       v-model:filter-lane-ids="filterLaneIds"
@@ -430,7 +439,17 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
       @switch-view="switchBoardView"
     />
 
-    <TicketGraph v-if="boardView === 'graph'" :project-name="projectTitle" :lanes="visibleLanes" :board-lanes="laneColumns" :tickets="visibleTickets" :ticket-open="Boolean(openTicket)" @selection="openTicketId = null" @edit-lane="editLane" @add-lane="laneDraftGraphPosition = $event; laneDraftName = ''" />
+    <TicketGraph
+      v-if="boardView === 'graph'"
+      :project-name="projectTitle"
+      :lanes="visibleLanes"
+      :board-lanes="laneColumns"
+      :tickets="visibleTickets"
+      :ticket-open="Boolean(openTicket)"
+      @selection="openTicketId = null"
+      @edit-lane="editLane"
+      @add-lane="startLaneDraftAt"
+    />
     <section v-else-if="board.lanes.length === 0" class="board-empty">
       <p>No swim lanes yet.</p>
       <button @click="laneDraftName = ''">Create swim lane</button>
@@ -438,7 +457,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
 
     <BoardLanes
       v-else
-      ref="lanesElement"
+      ref="lanesComponent"
       :visible-lanes="visibleLanes"
       :visible-tickets="visibleTickets"
       :tickets-in-lane="ticketsInLane"
@@ -469,10 +488,10 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
 
   <TicketModal
     v-if="openTicket"
-    ref="ticketModalElement"
+    ref="ticketModalComponent"
     :ticket="openTicket"
     :board-view="boardView"
-    :initial-image-error="newTicketImageError"
+    :initial-image-error="openTicketImageError"
     @close="closeModals"
     @delete="ticketPendingDeletion = $event"
   />
@@ -499,7 +518,7 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
 
   <LaneSettingsModal
     v-if="openLane"
-    ref="laneSettingsElement"
+    ref="laneSettingsComponent"
     :lane="openLane"
     :save-state="laneMarkdownSaveState"
     @close="openLaneId = null"
