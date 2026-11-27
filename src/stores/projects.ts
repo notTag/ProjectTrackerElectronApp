@@ -86,7 +86,6 @@ interface ProjectsStoreState {
   agentRunning: Record<string, boolean>
   // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
   autoRunning: Record<string, boolean>
-  // The global Swimlane Store (#146), sorted by name. Empty until loadLaneStore.
   laneStoreEntries: LaneStoreEntry[]
 }
 
@@ -404,18 +403,17 @@ export const useProjectsStore = defineStore('projects', {
       return this.writeWorkflow(projectPath, () => projectTrackerApi.createWorkflow(projectPath, name))
     },
 
-    // Rejects with the reason, so the lane modal can show it inline. The
-    // identity write first stores a never-saved board's lanes, queued behind
-    // any pending lane edit, so the snapshot holds what the modal shows.
     async saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry> {
       await this.writeBoard(projectPath, boardUpdate(projectPath, (board) => board))
-      const saved = saveQueue.catch(() => undefined).then(() => projectTrackerApi.saveLaneToStore(projectPath, laneId))
+      const queueSettled = saveQueue.catch(() => undefined)
+      const saved = queueSettled.then(() => projectTrackerApi.saveLaneToStore(projectPath, laneId))
       saveQueue = saved.then(
         () => undefined,
         () => undefined
       )
       const entry = await saved
-      await this.loadLaneStore()
+      const otherEntries = this.laneStoreEntries.filter((stored) => stored.id !== entry.id)
+      this.laneStoreEntries = [...otherEntries, entry].sort((a, b) => a.name.localeCompare(b.name))
       return entry
     },
 

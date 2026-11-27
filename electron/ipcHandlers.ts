@@ -468,8 +468,6 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
     'lane-store:list': (_payload, { repository }) => toPlainJson(repository.listLaneStore()),
 
-    // Prompts are read from the lane's files now: the store carries content,
-    // since a file path only means something inside its own project.
     'lane-store:save': (payload, { repository }) => {
       const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
       if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane store save payload.')
@@ -480,8 +478,8 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const readMarkdown = (kind: LaneMarkdownKind, filePath: string) => {
         const markdownTarget = { kind, projectPath: normalized, laneName: lane.name, filePath }
         const resolvedPath = resolveAgentMarkdownPath(markdownTarget)
-        if (!isInsideAny(resolvedPath, scanDirectories)) throw new Error('Markdown file must be inside a scanned directory.')
-        return readLaneMarkdown(markdownTarget)
+        const readable = isInsideAny(resolvedPath, scanDirectories)
+        return readable ? readLaneMarkdown(markdownTarget) : ''
       }
       const markdown = {
         agent: readMarkdown('agent', lane.agentFilePath),
@@ -500,10 +498,11 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, entryId } = (payload ?? {}) as { projectPath?: unknown; entryId?: unknown }
       if (typeof projectPath !== 'string' || typeof entryId !== 'string') throw new Error('Invalid lane store add payload.')
       const normalized = assertScannedProjectPath(repository, projectPath)
-      const added = repository.addLaneFromStore(normalized, entryId)
-      const laneFolder = { projectPath: normalized, laneName: added.laneName }
-      writeMissingLaneMarkdown({ ...laneFolder, kind: 'agent' }, added.agentMarkdown)
-      writeMissingLaneMarkdown({ ...laneFolder, kind: 'orchestrator' }, added.orchestratorMarkdown)
+      repository.addLaneFromStore(normalized, entryId, (prompts) => {
+        const laneFolder = { projectPath: normalized, laneName: prompts.laneName }
+        writeMissingLaneMarkdown({ ...laneFolder, kind: 'agent' }, prompts.agentMarkdown)
+        writeMissingLaneMarkdown({ ...laneFolder, kind: 'orchestrator' }, prompts.orchestratorMarkdown)
+      })
       return toPlainJson(repository.getState())
     },
 

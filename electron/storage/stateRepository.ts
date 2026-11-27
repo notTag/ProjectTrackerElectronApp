@@ -17,6 +17,7 @@ import {
   sameRow,
   SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
+  laneFolderName,
   type BoardPreferences,
   type MetricWindowCounts,
   type MetricWindows,
@@ -63,6 +64,12 @@ export const isSnapshotFileName = (fileName: string) =>
 
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
+
+export interface StoredLanePrompts {
+  laneName: string
+  agentMarkdown: string
+  orchestratorMarkdown: string
+}
 
 export interface ClosedTicketMetrics {
   projectPath: string
@@ -742,8 +749,6 @@ export class StateRepository {
     }))
   }
 
-  // Same lane id + name (any case) overwrites that entry, so saving a lane
-  // twice never leaves two copies.
   saveLaneToStore(projectPath: string, laneId: string, markdown: { agent: string; orchestrator: string }): LaneStoreEntry {
     if (laneId === UNASSIGNED_LANE_ID) throw new Error('The No status lane cannot be saved to the store.')
     const entryId = this.transaction(() => {
@@ -776,11 +781,11 @@ export class StateRepository {
     this.run('DELETE FROM lane_store WHERE id = ?', [entryId])
   }
 
-  // Lands in the live lanes, so it joins the active workflow. The lane keeps
-  // its stored id, bringing back tickets parked under it; a clash refuses
-  // rather than minting a new id. File paths are cleared: the caller writes
-  // the markdown to the lane's default folder.
-  addLaneFromStore(projectPath: string, entryId: string): { laneName: string; agentMarkdown: string; orchestratorMarkdown: string } {
+  addLaneFromStore(
+    projectPath: string,
+    entryId: string,
+    writePrompts: (prompts: StoredLanePrompts) => void = () => {}
+  ): StoredLanePrompts {
     const added = this.transaction(() => {
       const [entry] = this.select('SELECT * FROM lane_store WHERE id = ?', [entryId])
       if (!entry) throw new Error('That store entry no longer exists.')
@@ -788,10 +793,17 @@ export class StateRepository {
       const taken = this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
       if (taken.length > 0) throw new Error('A lane with that id is already in this workflow.')
       const storedRow = JSON.parse(String(entry.lane_json)) as Row
+      const laneName = String(storedRow.name ?? entry.name)
+      const promptFolder = laneFolderName(laneName)
+      const boardLaneNames = this.select('SELECT name FROM swim_lanes WHERE project_path = ?', [projectPath])
+      const promptFolderTaken = boardLaneNames.some((row) => laneFolderName(String(row.name)) === promptFolder)
+      if (promptFolderTaken) throw new Error(`Another lane on this board already uses the "${promptFolder}" prompt folder.`)
       const nextLaneId = asText(storedRow.next_lane_id)
-      const nextLaneOnBoard =
+      const nextLaneIsNoStatus = nextLaneId === UNASSIGNED_LANE_ID
+      const nextLaneHasRow =
         nextLaneId !== undefined &&
         this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, nextLaneId]).length > 0
+      const nextLaneOnBoard = nextLaneIsNoStatus || nextLaneHasRow
       const [positionRow] = this.select(
         'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0',
         [projectPath]
@@ -807,11 +819,13 @@ export class StateRepository {
         orchestrator_file_path: '',
         graph_position_json: null
       })
-      return {
-        laneName: String(storedRow.name ?? entry.name),
+      const prompts = {
+        laneName,
         agentMarkdown: String(entry.agent_markdown),
         orchestratorMarkdown: String(entry.orchestrator_markdown)
       }
+      writePrompts(prompts)
+      return prompts
     })
     return added
   }

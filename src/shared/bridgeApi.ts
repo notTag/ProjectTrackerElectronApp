@@ -96,8 +96,6 @@ export interface ProjectTrackerBridge {
   // Both return a fresh read: the board's lanes are replaced wholesale.
   activateWorkflow(projectPath: string, workflowId: string): Promise<ProjectTrackerState>
   createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState>
-  // The Swimlane Store (#146): global lane presets. Add returns a fresh read,
-  // like a workflow swap.
   listLaneStore(): Promise<LaneStoreEntry[]>
   saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry>
   deleteLaneStoreEntry(entryId: string): Promise<void>

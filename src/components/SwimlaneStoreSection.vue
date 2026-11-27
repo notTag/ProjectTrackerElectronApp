@@ -13,9 +13,8 @@ const boardLaneIds = computed(() => new Set(store.board(props.projectPath).lanes
 const agentsRunning = computed(() => store.boardAgentsRunning(props.projectPath))
 const { start, cancel, pendingActionOf } = useRowConfirm()
 const confirmButtonRef = ref<HTMLButtonElement[]>([])
-const error = ref('')
+const loadError = ref('')
 
-// Same rule as a workflow swap: lanes don't change under a running agent.
 const addBlockedReason = (entry: LaneStoreEntry): string => {
   if (boardLaneIds.value.has(entry.laneId)) return 'Already in this workflow'
   if (agentsRunning.value) return 'An agent or orchestrator is running on this board. Lanes can be added once it finishes.'
@@ -23,22 +22,21 @@ const addBlockedReason = (entry: LaneStoreEntry): string => {
 }
 
 const askToConfirm = async (entry: LaneStoreEntry, action: RowAction) => {
-  error.value = ''
   start(entry.id, action)
   await nextTick()
   confirmButtonRef.value[0]?.focus()
 }
 
+const confirmBlockedReason = (entry: LaneStoreEntry, action: RowAction): string =>
+  action === 'add' ? addBlockedReason(entry) : ''
+
 const confirm = async (entry: LaneStoreEntry, action: RowAction) => {
+  if (confirmBlockedReason(entry, action)) return
   cancel()
-  const done =
-    action === 'delete'
-      ? await store.deleteLaneStoreEntry(entry.id)
-      : await store.addLaneFromStore(props.projectPath, entry.id)
-  if (!done) error.value = store.error ?? 'That did not work.'
+  if (action === 'delete') await store.deleteLaneStoreEntry(entry.id)
+  else await store.addLaneFromStore(props.projectPath, entry.id)
 }
 
-// Blur alone misses a click that moves no focus (the window isn't focused).
 const cancelOnOutsidePointer = (event: PointerEvent) => {
   const onConfirmButton = confirmButtonRef.value.some((button) => button.contains(event.target as Node))
   if (!onConfirmButton) cancel()
@@ -47,8 +45,8 @@ const cancelOnOutsidePointer = (event: PointerEvent) => {
 onBeforeUnmount(() => window.removeEventListener('pointerdown', cancelOnOutsidePointer))
 onMounted(() => {
   window.addEventListener('pointerdown', cancelOnOutsidePointer)
-  store.loadLaneStore().catch((loadError: unknown) => {
-    error.value = loadError instanceof Error ? loadError.message : String(loadError)
+  store.loadLaneStore().catch((failure: unknown) => {
+    loadError.value = failure instanceof Error ? failure.message : String(failure)
   })
 })
 </script>
@@ -68,7 +66,11 @@ onMounted(() => {
             class="secondary swimlane-store-button"
             :class="{ danger: pendingActionOf(entry.id) === 'delete' }"
             :aria-label="pendingActionOf(entry.id) === 'delete' ? `Confirm delete ${entry.name}` : `Confirm add ${entry.name}`"
-            :title="pendingActionOf(entry.id) === 'delete' ? 'Delete from the store' : 'Add to this workflow'"
+            :title="
+              confirmBlockedReason(entry, pendingActionOf(entry.id)!) ||
+              (pendingActionOf(entry.id) === 'delete' ? 'Delete from the store' : 'Add to this workflow')
+            "
+            :disabled="Boolean(confirmBlockedReason(entry, pendingActionOf(entry.id)!))"
             @click="confirm(entry, pendingActionOf(entry.id)!)"
             @blur="cancel"
             @keydown.escape.stop="cancel"
@@ -97,6 +99,6 @@ onMounted(() => {
         </template>
       </li>
     </ul>
-    <span v-if="error" class="field-hint field-error">{{ error }}</span>
+    <span v-if="loadError" class="field-hint field-error">{{ loadError }}</span>
   </section>
 </template>

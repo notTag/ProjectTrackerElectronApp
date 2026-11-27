@@ -1386,8 +1386,6 @@ onBeforeUnmount(() => {
   commitTypedPrompts()
 })
 
-// Swimlane Store (#146). Typed prompts and their files are stored first, so
-// the snapshot matches what the modal shows.
 const laneStoreStatus = ref<LaneMarkdownStatus>(idleMarkdownStatus())
 const saveOpenLaneToStore = async (lane: SwimLane) => {
   flushMarkdownSaves()

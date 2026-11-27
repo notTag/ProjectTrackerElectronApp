@@ -672,7 +672,6 @@ describe('swimlane store (#146)', () => {
       nextLaneId: 'idea'
     })
     expect(prd?.graphPosition).toBeUndefined()
-    // qa's next lane (prd) is on the board by the time qa lands.
     expect(lanes.find((lane) => lane.id === 'qa')?.nextLaneId).toBe('prd')
   })
 
@@ -688,6 +687,40 @@ describe('swimlane store (#146)', () => {
 
     const prd = reopenedBoard(userDataPath, otherPath).lanes.find((lane) => lane.id === 'prd')
     expect(prd?.nextLaneId).toBeUndefined()
+  })
+
+  it('keeps a No status next lane even when the board has no row for it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: UNASSIGNED_LANE_ID })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+
+    repository.addLaneFromStore(otherPath, prdEntry.id)
+
+    const prd = reopenedBoard(userDataPath, otherPath).lanes.find((lane) => lane.id === 'prd')
+    expect(prd?.nextLaneId).toBe(UNASSIGNED_LANE_ID)
+  })
+
+  it('refuses a lane whose prompt folder another board lane already uses', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.createSwimLane(otherPath, { id: 'prd-copy', name: 'PRD', agentPrompt: '', agentFilePath: '' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+
+    expect(() => repository.addLaneFromStore(otherPath, prdEntry.id)).toThrow('"PRD" prompt folder')
+    expect(reopenedBoard(userDataPath, otherPath).lanes.map((lane) => lane.id)).toEqual(['idea', 'prd-copy'])
+  })
+
+  it('rolls the lane back when writing its prompts fails', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const failingWrite = () => {
+      throw new Error('disk full')
+    }
+
+    expect(() => repository.addLaneFromStore(otherPath, prdEntry.id, failingWrite)).toThrow('disk full')
+    expect(reopenedBoard(userDataPath, otherPath).lanes.map((lane) => lane.id)).toEqual(['idea'])
   })
 
   it('deletes an entry', () => {

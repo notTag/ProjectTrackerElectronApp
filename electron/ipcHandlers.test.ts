@@ -14,7 +14,6 @@ afterEach(() => {
   for (const root of createdRoots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-// Two boards under one scan directory, and the handlers the app would build.
 const setUp = () => {
   const root = mkdtempSync(path.join(tmpdir(), 'ipc-handlers-test-'))
   createdRoots.push(root)
@@ -54,7 +53,7 @@ const setUp = () => {
   })
   const context = { repository } as unknown as CallContext
   const call = (channel: keyof typeof handlers, payload?: unknown) => handlers[channel](payload, context)
-  return { call, sourcePath, targetPath }
+  return { call, repository, sourcePath, targetPath }
 }
 
 const laneFile = (projectPath: string, fileName: string) =>
@@ -96,6 +95,13 @@ describe('lane-store:* handlers (#146)', () => {
 
     call('lane-store:delete', { entryId: entry.id })
     expect(call('lane-store:list')).toEqual([])
+  })
+
+  it('saves a lane whose prompt file is outside the scan directories, without that prompt', () => {
+    const { call, repository, sourcePath } = setUp()
+    repository.updateSwimLane(sourcePath, 'review', { agentFilePath: '/etc/Prompt.md' })
+    const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }
+    expect(call('lane-store:list')).toEqual([expect.objectContaining({ id: entry.id })])
   })
 
   it('writes no file for a lane saved without prompt files', () => {

@@ -1558,7 +1558,6 @@ export interface WorkflowSummary {
   name: string
 }
 
-// A saved lane preset in the global Swimlane Store (#146).
 export interface LaneStoreEntry {
   id: string
   laneId: string
