@@ -21,14 +21,13 @@ describe('InfoTip', () => {
     expect(describedBy).toBe(tooltipId)
   })
 
-  // Top layer is what keeps a modal's overflow from clipping the bubble (#138).
   it('renders the bubble as a manual popover anchored to the button', async () => {
     const html = await renderTip()
 
     const buttonAnchor = html.match(/anchor-name:\s*([^;"]+)/)?.[1]
     const bubbleAnchor = html.match(/position-anchor:\s*([^;"]+)/)?.[1]
 
-    expect(html).toMatch(/<span[^>]*popover="manual"[^>]*role="tooltip"|<span[^>]*role="tooltip"[^>]*popover="manual"/)
+    expect(html).toContain('role="tooltip" popover="manual"')
     expect(buttonAnchor).toMatch(/^--tip-/)
     expect(bubbleAnchor).toBe(buttonAnchor)
   })

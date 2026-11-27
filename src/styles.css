@@ -1786,7 +1786,6 @@ code {
   outline-offset: 1px;
 }
 
-/* Top-layer popover anchored to its ⓘ (see InfoTip.vue); flips to stay on screen. */
 .info-tip-bubble {
   position: fixed;
   inset: auto;
