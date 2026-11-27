@@ -4,14 +4,14 @@ import { useRouter } from 'vue-router'
 
 import TicketGraph from '@/components/TicketGraph.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
+import MetricsPanel from '@/components/MetricsPanel.vue'
 import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
 import AutoRunConfirmModal, { type AutoRunPicks } from '@/components/board/AutoRunConfirmModal.vue'
 import BoardFilters from '@/components/board/BoardFilters.vue'
 import BoardLanes from '@/components/board/BoardLanes.vue'
-import BoardSettingsModal from '@/components/board/BoardSettingsModal.vue'
 import BoardTitlebar from '@/components/board/BoardTitlebar.vue'
 import ConfirmDeleteModal from '@/components/board/ConfirmDeleteModal.vue'
-import DisplaySettingsModal from '@/components/board/DisplaySettingsModal.vue'
+import DisplaySettings from '@/components/board/DisplaySettings.vue'
 import LaneSettingsModal, { createLaneMarkdownSaveState } from '@/components/board/LaneSettingsModal.vue'
 import NewTicketModal, { type TicketDraft, type TicketDraftSave } from '@/components/board/NewTicketModal.vue'
 import TicketModal from '@/components/board/TicketModal.vue'
@@ -70,19 +70,6 @@ const laneSettingsElement = ref<InstanceType<typeof LaneSettingsModal> | null>(n
 
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
-// Naming trap: boardSettingsOpen opens the Display modal, settingsOpen opens Board Settings.
-const boardSettingsOpen = ref(false)
-const settingsOpen = ref(false)
-// Swap, never stack: Display replaces Settings rather than opening over it.
-const openDisplaySettings = () => {
-  settingsOpen.value = false
-  boardSettingsOpen.value = true
-}
-// The UI panel has no backdrop, so it opens once Settings closes and the board stays live.
-const openUiSettingsPanel = () => {
-  settingsOpen.value = false
-  uiDemoPanelOpen.value = true
-}
 
 const ticketDraft = ref<TicketDraft | null>(null)
 // Set when a new ticket's staged images fail to upload: shown on that ticket's modal.
@@ -119,9 +106,7 @@ const anyModalOpen = computed(
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
         lanePendingDeletion.value
-    ) ||
-    boardSettingsOpen.value ||
-    settingsOpen.value
+    )
 )
 
 // Lanes the Display toggles hide are not offered: picking only those would
@@ -241,8 +226,6 @@ const closeModals = () => {
   openLaneId.value = null
   ticketDraft.value = null
   laneDraftName.value = null
-  boardSettingsOpen.value = false
-  settingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -416,11 +399,18 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
     :pulling-issues="pullingIssues"
     @new-ticket="startTicketDraft()"
     @new-lane="laneDraftName = ''"
-    @open-settings="settingsOpen = true"
+    @toggle-settings="uiDemoPanelOpen = !uiDemoPanelOpen"
     @pull-issues="pullIssues"
   />
 
-  <UiSettingsPanel v-if="uiDemoPanelOpen" />
+  <UiSettingsPanel v-if="uiDemoPanelOpen">
+    <template #metrics>
+      <MetricsPanel :project-paths="[projectPath]" scope="board" inline />
+    </template>
+    <template #display>
+      <DisplaySettings />
+    </template>
+  </UiSettingsPanel>
 
   <main class="app-shell board-shell">
     <MessageBanners />
@@ -463,15 +453,6 @@ const confirmAutoRunLane = (picks: AutoRunPicks) => {
       @toggle-selected="toggleTicketSelected"
     />
   </main>
-
-  <DisplaySettingsModal v-if="boardSettingsOpen" @close="boardSettingsOpen = false" />
-
-  <BoardSettingsModal
-    v-if="settingsOpen"
-    @close="settingsOpen = false"
-    @open-display="openDisplaySettings"
-    @open-ui-panel="openUiSettingsPanel"
-  />
 
   <NewTicketModal v-if="ticketDraft" :draft="ticketDraft" @close="ticketDraft = null" @save="saveTicketDraft" />
 

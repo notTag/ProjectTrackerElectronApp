@@ -6,7 +6,7 @@ import WorkflowPicker from '@/components/WorkflowPicker.vue'
 import { useBoardContext } from './boardContext'
 
 defineProps<{ projectTitle: string; githubUrl?: string; pullingIssues: boolean }>()
-const emit = defineEmits<{ newTicket: []; newLane: []; openSettings: []; pullIssues: [] }>()
+const emit = defineEmits<{ newTicket: []; newLane: []; toggleSettings: []; pullIssues: [] }>()
 
 const router = useRouter()
 const { store, openInStore, projectPath } = useBoardContext()
@@ -51,7 +51,7 @@ const { store, openInStore, projectPath } = useBoardContext()
         {{ pullingIssues ? 'Pulling…' : '⇣ Pull issues' }}
       </button>
       <button class="secondary" title="Create swim lane" @click="emit('newLane')">+ Swim lane</button>
-      <button class="secondary" title="Board and UI settings" @click="emit('openSettings')">⚙ Settings</button>
+      <button class="secondary" title="Settings" @click="emit('toggleSettings')">⚙ Settings</button>
     </div>
   </header>
 </template>
