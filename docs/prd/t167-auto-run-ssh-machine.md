@@ -1,9 +1,11 @@
-#--- PRD #151: Machine location (Local / SSH) in the Auto Run modal ---#
+#--- PRD #167: Auto Run machine location — SSH host ---#
 
 Problem
 	Auto Run ▶ always opens every ticket tab on this Mac
 	Want: pick a remote host from ~/.ssh/config, agents run there over ssh, tabs still open in the local terminal
-	Rescoped 2026-11-26; follow-ups #162 VPS, #163 clone on remote, #164 remote report-back, #165 remote orchestrator
+	Split 2026-11-27 from #151, which now ships the Machine select with Local only (the default mode)
+	Depends on #151: Machine select, lane.autoRunHost slot, injected git runner in ticketWorktree.ts
+	Siblings: #162 VPS, #163 clone on remote, #164 remote report-back, #165 remote orchestrator
 
 Today (verified)
 	Modal: src/views/BoardView.vue askToAutoRunLane ~l.1466, confirmAutoRunLane ~l.1478, template ~l.2416
@@ -34,7 +36,20 @@ Decisions (added in PRD)
 		otherwise Resume cd's into a path that doesn't exist locally
 	D8 Remote prompt: drop the sqlite3 ticket-update + orchestrator-message instructions, replace with one line
 		"Running on <host>: the tracker DB isn't reachable. Commit + push your branch, then stop."
-		avoids agents failing on a DB path that only exists on the Mac (D4)
+		what actually runs on the remote
+			remote login shell (via ssh -t) → cd <remote worktree> → bare agent binary from the remote's PATH
+				claude / codex / hermes / opencode (projectTypes.ts l.484-532), plus --session-id, model, and the full prompt as one quoted arg
+			the agent then runs git (commit, push) and whatever shell commands the prompt tells it to
+			nothing else: no app, no DB, no orchestrator session, no local ~/.claude config
+		remote must already have: agent CLI installed + logged in, git push credentials, the repo (D3)
+		why the DB lines must go
+			prompt embeds `sqlite3 "$HOME/Library/Application Support/Project Tracker/project-tracker.sqlite" …` (quotedTrackerDatabasePath)
+			$HOME expands on the remote → Linux: file missing, sqlite3 errors + may leave an empty file behind [~70% confidence — needs one run]
+			macOS remote with the app installed: writes THAT machine's DB → silent wrong-board update, worst case
+			same for version, move-rules confirm, lane-move instructions
+		why the orchestrator line must go
+			"message the orchestrator" = cross-session SendMessage between sessions on one machine; remote session can't see the Mac's orchestrator
+		agent session transcript lives on the remote (~/.claude/projects there) → reason D7 resumes over ssh
 	D9 Machine + remote path remembered by writing the lane on confirm (only when changed)
 		lane settings panel gets no Machine field (D6)
 
@@ -80,15 +95,14 @@ Main process
 			fetch, symbolic-ref origin/HEAD fallback origin/main, check-ref-format, worktree prune, worktree add .worktrees/tN
 			reuse existing .worktrees/tN when its .git exists (test -e)
 			add /.worktrees/ to remote info/exclude like local excludeWorktreeDirectory
-			prefer: refactor ticketWorktree.ts so the git runner is injected (local execFile vs sshRun) → one code path, not two copies
+			pass sshRun as the git runner #151 injects into ticketWorktree.ts → one code path, not two copies
 		ticket tabs: command = ssh -t <host> 'cd <remotePath> && <ticket.command>'
 			remotePath = remote worktree (worktrees on) or repo path (off)
 		orchestrator tab unchanged, local (D5)
 		returns { worktreePaths } with remote paths
 
 Renderer
-	Modal: new row under Terminal
-		Machine <select>: Local + hosts from ssh:hosts (fetched on modal open)
+	Modal: Machine <select> from #151 gains one option per host from ssh:hosts (fetched on modal open)
 		Remote path <input> shown only when a host is picked; prefilled from lane.autoRunRemotePaths[host]
 		Run disabled while a host is picked and path is empty
 		hint line: remote → "Runs on <host> in <path>/.worktrees/tN …" mirroring today's hint
