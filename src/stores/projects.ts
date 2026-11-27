@@ -262,16 +262,11 @@ const replaceById = <T extends { id: string }>(entries: T[], written: T) => {
   return exists ? entries.map((entry) => (entry.id === written.id ? written : entry)) : [...entries, written]
 }
 
-// The row as stored wins over the local copy.
 const withWrittenLane = (board: ProjectBoard, lane: SwimLane): ProjectBoard => {
   if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: lane }
   return { ...board, lanes: replaceById(board.lanes, lane) }
 }
 
-// Tickets are patched in place, not swapped into a copied array (#134): every
-// other row, the lanes and the board keep their identity, so the board view
-// re-renders only the card that changed. A created ticket takes the
-// repository's number here; a row that came back unchanged triggers nothing.
 const patchTicketInPlace = (board: ProjectBoard, written: Ticket) => {
   const row = board.tickets.find((ticket) => ticket.id === written.id)
   if (!row) {
@@ -298,9 +293,6 @@ const onlyTicketsDiffer = (current: ProjectTrackerState, next: ProjectTrackerSta
   return sameOtherState && sameOtherBoards && sameBoardFields
 }
 
-// Applies a ticket-only edit to the live board instead of swapping in `next`.
-// Returns false (nothing touched) when the edit reaches past the tickets, and
-// the caller assigns `next` as before.
 const applyTicketWritesInPlace = (
   current: ProjectTrackerState,
   next: ProjectTrackerState,
@@ -308,7 +300,6 @@ const applyTicketWritesInPlace = (
   writes: BoardWrite[]
 ) => {
   const ticketWritesOnly = writes.every((write) => write.kind.startsWith('ticket:'))
-  // `next` is built from the raw state, so compare it against the raw state.
   if (!ticketWritesOnly || !onlyTicketsDiffer(toRaw(current), next, projectPath)) return false
   const board = current.boards![projectPath]
   const rowById = new Map(board.tickets.map((ticket) => [ticket.id, ticket]))
@@ -821,16 +812,12 @@ export const useProjectsStore = defineStore('projects', {
       saveQueue = saveQueue
         .catch(() => undefined)
         .then(async () => {
-          // The diff walks every ticket several times; through the reactive
-          // proxy each read is tracked, which dominated a create on a big board (#134).
           const rawState = toRaw(this.state)
           const persistedState = undo ? undo(rawState) : rawState
           const candidate = update(rawState)
           const ownMoves = withCompletionMoves(rawState, candidate, alsoCompletedIds)
           const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
-          // Taken before the rows are patched in place: the candidate shares
-          // those row objects, so afterwards it would no longer show the moves.
-          const pendingHandoffs = handoffsBetween(candidate, ownMoves.state)
+          const handoffsBeforePatch = handoffsBetween(candidate, ownMoves.state)
           const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, ownMoves.state, projectPath, writes)
           if (!appliedInPlace) this.state = ownMoves.state
           try {
@@ -839,7 +826,7 @@ export const useProjectsStore = defineStore('projects', {
             await this.reloadAfterFailedWrite(undo)
             throw error
           }
-          handoffs = pendingHandoffs
+          handoffs = handoffsBeforePatch
           this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
         })
       await saveQueue

@@ -445,8 +445,6 @@ export const ticketSearchText = (ticket: Ticket) => {
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
 }
 
-// One pass over the board instead of one filter per lane per caller (#134):
-// a lane with no matching ticket has no entry, so read with `?? []`.
 export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticket) => boolean) => {
   const ticketsByLane = new Map<string, Ticket[]>()
   for (const ticket of tickets) {
@@ -2291,8 +2289,6 @@ export const boardWrites = (before: ProjectBoard, after: ProjectBoard): BoardWri
       ticketCreates.push({ kind: 'ticket:create', ticket })
       continue
     }
-    // Edits keep untouched rows as the same object, so this skips the field
-    // diff for every ticket but the edited ones (#134).
     if (ticket === previous) continue
     const { id: _id, number: _number, createdAt: _createdAt, ...patch } = changedFields(ticket, previous)
     if (isEmptyPatch(patch)) continue

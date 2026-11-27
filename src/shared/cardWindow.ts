@@ -1,7 +1,6 @@
 export interface CardWindow {
   start: number
   end: number
-  // Pixels the unmounted cards before `start` / from `end` on would take, gaps included.
   heightAbove: number
   heightBelow: number
 }
@@ -12,12 +11,9 @@ export interface CardWindowInput {
   scrollTop: number
   viewportHeight: number
   overscan: number
-  // Index that stays mounted however far away the window scrolls (a card mid-drag).
   pinnedIndex?: number
 }
 
-// The slice of a lane's cards that overlaps the viewport plus `overscan`
-// pixels each way, from per-card heights (measured or estimated).
 export const cardWindow = ({ heights, gap, scrollTop, viewportHeight, overscan, pinnedIndex }: CardWindowInput): CardWindow => {
   const offsets = new Array<number>(heights.length + 1)
   offsets[0] = 0

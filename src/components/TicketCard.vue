@@ -12,9 +12,6 @@ import {
   type TicketCardField
 } from '@/shared/projectTypes'
 
-// Only per-ticket values come in, so opening a ticket or editing another one
-// leaves this card's props unchanged and Vue skips re-rendering it (#134).
-// Listeners are declared emits, which Vue leaves out of that props comparison.
 const props = defineProps<{
   ticket: Ticket
   cardFields: TicketCardField[]
@@ -33,7 +30,6 @@ const emit = defineEmits<{
   'drag-end': []
 }>()
 
-// Glyphs, not just colour, tell success from failure.
 const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
   running: { className: 'agent-status-running', label: 'Agent running' },
   succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
@@ -124,7 +120,6 @@ const showsField = (field: TicketCardField) => props.cardFields.includes(field)
         ⌂ {{ worktreeFolderName(ticket.worktreePath) }}
       </span>
       <span v-if="showsField('version') && ticket.version" class="ticket-branch">v{{ ticket.version }}</span>
-      <!-- .stop keeps the click from also opening the ticket modal; draggable=false keeps a drag from it a card drag. -->
       <a
         v-if="showsField('pullRequest') && isWebUrl(ticket.pullRequestUrl)"
         :href="ticket.pullRequestUrl"

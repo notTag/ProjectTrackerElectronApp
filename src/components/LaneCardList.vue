@@ -3,14 +3,9 @@ import { computed, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue'
 import { cardWindow } from '@/shared/cardWindow'
 import type { Ticket } from '@/shared/projectTypes'
 
-// A lane body that mounts only the cards near its viewport once the lane is
-// long (#134); short lanes render every card, as before. Cards come from the
-// default slot, one per ticket, and must carry data-ticket-id on their root.
 const props = defineProps<{
   tickets: Ticket[]
-  // Mount every card, e.g. while native Find on page needs their text in the DOM.
   renderAll: boolean
-  // A card mid-drag stays mounted: removing the drag source would lose its dragend.
   keepMountedId: string | null
 }>()
 
@@ -18,15 +13,12 @@ defineSlots<{ default(props: { ticket: Ticket }): unknown }>()
 
 const VIRTUALIZE_ABOVE = 50
 const ESTIMATED_CARD_HEIGHT = 96
-// Matches .lane-body's gap in styles.css.
-const CARD_GAP = 8
+const LANE_BODY_GAP = 8
 const OVERSCAN_FALLBACK = 800
 
 const scroller = ref<HTMLElement | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(0)
-// ponytail: heights are measured on render only, not watched; a card that
-// changes height while mounted is corrected on the next scroll or update.
 const measuredHeights = new Map<string, number>()
 const measuredVersion = ref(0)
 
@@ -40,7 +32,7 @@ const cardRange = computed(() => {
   const pinnedIndex = props.keepMountedId ? tickets.findIndex((ticket) => ticket.id === props.keepMountedId) : undefined
   return cardWindow({
     heights,
-    gap: CARD_GAP,
+    gap: LANE_BODY_GAP,
     scrollTop: scrollTop.value,
     viewportHeight: viewportHeight.value,
     overscan: viewportHeight.value || OVERSCAN_FALLBACK,
@@ -50,8 +42,7 @@ const cardRange = computed(() => {
 
 const mountedTickets = computed(() => props.tickets.slice(cardRange.value.start, cardRange.value.end))
 
-// Each spacer sits in the flex gap like a card, so one gap comes off its height.
-const spacerHeight = (height: number) => `${Math.max(0, height - CARD_GAP)}px`
+const spacerHeight = (height: number) => `${Math.max(0, height - LANE_BODY_GAP)}px`
 
 const readViewport = () => {
   const element = scroller.value

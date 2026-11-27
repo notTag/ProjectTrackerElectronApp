@@ -516,7 +516,6 @@ const matchesQuery = (ticket: Ticket) => {
 const ticketsByLane = computed(() =>
   groupTicketsByLane(board.value.tickets, (ticket) => matchesQuery(ticket) && matchesAssignee(ticket))
 )
-// Shared, so an empty lane hands the same array to every reader each render.
 const NO_TICKETS: Ticket[] = []
 const laneTickets = (laneId: string) => ticketsByLane.value.get(laneId) ?? NO_TICKETS
 
@@ -1448,8 +1447,6 @@ const autoRunSplit = (lane: SwimLane) => {
   return splitRunnable(candidates, lane.id, selectedTicketIds.value)
 }
 
-// Cached per lane: the header reads it twice per render, and opening a ticket
-// re-renders the header without changing any lane's tickets (#134).
 const runnableByLaneId = computed(
   () => new Map(laneColumns.value.map((lane) => [lane.id, autoRunSplit(lane).runnable]))
 )

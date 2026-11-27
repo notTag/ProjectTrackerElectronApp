@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cardWindow } from './cardWindow'
 
-// 100 cards, 92px each + 8px gap = 100px per slot.
 const heights = new Array<number>(100).fill(92)
 const base = { heights, gap: 8, viewportHeight: 500, overscan: 500 }
 
