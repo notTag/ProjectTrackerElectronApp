@@ -281,13 +281,14 @@ const onlyTicketsDiffer = (current: ProjectTrackerState, next: ProjectTrackerSta
   const currentBoard = current.boards?.[projectPath]
   const nextBoard = next.boards?.[projectPath]
   if (!currentBoard || !nextBoard) return false
-  const sameOtherState = Object.keys(next).every(
+  const keysOfEither = (first: object, second: object) => new Set([...Object.keys(first), ...Object.keys(second)])
+  const sameOtherState = [...keysOfEither(current, next)].every(
     (key) => key === 'boards' || next[key as keyof ProjectTrackerState] === current[key as keyof ProjectTrackerState]
   )
-  const sameOtherBoards = Object.keys(next.boards ?? {}).every(
+  const sameOtherBoards = [...keysOfEither(current.boards!, next.boards!)].every(
     (path) => path === projectPath || next.boards?.[path] === current.boards?.[path]
   )
-  const sameBoardFields = Object.keys(nextBoard).every(
+  const sameBoardFields = [...keysOfEither(currentBoard, nextBoard)].every(
     (key) => key === 'tickets' || nextBoard[key as keyof ProjectBoard] === currentBoard[key as keyof ProjectBoard]
   )
   return sameOtherState && sameOtherBoards && sameBoardFields
@@ -304,12 +305,20 @@ const applyTicketWritesInPlace = (
   const board = current.boards![projectPath]
   const rowById = new Map(board.tickets.map((ticket) => [ticket.id, ticket]))
   for (const write of writes) {
-    if (write.kind === 'ticket:create') board.tickets.push(write.ticket)
-    const updatedRow = write.kind === 'ticket:update' ? rowById.get(write.id) : undefined
-    if (write.kind === 'ticket:update' && updatedRow) Object.assign(updatedRow, write.patch)
-    if (write.kind === 'ticket:delete') {
-      const index = board.tickets.findIndex((ticket) => ticket.id === write.id)
-      if (index >= 0) board.tickets.splice(index, 1)
+    switch (write.kind) {
+      case 'ticket:create':
+        board.tickets.push(write.ticket)
+        break
+      case 'ticket:update': {
+        const updatedRow = rowById.get(write.id)
+        if (updatedRow) Object.assign(updatedRow, write.patch)
+        break
+      }
+      case 'ticket:delete': {
+        const index = board.tickets.findIndex((ticket) => ticket.id === write.id)
+        if (index >= 0) board.tickets.splice(index, 1)
+        break
+      }
     }
   }
   return true
@@ -775,9 +784,9 @@ export const useProjectsStore = defineStore('projects', {
       for (const write of writes) {
         const written = await sendBoardWrite(projectPath, write)
         if (!written) continue
-        const stored = this.state.boards?.[projectPath]
-        if (stored && write.kind.startsWith('ticket:')) {
-          patchTicketInPlace(stored, written as Ticket)
+        if (write.kind.startsWith('ticket:')) {
+          const stored = this.state.boards?.[projectPath]
+          if (stored) patchTicketInPlace(stored, written as Ticket)
           continue
         }
         const board = withWrittenLane(storedBoard(this.state, projectPath), written as SwimLane)
