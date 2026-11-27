@@ -264,20 +264,34 @@ const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 const isGraphPosition = (value: unknown): boolean =>
   isPlainObject(value) && Number.isFinite(value.x) && Number.isFinite(value.y)
 
-const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
-  if (!isPlainObject(value)) return false
-  return Object.entries(value).every(([key, fieldValue]) => {
-    if (!allowedKeys.has(key)) return false
-    const isString = typeof fieldValue === 'string'
-    if (REQUIRED_TEXT_KEYS.has(key)) return isString
-    if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
-    if (key === 'graphPosition') return fieldValue == null || isGraphPosition(fieldValue)
-    return true
-  })
+const isPatchFieldValid = (allowedKeys: Set<string>, key: string, fieldValue: unknown): boolean => {
+  if (!allowedKeys.has(key)) return false
+  const isString = typeof fieldValue === 'string'
+  if (REQUIRED_TEXT_KEYS.has(key)) return isString
+  if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
+  if (key === 'graphPosition') return fieldValue == null || isGraphPosition(fieldValue)
+  return true
 }
+
+const MAX_QUOTED_KEY_LENGTH = 64
+
+const patchRejection = (allowedKeys: Set<string>, value: unknown): string | undefined => {
+  if (!isPlainObject(value)) return 'patch must be an object'
+  const patchEntries = Object.entries(value)
+  const rejectedEntry = patchEntries.find(([key, fieldValue]) => !isPatchFieldValid(allowedKeys, key, fieldValue))
+  if (!rejectedEntry) return undefined
+  const shortKey = rejectedEntry[0].slice(0, MAX_QUOTED_KEY_LENGTH)
+  return `rejected key ${JSON.stringify(shortKey)}`
+}
+
+const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean =>
+  patchRejection(allowedKeys, value) === undefined
 
 const isTicketPatch = (value: unknown): value is TicketWritePatch => isPatchOf(TICKET_PATCH_KEYS, value)
 const isLanePatch = (value: unknown): value is LaneWritePatch => isPatchOf(LANE_PATCH_KEYS, value)
+
+const invalidPatchError = (payloadName: string, rejection: string): Error =>
+  new Error(`Invalid ${payloadName} update payload: ${rejection}.`)
 
 const isTicket = (value: unknown): value is Omit<Ticket, 'number'> => {
   if (!isPlainObject(value)) return false
@@ -393,8 +407,10 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
     'ticket:update': (payload, { repository }) => {
       const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
-      if (typeof id !== 'string' || !isTicketPatch(patch)) throw new Error('Invalid ticket update payload.')
-      return toPlainJson(repository.updateTicket(id, patch))
+      if (typeof id !== 'string') throw new Error('Invalid ticket update payload.')
+      const rejection = patchRejection(TICKET_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('ticket', rejection)
+      return toPlainJson(repository.updateTicket(id, patch as TicketWritePatch))
     },
 
     'ticket:delete': (payload, { repository }) => {
@@ -441,10 +457,10 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
     'lane:update': (payload, { repository }) => {
       const { projectPath, laneId, patch } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown; patch?: unknown }
-      if (typeof projectPath !== 'string' || typeof laneId !== 'string' || !isLanePatch(patch)) {
-        throw new Error('Invalid lane update payload.')
-      }
-      return toPlainJson(repository.updateSwimLane(normalizePath(projectPath), laneId, patch))
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane update payload.')
+      const rejection = patchRejection(LANE_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('lane', rejection)
+      return toPlainJson(repository.updateSwimLane(normalizePath(projectPath), laneId, patch as LaneWritePatch))
     },
 
     'lane:reorder': (payload, { repository }) => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { pageFindActive } from '@/pageFind'
 
 const route = useRoute()
 const visible = ref(false)
@@ -53,6 +54,12 @@ watch(query, () => {
   searchTimer = setTimeout(() => search(), 300)
 })
 watch(() => route.fullPath, close)
+watch(
+  () => visible.value && Boolean(query.value),
+  (active) => {
+    pageFindActive.value = active
+  }
+)
 onMounted(() => {
   window.addEventListener('keydown', keydown, true)
   unsubscribe = window.projectTracker?.onFindResult?.(value => {
@@ -60,6 +67,7 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => {
+  pageFindActive.value = false
   cancelPendingSearch()
   window.removeEventListener('keydown', keydown, true)
   unsubscribe?.()

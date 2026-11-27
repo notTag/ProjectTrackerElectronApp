@@ -306,6 +306,7 @@ export class StateRepository {
       this.db.exec(CLOSED_AT_TRIGGERS_SQL)
       this.seedClosingLanesOnce()
       this.copyOrchestratorOverridesOnce()
+      this.renameLegacyDefaultWorkflow()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
@@ -461,6 +462,18 @@ export class StateRepository {
         String(workflow.id)
       ])
     }
+  }
+
+  private renameLegacyDefaultWorkflow() {
+    this.run(
+      `UPDATE workflows SET name = ?
+       WHERE id = ? AND name = 'Default'
+         AND NOT EXISTS (
+           SELECT 1 FROM workflows other
+           WHERE other.project_path = workflows.project_path AND lower(other.name) = lower(?)
+         )`,
+      [DEFAULT_WORKFLOW_NAME, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME]
+    )
   }
 
   private recordSchemaVersion() {

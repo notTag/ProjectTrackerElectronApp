@@ -422,7 +422,7 @@ describe('row-level writes', () => {
     const created = repository.createWorkflow(projectPath, 'Hotfix')
     const createdBoard = created.boards?.[projectPath]
     const hotfixId = createdBoard?.activeWorkflowId ?? ''
-    expect(createdBoard?.workflows?.map((workflow) => workflow.name)).toEqual(['Default', 'Hotfix'])
+    expect(createdBoard?.workflows?.map((workflow) => workflow.name)).toEqual(['Development Workflow', 'Hotfix'])
     expect(() => repository.createWorkflow(projectPath, ' hotfix ')).toThrow('already exists')
     repository.updateSwimLane(projectPath, 'prd', { name: 'Spec', agentPrompt: 'Write the spec.' })
     repository.deleteSwimLane(projectPath, 'idea')
@@ -440,6 +440,25 @@ describe('row-level writes', () => {
     database.close()
 
     expect(reopenedBoard(userDataPath, projectPath).activeWorkflowId).toBe('default')
+  })
+
+  it('renames a stored built-in "Default" workflow on open unless the new name is taken', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const created = repository.createWorkflow(projectPath, 'Hotfix')
+    const hotfixId = created.boards?.[projectPath]?.activeWorkflowId ?? ''
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const renameWorkflow = (workflowId: string, name: string) =>
+      database.prepare('UPDATE workflows SET name = ? WHERE project_path = ? AND id = ?').run(name, projectPath, workflowId)
+    const workflowNames = () => reopenedBoard(userDataPath, projectPath).workflows?.map((workflow) => workflow.name)
+
+    renameWorkflow('default', 'Default')
+    expect(workflowNames()).toEqual(['Development Workflow', 'Hotfix'])
+
+    renameWorkflow('default', 'Default')
+    renameWorkflow(hotfixId, 'Development Workflow')
+    expect(workflowNames()).toEqual(['Default', 'Development Workflow'])
+    database.close()
   })
 
   it('un-closes tickets when a swap lands them in a lane that no longer closes', () => {
