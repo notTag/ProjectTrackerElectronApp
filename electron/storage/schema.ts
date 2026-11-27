@@ -2,9 +2,12 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 // First version with closing lanes; opening an older file seeds and backfills them once.
 export const CLOSING_LANES_SCHEMA_VERSION = 5
+// First version with current/default orchestrator prompts; opening an older file
+// copies each lane's orchestrator_prompt_override into its current prompt once.
+export const CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION = 7
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -57,7 +60,11 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   output_target TEXT NOT NULL DEFAULT '',
   orchestrator_prompt TEXT NOT NULL DEFAULT '',
   orchestrator_file_path TEXT NOT NULL DEFAULT '',
+  -- Dormant since #168: copied into current_agent_orchestrator_prompt once, then
+  -- no longer read or written; kept because migrations are additive only.
   orchestrator_prompt_override TEXT NOT NULL DEFAULT '',
+  current_agent_orchestrator_prompt TEXT NOT NULL DEFAULT '',
+  default_agent_orchestrator_prompt TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
@@ -202,6 +209,8 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'default_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   // NULL until the board's first workflow swap or create materializes "Default".
   { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { LaneMarkdownKind } from '../src/shared/projectTypes.js'
-import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import { readOrchestratorContext, resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 
 const createdProjectPaths: string[] = []
 
@@ -143,14 +143,6 @@ describe('saveAgentMarkdown', () => {
     expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written')
   })
 
-  it('replaces any content when there is no previous save to check against', () => {
-    const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'copy.md')
-    writeFileSync(explicitPath, 'an older generated prompt')
-    saveAgentMarkdown(explicitPath, 'the current prompt', null)
-    expect(readFileSync(explicitPath, 'utf8')).toBe('the current prompt')
-  })
-
   it('takes over a hand-edited file once the box holds the same text', () => {
     const projectPath = freshProjectPath()
     const explicitPath = path.join(projectPath, 'guide.md')
@@ -158,5 +150,20 @@ describe('saveAgentMarkdown', () => {
     save(target(projectPath, explicitPath), '# Hand-written', 'older prompt')
     save(target(projectPath, explicitPath), '# Hand-written, then more', '# Hand-written')
     expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written, then more')
+  })
+})
+
+describe('readOrchestratorContext', () => {
+  it('reads the file as it is', () => {
+    const projectPath = freshProjectPath()
+    const contextPath = path.join(projectPath, 'context.md')
+    writeFileSync(contextPath, 'Ping me on Slack.\n')
+    expect(readOrchestratorContext(contextPath)).toBe('Ping me on Slack.\n')
+  })
+
+  it('reads a missing file or a directory as no context', () => {
+    const projectPath = freshProjectPath()
+    expect(readOrchestratorContext(path.join(projectPath, 'missing.md'))).toBe('')
+    expect(readOrchestratorContext(projectPath)).toBe('')
   })
 })

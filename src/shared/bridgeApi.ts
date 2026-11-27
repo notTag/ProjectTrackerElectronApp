@@ -2,8 +2,8 @@ import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
   GithubIssueLists,
-  LaneMarkdownKind,
   LaneWritePatch,
+  OrchestratorAdditionalContext,
   ProjectGithubData,
   ProjectMetrics,
   ProjectRecord,
@@ -53,7 +53,8 @@ export const IPC_CHANNELS = [
   'ticket:fetch-pull-request',
   'project:fetch-github-issues',
   'project:read-readme',
-  'lane:save-agent-markdown'
+  'lane:save-agent-markdown',
+  'lane:read-orchestrator-context'
 ] as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
@@ -128,13 +129,18 @@ export interface ProjectTrackerBridge {
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   saveLaneMarkdown(
-    kind: LaneMarkdownKind,
     projectPath: string,
     laneName: string,
     filePath: string,
     content: string,
     previousContent: string
   ): Promise<{ filePath: string }>
+  // Null when the lane's orchestrator file is missing, blank or unreadable.
+  readLaneOrchestratorContext(
+    projectPath: string,
+    laneName: string,
+    filePath: string
+  ): Promise<OrchestratorAdditionalContext | null>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>

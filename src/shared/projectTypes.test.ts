@@ -19,6 +19,7 @@ import {
   orchestratorPrompt,
   orchestratorPromptMissingTokens,
   orchestratorPromptTemplate,
+  defaultOrchestratorPrompt,
   orchestratorPromptTokenHelp,
   ORCHESTRATOR_PROMPT_TOKENS,
   orchestratorTabTitle,
@@ -1755,21 +1756,21 @@ describe('Auto Run orchestrator', () => {
     })
   })
 
-  describe('orchestratorPrompt with an override', () => {
+  describe('orchestratorPrompt with a current prompt', () => {
     const ghostty = context('ghostty', 'Ghostty')
     const generated = orchestratorPrompt(inDev, entries, ghostty)
 
     it('filling the unedited template gives the generated prompt', () => {
       for (const terminalContext of [ghostty, context('warp', 'Warp')]) {
         const template = orchestratorPromptTemplate(inDev, terminalContext)
-        const overridden = { ...inDev, orchestratorPromptOverride: template }
+        const overridden = { ...inDev, currentAgentOrchestratorPrompt: template }
         expect(orchestratorPrompt(overridden, entries, terminalContext)).toBe(orchestratorPrompt(inDev, entries, terminalContext))
       }
     })
 
     it('fills known tokens with launch data and leaves unknown ones', () => {
       const override = 'Watch:\n{{tickets}}\nIN ({{ticket_numbers}})\n{{lanes}}\n{{terminal}}\n{{foo}}'
-      const filled = orchestratorPrompt({ ...inDev, orchestratorPromptOverride: override }, entries, ghostty)
+      const filled = orchestratorPrompt({ ...inDev, currentAgentOrchestratorPrompt: override }, entries, ghostty)
       expect(filled).toContain(`- #12 First thing — session ${sessionPrefix(0)} — tab "12-In-Development-First thing · ${sessionPrefix(0)}" — branch t12-first-thing`)
       expect(filled).toContain('IN (12, 13)')
       expect(filled).toContain('- done — Done — agent work: no')
@@ -1780,7 +1781,7 @@ describe('Auto Run orchestrator', () => {
     })
 
     it('follows the launch terminal in an edited prompt', () => {
-      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      const lane = { ...inDev, currentAgentOrchestratorPrompt: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
       expect(orchestratorPrompt(lane, entries, context('warp', 'Warp'))).toContain('kill -TERM <pid>')
     })
 
@@ -1788,13 +1789,50 @@ describe('Auto Run orchestrator', () => {
       const tricky = [ticket(14, 'About {{lanes}}'), ticket(15, 'Other')].map((entry) =>
         buildAutoRunLaunch(entry, inDev, DEFAULT_AGENT, {}, true)
       )
-      const lane = { ...inDev, orchestratorPromptOverride: '{{tickets}}' }
+      const lane = { ...inDev, currentAgentOrchestratorPrompt: '{{tickets}}' }
       expect(orchestratorPrompt(lane, tricky, ghostty)).toContain('#14 About {{lanes}}')
     })
 
-    it('uses the generated prompt for a whitespace-only override', () => {
-      const lane = { ...inDev, orchestratorPromptOverride: '  \n\t ' }
+    it('uses the generated prompt for a whitespace-only current prompt', () => {
+      const lane = { ...inDev, currentAgentOrchestratorPrompt: '  \n\t ' }
       expect(orchestratorPrompt(lane, entries, ghostty)).toBe(generated)
+    })
+
+    it('runs current, else default, else the generated prompt', () => {
+      const withDefault = { ...inDev, defaultAgentOrchestratorPrompt: 'Default {{ticket_numbers}}' }
+      const withBoth = { ...withDefault, currentAgentOrchestratorPrompt: 'Current {{ticket_numbers}}' }
+      const withBlankCurrent = { ...withDefault, currentAgentOrchestratorPrompt: '  ' }
+      const withBlankDefault = { ...inDev, defaultAgentOrchestratorPrompt: ' \n ' }
+      expect(orchestratorPrompt(withBoth, entries, ghostty)).toBe('Current 12, 13')
+      expect(orchestratorPrompt(withDefault, entries, ghostty)).toBe('Default 12, 13')
+      expect(orchestratorPrompt(withBlankCurrent, entries, ghostty)).toBe('Default 12, 13')
+      expect(orchestratorPrompt(withBlankDefault, entries, ghostty)).toBe(generated)
+    })
+
+    it('appends the context file after the prompt under its own header', () => {
+      const lane = { ...inDev, currentAgentOrchestratorPrompt: 'Watch {{ticket_numbers}}' }
+      const additionalContext = { filePath: '/code/app/notes.md', content: '\nPing me on Slack.\n' }
+      const withContext = orchestratorPrompt(lane, entries, { ...ghostty, additionalContext })
+      expect(withContext).toBe('Watch 12, 13\n\nAdditional context (from /code/app/notes.md):\nPing me on Slack.')
+      const generatedWithContext = orchestratorPrompt(inDev, entries, { ...ghostty, additionalContext })
+      expect(generatedWithContext.startsWith(generated)).toBe(true)
+    })
+
+    it('skips a blank or absent context file', () => {
+      const blankContext = { filePath: '/code/app/notes.md', content: ' \n ' }
+      expect(orchestratorPrompt(inDev, entries, { ...ghostty, additionalContext: blankContext })).toBe(generated)
+      expect(orchestratorPrompt(inDev, entries, { ...ghostty, additionalContext: undefined })).toBe(generated)
+    })
+  })
+
+  describe('defaultOrchestratorPrompt', () => {
+    const ghostty = context('ghostty', 'Ghostty')
+
+    it('is the saved default, else the generated template, and never the current prompt', () => {
+      const edited = { ...inDev, currentAgentOrchestratorPrompt: 'Current {{tickets}}' }
+      const withDefault = { ...edited, defaultAgentOrchestratorPrompt: 'Default {{tickets}}' }
+      expect(defaultOrchestratorPrompt(withDefault, ghostty)).toBe('Default {{tickets}}')
+      expect(defaultOrchestratorPrompt(edited, ghostty)).toBe(orchestratorPromptTemplate(inDev, ghostty))
     })
   })
 
@@ -1862,7 +1900,7 @@ describe('Auto Run orchestrator', () => {
     })
 
     it('guards the close recipe in an override that keeps the terminal token', () => {
-      const overridden = { ...inDev, orchestratorPromptOverride: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
+      const overridden = { ...inDev, currentAgentOrchestratorPrompt: '{{tickets}} {{ticket_numbers}}\n{{terminal}}' }
       const filled = orchestratorPrompt(overridden, entries, context('ghostty', 'Ghostty'))
       expect(filled).toContain('and its handoff tabs only once the ticket is done; skip any title more than one open tab matches')
     })

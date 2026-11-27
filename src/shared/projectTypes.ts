@@ -229,16 +229,18 @@ export interface SwimLane {
   // before it existed still load.
   outputTarget?: string
   // Appended to the generated orchestrator prompt under "Lane instructions".
-  // Folded into orchestratorPromptOverride on the first edit, and unused while
-  // one is set. Never reaches ticket agents. Optional so older lanes load.
+  // Folded into the current prompt on the first edit, and unused while a
+  // current or default prompt is set. Never reaches ticket agents. Optional so older lanes load.
   orchestratorPrompt?: string
-  // Where Save to Agent Orchestrator Markdown writes the full orchestrator
-  // prompt. Never added to the prompt itself: the file is a copy of it, so a
-  // reference would make each save differ from the last. Optional so older lanes load.
+  // A markdown file appended to the orchestrator prompt at launch as additional
+  // context; it never replaces the prompt. Empty means the lane folder's
+  // AgentOrchestratorPrompt.md. Optional so older lanes load.
   orchestratorFilePath?: string
-  // Replaces the whole generated orchestrator prompt; launch-time {{tokens}}
-  // are filled in. Empty means the generated prompt. Optional so older lanes load.
-  orchestratorPromptOverride?: string
+  // The orchestrator prompt as edited; launch-time {{tokens}} are filled in.
+  // Empty means the lane's default prompt. Optional so older lanes load.
+  currentAgentOrchestratorPrompt?: string
+  // Set only by Save as default. Empty means the app-generated prompt.
+  defaultAgentOrchestratorPrompt?: string
   // What the lane's Auto Run button launches: which agent works each ticket and
   // which terminal hosts the tabs. Absent means the defaults.
   autoRunAgentId?: string
@@ -729,13 +731,8 @@ const fileNamePart = (value: string, fallback: string): string => {
 
 export const laneFolderName = (laneName: string): string => fileNamePart(laneName, 'lane')
 
+// The agent file mirrors the agent prompt; the orchestrator file is read-only context.
 export type LaneMarkdownKind = 'agent' | 'orchestrator'
-
-// The lane field holding each kind's markdown file path.
-export const LANE_MARKDOWN_FILE_PATH_FIELD = {
-  agent: 'agentFilePath',
-  orchestrator: 'orchestratorFilePath'
-} as const satisfies Record<LaneMarkdownKind, keyof SwimLane>
 
 // Only unindented markers start a rule: indented sub-bullets and sub-steps stay
 // inside their parent rule, indentation intact.
@@ -1111,6 +1108,14 @@ export interface OrchestratorPromptContext {
   lanes: SwimLane[]
   terminalId: string
   terminalLabel: string
+  // The lane's orchestrator markdown file, read by main at launch. Appended
+  // after the prompt, never in place of it.
+  additionalContext?: OrchestratorAdditionalContext
+}
+
+export interface OrchestratorAdditionalContext {
+  filePath: string
+  content: string
 }
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
@@ -1317,10 +1322,24 @@ const fillOrchestratorTokens = (template: string, parts: OrchestratorPromptParts
   return template.replace(/\{\{\w+\}\}/g, (token) => valueByToken[token] ?? token)
 }
 
-// The default prompt for the lane, with launch-time tokens in place of the
-// tickets, lanes and terminal section.
+// The app-generated prompt for the lane, with launch-time tokens in place of
+// the tickets, lanes and terminal section.
 export const orchestratorPromptTemplate = (lane: SwimLane, context: OrchestratorPromptContext): string =>
   renderOrchestratorPrompt(lane, ORCHESTRATOR_PROMPT_TOKENS, context)
+
+// Blank counts as unset everywhere a saved prompt is chosen.
+const nonBlankPrompt = (prompt: string | undefined): string => (prompt?.trim() ? prompt : '')
+
+// What the box falls back to while the lane has no current prompt.
+export const defaultOrchestratorPrompt = (lane: SwimLane, context: OrchestratorPromptContext): string =>
+  nonBlankPrompt(lane.defaultAgentOrchestratorPrompt) || orchestratorPromptTemplate(lane, context)
+
+const withAdditionalContext = (prompt: string, additionalContext: OrchestratorAdditionalContext | undefined): string => {
+  const content = additionalContext?.content.trim()
+  if (!additionalContext || !content) return prompt
+  const header = `Additional context (from ${additionalContext.filePath}):`
+  return [prompt, [header, content].join('\n')].join('\n\n')
+}
 
 export const orchestratorPromptMissingTokens = (text: string): string[] =>
   REQUIRED_ORCHESTRATOR_TOKENS.filter((token) => !text.includes(token))
@@ -1331,9 +1350,11 @@ export const orchestratorPrompt = (
   context: OrchestratorPromptContext
 ): string => {
   const parts = orchestratorPromptParts(entries, context)
-  const override = lane.orchestratorPromptOverride ?? ''
-  if (!override.trim()) return renderOrchestratorPrompt(lane, parts, context)
-  return fillOrchestratorTokens(override, parts)
+  const currentPrompt = nonBlankPrompt(lane.currentAgentOrchestratorPrompt)
+  const savedDefaultPrompt = nonBlankPrompt(lane.defaultAgentOrchestratorPrompt)
+  const savedPrompt = currentPrompt || savedDefaultPrompt
+  const prompt = savedPrompt ? fillOrchestratorTokens(savedPrompt, parts) : renderOrchestratorPrompt(lane, parts, context)
+  return withAdditionalContext(prompt, context.additionalContext)
 }
 
 export const buildOrchestratorLaunch = (

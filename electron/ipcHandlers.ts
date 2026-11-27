@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import { readOrchestratorContext, resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
 import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { createGithubRequest } from './githubRequest.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
@@ -48,7 +48,6 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
-  type LaneMarkdownKind,
   type LaneWritePatch,
   type ProjectWritePatch,
   type ScanProgress
@@ -240,7 +239,7 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
-  orchestratorPromptOverride: true,
+  currentAgentOrchestratorPrompt: true, defaultAgentOrchestratorPrompt: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
   nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true,
@@ -252,7 +251,13 @@ const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
 const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
 // NOT NULL text columns whose SwimLane field is optional: the repository stores
 // absent or null as '', but any other non-string is rejected.
-const OPTIONAL_TEXT_KEYS = new Set(['outputTarget', 'orchestratorPrompt', 'orchestratorPromptOverride', 'orchestratorFilePath'])
+const OPTIONAL_TEXT_KEYS = new Set([
+  'outputTarget',
+  'orchestratorPrompt',
+  'currentAgentOrchestratorPrompt',
+  'defaultAgentOrchestratorPrompt',
+  'orchestratorFilePath'
+])
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
 const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 
@@ -769,21 +774,20 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     },
 
     'lane:save-agent-markdown': (request, { repository }) => {
-      const { kind, projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
+      const { projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
         string,
         unknown
       >
       const fields = [projectPath, laneName, requestedFilePath, content, previousContent]
       const fieldsAreStrings = fields.every((field) => typeof field === 'string')
-      const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
-      if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid save request.')
+      if (!fieldsAreStrings) throw new Error('Invalid save request.')
 
       const normalized = assertScannedProjectPath(repository, projectPath as string)
       const project = repository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
       if (!project) throw new Error('Unknown project.')
 
       const target = {
-        kind: kind as LaneMarkdownKind,
+        kind: 'agent' as const,
         projectPath: normalized,
         laneName: laneName as string,
         filePath: requestedFilePath as string
@@ -794,11 +798,33 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
         throw new Error('Markdown file must be inside a scanned directory.')
       }
-      // The orchestrator file is a copy the launch never reads, so it is replaced
-      // freely: its generated text changes with the app, which a check would
-      // mistake for a hand edit and refuse forever.
-      const guardedPreviousContent = kind === 'agent' ? (previousContent as string) : null
-      return saveAgentMarkdown(filePath, content as string, guardedPreviousContent)
+      return saveAgentMarkdown(filePath, content as string, previousContent as string)
+    },
+
+    // Context is optional, so anything short of a readable file in a scanned
+    // directory launches without it instead of failing the Auto Run.
+    'lane:read-orchestrator-context': (request, { repository }) => {
+      const { projectPath, laneName, filePath: requestedFilePath } = (request ?? {}) as Record<string, unknown>
+      const fields = [projectPath, laneName, requestedFilePath]
+      const fieldsAreStrings = fields.every((field) => typeof field === 'string')
+      if (!fieldsAreStrings) throw new Error('Invalid read request.')
+
+      const normalized = assertScannedProjectPath(repository, projectPath as string)
+      const target = {
+        kind: 'orchestrator' as const,
+        projectPath: normalized,
+        laneName: laneName as string,
+        filePath: requestedFilePath as string
+      }
+      let filePath: string
+      try {
+        filePath = resolveAgentMarkdownPath(target)
+      } catch {
+        return null
+      }
+      if (!isInsideAny(filePath, scanDirectoriesOf(repository))) return null
+      const content = readOrchestratorContext(filePath)
+      return content.trim() ? toPlainJson({ filePath, content }) : null
     }
   }
 }
