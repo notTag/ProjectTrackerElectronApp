@@ -142,18 +142,6 @@ const laneFilterMenuOpen = ref(false)
 const openTicketId = ref<string | null>(null)
 const openLaneId = ref<string | null>(null)
 const draggedTicketId = ref<string | null>(null)
-const boardSettingsOpen = ref(false)
-const settingsOpen = ref(false)
-// Swap, never stack: Display replaces Settings rather than opening over it.
-const openDisplaySettings = () => {
-  settingsOpen.value = false
-  boardSettingsOpen.value = true
-}
-// The UI panel has no backdrop, so it opens once Settings closes and the board stays live.
-const openUiSettingsPanel = () => {
-  settingsOpen.value = false
-  uiDemoPanelOpen.value = true
-}
 
 // nextLaneId stays null until the user picks one, so the field follows the
 // Status lane's default as Status changes. Images wait as Files until Save,
@@ -202,9 +190,7 @@ const anyModalOpen = computed(
         autoRunConfirmLaneId.value ||
         ticketPendingDeletion.value ||
         lanePendingDeletion.value
-    ) ||
-    boardSettingsOpen.value ||
-    settingsOpen.value
+    )
 )
 
 // The unassigned column is prepended for rendering but kept out of board.lanes,
@@ -701,8 +687,6 @@ const closeModals = () => {
   openLaneId.value = null
   ticketDraft.value = null
   laneDraftName.value = null
-  boardSettingsOpen.value = false
-  settingsOpen.value = false
   autoRunConfirmLaneId.value = null
   ticketPendingDeletion.value = null
   lanePendingDeletionId.value = null
@@ -1631,11 +1615,74 @@ const runTicketAgent = (ticket: Ticket) => {
         {{ pullingIssues ? 'Pulling…' : '⇣ Pull issues' }}
       </button>
       <button class="secondary" title="Create swim lane" @click="laneDraftName = ''">+ Swim lane</button>
-      <button class="secondary" title="Board and UI settings" @click="settingsOpen = true">⚙ Settings</button>
+      <button class="secondary" title="Settings" @click="uiDemoPanelOpen = !uiDemoPanelOpen">⚙ Settings</button>
     </div>
   </header>
 
-  <UiSettingsPanel v-if="uiDemoPanelOpen" />
+  <UiSettingsPanel v-if="uiDemoPanelOpen">
+    <template #metrics>
+      <MetricsPanel :project-paths="[projectPath]" scope="board" inline />
+    </template>
+    <template #display>
+      <div class="label-with-tip">
+        <p class="eyebrow">Swimlane</p>
+        <InfoTip text="Show/Hide Swimlane's" />
+      </div>
+      <ul class="card-field-list">
+        <li v-for="lane in laneColumns" :key="lane.id">
+          <label>
+            <input
+              type="checkbox"
+              :checked="!laneIsHidden(lane.id)"
+              @change="toggleLaneVisibility(lane.id)"
+            />
+            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
+          </label>
+        </li>
+      </ul>
+
+      <hr />
+
+      <span class="label-with-tip">
+        <p class="eyebrow">Ticket Card</p>
+        <InfoTip text="Show/Hide Ticket Card fields" />
+      </span>
+      <ul class="card-field-list">
+        <li>
+          <label>
+            <input type="checkbox" checked disabled />
+            Title
+          </label>
+        </li>
+        <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
+          <label>
+            <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
+            {{ field.label }}
+          </label>
+        </li>
+      </ul>
+
+      <hr />
+
+      <span class="label-with-tip">
+        <p class="eyebrow">Swim lane Settings</p>
+        <InfoTip text="Show/Hide Swim lane Settings fields" />
+      </span>
+      <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
+      <ul class="card-field-list">
+        <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
+          <label>
+            <input
+              type="checkbox"
+              :checked="laneFieldShownOnBoard(field.id)"
+              @change="toggleLaneFieldOnBoard(field.id)"
+            />
+            {{ field.label }}
+          </label>
+        </li>
+      </ul>
+    </template>
+  </UiSettingsPanel>
 
   <main class="app-shell board-shell">
     <MessageBanners />
@@ -1835,90 +1882,6 @@ const runTicketAgent = (ticket: Ticket) => {
       </div>
     </section>
   </main>
-
-  <div v-if="boardSettingsOpen" class="modal-backdrop" @click.self="boardSettingsOpen = false">
-    <section class="modal lane-modal">
-      <div class="label-with-tip">
-        <p class="eyebrow">Swimlane</p>
-        <InfoTip text="Show/Hide Swimlane's" />
-      </div>
-      <ul class="card-field-list">
-        <li v-for="lane in laneColumns" :key="lane.id">
-          <label>
-            <input
-              type="checkbox"
-              :checked="!laneIsHidden(lane.id)"
-              @change="toggleLaneVisibility(lane.id)"
-            />
-            {{ lane.name }} ({{ laneTicketTotal(lane.id) }})
-          </label>
-        </li>
-      </ul>
-
-      <hr />
-
-      <span class="label-with-tip">
-        <p class="eyebrow">Ticket Card</p>
-        <InfoTip text="Show/Hide Ticket Card fields" />
-      </span>
-      <ul class="card-field-list">
-        <li>
-          <label>
-            <input type="checkbox" checked disabled />
-            Title
-          </label>
-        </li>
-        <li v-for="field in TICKET_CARD_FIELDS" :key="field.id">
-          <label>
-            <input type="checkbox" :checked="showsField(field.id)" @change="toggleField(field.id)" />
-            {{ field.label }}
-          </label>
-        </li>
-      </ul>
-
-      <hr />
-
-      <span class="label-with-tip">
-        <p class="eyebrow">Swim lane Settings</p>
-        <InfoTip text="Show/Hide Swim lane Settings fields" />
-      </span>
-      <span class="field-hint">Every lane's settings. The eye button in a lane's settings hides more for that lane.</span>
-      <ul class="card-field-list">
-        <li v-for="field in LANE_MODAL_FIELDS" :key="field.id">
-          <label>
-            <input
-              type="checkbox"
-              :checked="laneFieldShownOnBoard(field.id)"
-              @change="toggleLaneFieldOnBoard(field.id)"
-            />
-            {{ field.label }}
-          </label>
-        </li>
-      </ul>
-
-      <div class="modal-actions">
-        <button @click="boardSettingsOpen = false">Done</button>
-      </div>
-    </section>
-  </div>
-
-  <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
-    <section class="modal lane-modal settings-modal">
-      <p class="eyebrow">Board Settings</p>
-      <MetricsPanel :project-paths="[projectPath]" scope="board" />
-      <button class="secondary button-with-icon" title="Choose what ticket cards show" @click="openDisplaySettings">
-        <EyeOffIcon /> Display
-      </button>
-      <hr />
-      <p class="eyebrow">UI Settings</p>
-      <button class="secondary" title="Live-tune radii, opacity and card alignment" @click="openUiSettingsPanel">
-        🎚 UI Settings
-      </button>
-      <div class="modal-actions">
-        <button @click="settingsOpen = false">Done</button>
-      </div>
-    </section>
-  </div>
 
   <div v-if="ticketDraft" class="modal-backdrop" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => (ticketDraft = null))">
     <section v-edge-resize class="modal ticket-modal resizable" :class="{ expanded: ticketModalExpanded }" @paste="pasteDraftImages">
