@@ -40,7 +40,13 @@ const cardRange = computed(() => {
   })
 })
 
-const mountedTickets = computed(() => props.tickets.slice(cardRange.value.start, cardRange.value.end))
+const mountedTickets = computed(() => {
+  const { start, end, pinnedSide } = cardRange.value
+  const windowTickets = props.tickets.slice(start, end)
+  const pinnedTicket = pinnedSide && props.tickets.find((ticket) => ticket.id === props.keepMountedId)
+  if (!pinnedTicket) return windowTickets
+  return pinnedSide === 'above' ? [pinnedTicket, ...windowTickets] : [...windowTickets, pinnedTicket]
+})
 
 const spacerHeight = (height: number) => `${Math.max(0, height - LANE_BODY_GAP)}px`
 
@@ -65,25 +71,33 @@ const measureMountedCards = () => {
   if (anyChanged) measuredVersion.value++
 }
 
-let resizeObserver: ResizeObserver | undefined
+const viewportObserver = new ResizeObserver(readViewport)
+const cardObserver = new ResizeObserver(measureMountedCards)
+const observeMountedCards = () => {
+  cardObserver.disconnect()
+  if (!virtualized.value || !scroller.value) return
+  for (const element of scroller.value.children) cardObserver.observe(element)
+}
 onMounted(() => {
   readViewport()
-  measureMountedCards()
-  resizeObserver = new ResizeObserver(readViewport)
-  if (scroller.value) resizeObserver.observe(scroller.value)
+  if (scroller.value) viewportObserver.observe(scroller.value)
+  observeMountedCards()
 })
-onUpdated(measureMountedCards)
-onBeforeUnmount(() => resizeObserver?.disconnect())
+onUpdated(observeMountedCards)
+onBeforeUnmount(() => {
+  viewportObserver.disconnect()
+  cardObserver.disconnect()
+})
 </script>
 
 <template>
   <div ref="scroller" class="lane-body" @scroll="readViewport">
-    <div v-if="cardRange.start > 0" aria-hidden="true" :style="{ height: spacerHeight(cardRange.heightAbove), flex: '0 0 auto' }" />
+    <div v-if="cardRange.heightAbove > 0" aria-hidden="true" :style="{ height: spacerHeight(cardRange.heightAbove), flex: '0 0 auto' }" />
     <template v-for="ticket in mountedTickets" :key="ticket.id">
       <slot :ticket="ticket" />
     </template>
     <div
-      v-if="cardRange.end < tickets.length"
+      v-if="cardRange.heightBelow > 0"
       aria-hidden="true"
       :style="{ height: spacerHeight(cardRange.heightBelow), flex: '0 0 auto' }"
     />

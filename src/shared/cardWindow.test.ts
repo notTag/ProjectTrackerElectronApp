@@ -15,8 +15,14 @@ describe('cardWindow', () => {
     expect(cardWindow({ ...base, scrollTop: 9500 })).toMatchObject({ start: 90, end: 100, heightBelow: 0 })
   })
 
-  it('stretches to keep a pinned card mounted', () => {
-    const window = cardWindow({ ...base, scrollTop: 2000, pinnedIndex: 80 })
-    expect(window).toMatchObject({ start: 15, end: 81, heightBelow: 1900 })
+  it('keeps a far pinned card mounted on its own, without stretching the window', () => {
+    const below = cardWindow({ ...base, scrollTop: 2000, pinnedIndex: 80 })
+    expect(below).toEqual({ start: 15, end: 30, heightAbove: 1500, heightBelow: 6900, pinnedSide: 'below' })
+    const above = cardWindow({ ...base, scrollTop: 9500, pinnedIndex: 0 })
+    expect(above).toEqual({ start: 90, end: 100, heightAbove: 8900, heightBelow: 0, pinnedSide: 'above' })
+  })
+
+  it('leaves the window alone when the pinned card is already in it', () => {
+    expect(cardWindow({ ...base, scrollTop: 2000, pinnedIndex: 20 }).pinnedSide).toBeUndefined()
   })
 })

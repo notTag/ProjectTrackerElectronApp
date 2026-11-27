@@ -3,6 +3,7 @@ export interface CardWindow {
   end: number
   heightAbove: number
   heightBelow: number
+  pinnedSide?: 'above' | 'below'
 }
 
 export interface CardWindowInput {
@@ -26,11 +27,13 @@ export const cardWindow = ({ heights, gap, scrollTop, viewportHeight, overscan, 
   let end = start
   while (end < heights.length && offsets[end] < windowBottom) end++
 
-  const hasPin = pinnedIndex !== undefined && pinnedIndex >= 0 && pinnedIndex < heights.length
-  if (hasPin) {
-    start = Math.min(start, pinnedIndex)
-    end = Math.max(end, pinnedIndex + 1)
-  }
   const total = offsets[heights.length]
-  return { start, end, heightAbove: offsets[start], heightBelow: total - offsets[end] }
+  const range: CardWindow = { start, end, heightAbove: offsets[start], heightBelow: total - offsets[end] }
+  const hasPin = pinnedIndex !== undefined && pinnedIndex >= 0 && pinnedIndex < heights.length
+  if (!hasPin) return range
+
+  const pinnedSlot = heights[pinnedIndex] + gap
+  if (pinnedIndex < start) return { ...range, heightAbove: range.heightAbove - pinnedSlot, pinnedSide: 'above' }
+  if (pinnedIndex >= end) return { ...range, heightBelow: range.heightBelow - pinnedSlot, pinnedSide: 'below' }
+  return range
 }
