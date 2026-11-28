@@ -180,8 +180,6 @@ const commitTypedPrompts = () => {
   }
 }
 
-// Data-loss path: both a lane switch and the modal (or board) unmounting must
-// store typed prompts.
 watch(
   () => props.lane.id,
   () => {

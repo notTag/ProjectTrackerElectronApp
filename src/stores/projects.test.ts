@@ -820,6 +820,35 @@ describe('per-entity writes', () => {
     expect(store.board(PROJECT_PATH).lanes[1].agentFilePath).toBe(agentFilePath)
   })
 
+  it('keeps a lane edit made while the default file paths were being filled in', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const prd = store.board(PROJECT_PATH).lanes[1]
+    const agentFilePath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
+    let respond: (lane: typeof prd) => void = () => {}
+    api.ensureLaneMarkdownFiles.mockReturnValueOnce(new Promise((resolve) => (respond = resolve)))
+
+    const ensuring = store.ensureLaneMarkdownFiles(PROJECT_PATH, prd.id)
+    store.state.boards![PROJECT_PATH].lanes[1] = { ...prd, agentPrompt: 'Typed meanwhile' }
+    respond({ ...prd, agentFilePath })
+    await ensuring
+
+    const lane = store.board(PROJECT_PATH).lanes[1]
+    expect(lane.agentFilePath).toBe(agentFilePath)
+    expect(lane.agentPrompt).toBe('Typed meanwhile')
+  })
+
+  it('skips filling in default file paths when the lane already has both', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const lanes = store.state.boards![PROJECT_PATH].lanes
+    lanes[1] = { ...lanes[1], agentFilePath: 'a.md', orchestratorFilePath: 'b.md' }
+
+    await store.ensureLaneMarkdownFiles(PROJECT_PATH, lanes[1].id)
+
+    expect(api.ensureLaneMarkdownFiles).not.toHaveBeenCalled()
+  })
+
   it('a created ticket takes the number the repository returns', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')

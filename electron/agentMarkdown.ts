@@ -24,11 +24,6 @@ const MARKDOWN_KINDS = {
   orchestrator: { fieldLabel: 'Agent Orchestrator markdown file', fileName: ORCHESTRATOR_PROMPT_FILE_NAME }
 } as const
 
-// An empty field gets <project>/SwimlaneAgentPrompt/<lane>/<fileName>; the
-// sanitized folder name has no separators or leading dots, so it can't climb
-// out. A stored path is used as typed, even after a lane rename, so the text
-// in it is never left behind. Only .md and .txt, so a stray paste can't point
-// at something like ~/.zshrc; main further confines it to the scan directories.
 export const resolveAgentMarkdownPath = (target: AgentMarkdownTarget): string => {
   const projectPath = path.resolve(target.projectPath)
   const explicitPath = target.filePath.trim()

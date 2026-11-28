@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   GITHUB_UNREACHABLE_MESSAGE,
   laneHasAgentWork,
+  isContextFilePath,
   githubErrorMessage,
   isGithubUnreachableError,
   normalizeSemanticVersion,
@@ -2442,5 +2443,15 @@ describe('graph positions', () => {
   it('places a new node one column right of the rightmost node', () => {
     expect(graphPositionRightOf([{ x: 50, y: 70 }, { x: 900, y: 400 }, { x: 270, y: 70 }])).toEqual({ x: 1120, y: 70 })
     expect(graphPositionRightOf([])).toEqual({ x: 50, y: 70 })
+  })
+})
+
+describe('isContextFilePath', () => {
+  it('accepts .md and .txt files and an empty field, nothing else', () => {
+    expect(isContextFilePath('')).toBe(true)
+    expect(isContextFilePath('docs/Guide.MD')).toBe(true)
+    expect(isContextFilePath('notes.txt')).toBe(true)
+    expect(isContextFilePath('docs/.md')).toBe(false)
+    expect(isContextFilePath('~/.zshrc')).toBe(false)
   })
 })

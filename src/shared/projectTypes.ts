@@ -722,7 +722,10 @@ export const CONTEXT_FILE_EXTENSIONS = ['.md', '.txt']
 
 export const isContextFilePath = (filePath: string): boolean => {
   const trimmedPath = filePath.trim().toLowerCase()
-  return trimmedPath === '' || CONTEXT_FILE_EXTENSIONS.some((extension) => trimmedPath.endsWith(extension))
+  const fileName = trimmedPath.split('/').pop() ?? ''
+  const extensionStart = fileName.lastIndexOf('.')
+  const extension = extensionStart > 0 ? fileName.slice(extensionStart) : ''
+  return trimmedPath === '' || CONTEXT_FILE_EXTENSIONS.includes(extension)
 }
 
 // Path separators become word breaks ("In Review/QA" reads as "In-Review-QA");

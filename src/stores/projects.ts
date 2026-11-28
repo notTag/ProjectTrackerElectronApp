@@ -411,16 +411,20 @@ export const useProjectsStore = defineStore('projects', {
 
     async ensureLaneMarkdownFiles(projectPath: string, laneId: string) {
       const boardIsStored = this.state.boards?.[projectPath] !== undefined
-      if (!boardIsStored) {
-        await this.updateBoard(projectPath, (board) => board)
-        return
-      }
+      if (!boardIsStored) await this.updateBoard(projectPath, (board) => board)
+      const laneBefore = boardLaneById(storedBoard(this.state, projectPath), laneId)
+      const hasBothPaths = Boolean(laneBefore?.agentFilePath.trim() && laneBefore.orchestratorFilePath?.trim())
+      if (!laneBefore || hasBothPaths) return
       try {
-        const lane = await projectTrackerApi.ensureLaneMarkdownFiles(projectPath, laneId)
-        if (!lane) return
-        const board = withWrittenLane(storedBoard(this.state, projectPath), lane)
+        const writtenLane = await projectTrackerApi.ensureLaneMarkdownFiles(projectPath, laneId)
+        const currentBoard = storedBoard(this.state, projectPath)
+        const currentLane = boardLaneById(currentBoard, laneId)
+        if (!writtenLane || !currentLane) return
+        const { agentFilePath, orchestratorFilePath } = writtenLane
+        const board = withWrittenLane(currentBoard, { ...currentLane, agentFilePath, orchestratorFilePath })
         this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
-      } catch {
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
       }
     },
 
@@ -785,6 +789,7 @@ export const useProjectsStore = defineStore('projects', {
       for (const { projectPath, handoffs } of projectHandoffs) {
         for (const groupedHandoffs of groupByLaunch(handoffs)) {
           const toLane = groupedHandoffs[0].toLane
+          const agentFileContext = await this.readLaneMarkdownContext(projectPath, toLane, 'agent')
           const groupTickets = groupedHandoffs.map(({ ticket }) => ticket)
           const { skipped } = splitRunnable(groupTickets, toLane.id)
           const skippedIds = new Set(skipped.map((ticket) => ticket.id))
@@ -795,7 +800,6 @@ export const useProjectsStore = defineStore('projects', {
             this.notice = skippedNotice
             continue
           }
-          const agentFileContext = await this.readLaneMarkdownContext(projectPath, toLane, 'agent')
           if (!laneHasAgentWork(toLane, agentFileContext !== undefined)) continue
           const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
           if (this.autoRunning[autoRunKey(projectPath, toLane.id)]) {
