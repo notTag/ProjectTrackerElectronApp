@@ -1,0 +1,103 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Project Tracker: Cloud Database Cost Analysis (#78)</title>
+<style>
+@page { size: letter landscape; margin: 0.5in; }
+body { font: 10pt -apple-system, Helvetica, Arial, sans-serif; color: #1a1a1a; }
+h1 { font-size: 18pt; margin: 0 0 4px; }
+h2 { font-size: 13pt; margin: 18px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 2px; }
+h3 { page-break-after: avoid; font-size: 11pt; margin: 12px 0 4px; }
+p, li { line-height: 1.35; margin: 3px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 8.5pt; margin: 4px 0 8px; page-break-inside: avoid; }
+th, td { border: 1px solid #d0d0d0; padding: 3px 5px; text-align: right; vertical-align: top; }
+tr:first-child th { background: #f1f3f5; text-align: center; }
+th small, td small { color: #666; font-weight: normal; }
+td.best { background: #e3f4e3; font-weight: 600; }
+td.file { color: #888; font-style: italic; background: #fafafa; }
+.meta { color: #555; font-size: 9pt; }
+.break { page-break-before: always; }
+.note { background: #fff8e1; border-left: 3px solid #f0b400; padding: 6px 8px; font-size: 9pt; }
+table.plain td, table.plain th { text-align: left; }
+</style></head><body>
+
+<h1>Project Tracker: moving the DB to the cloud — provider cost analysis</h1>
+<p class="meta">Ticket #78 · 2026-11-28 · USD/month, list prices, US regions, on-demand, no committed-use discounts. Green = cheapest real database in that row. Grey italic = SQLite-file-in-object-storage (single-writer sync, not a shared DB), shown for reference.</p>
+
+<h2>Recommendation</h2>
+<ul>
+<li><b>Up to ~100 users, every serverless option is effectively free.</b> The DynamoDB, Cosmos and Firestore free tiers come to $0–3/mo, against Cloudflare's $5 Workers Paid base. Instance-priced Postgres costs $10–14/mo from the start.</li>
+<li><b>From 1,000 users up, Cloudflare D1 + Workers is the cheapest real database.</b> On the Medium profile at 1M users it costs about $12.7k/mo. The hyperscaler options run $21k–34k/mo. The gap comes from free egress and cheap per-row reads. D1 is SQLite, so the current schema and queries carry over almost unchanged.</li>
+<li>D1 caps each database at 10 GB, so at scale it needs one database per user or per team. Durable Objects with SQLite give the same model (one SQLite per tenant) and add websocket push, which replaces polling.</li>
+<li>The $5 Workers Paid base covers about 530 Medium users. The 30M CPU-ms allowance runs out first (at 5 ms per request); the 10M-request allowance lasts to about 890 users.</li>
+<li>D1 allows 50,000 databases per account by default (raisable on request) and 1 TB of storage per account. Per-user databases hit the count cap at 50k users, so plan per-team databases or Durable Objects before then.</li>
+<li><b>Cheapest first step:</b> a nightly per-user SQLite snapshot to R2, for backup and new-device restore. At 1,000 Medium users that is ~6 GB and ~30k writes a month, inside R2's free tier, so about $0.</li>
+<li>Among the hyperscalers, <b>Cosmos DB serverless or Firestore</b> is cheapest up to ~10k users. Above that, <b>managed Postgres</b> (Azure Flexible or RDS) wins, because a flat instance price beats per-request billing once traffic is dense. At Heavy × 1M (~86 TB) a single Postgres would have to be sharded, so treat that row as a lower bound.</li>
+<li><b>Object storage on its own (R2 or S3 holding the SQLite file)</b> is the cheapest way to back up or sync for one person. It is not a database: there are no concurrent writers and no per-field merge, so it cannot support shared boards.</li>
+<li>The biggest cost lever is <b>polling</b>, not storage. The local app polls every 10 s. The model below assumes 60 s in the cloud. Push (websockets / SSE) would cut most of the read and request cost.</li>
+</ul>
+
+<h2 class="break">Workload model (per user per month)</h2>
+<table class="plain">
+<tr><th>Input</th><th>Value</th><th>Source</th></tr>
+<tr><td>Ticket row size</td><td>~5.9 KB</td><td>Measured: 289 tickets in 1.71 MB of SQLite pages (live DB)</td></tr>
+<tr><td>Swimlane / workflow row</td><td>~0.9 KB / ~2 KB</td><td>Lanes measured (58 rows, 53 KB); workflows estimated (table empty locally)</td></tr>
+<tr><td>Storage overhead</td><td>×1.5</td><td>Indexes and metadata</td></tr>
+<tr><td>Active time</td><td>22 days × 8 h</td><td>Assumption</td></tr>
+<tr><td>Change polls</td><td>{{POLLS}} (60 s interval)</td><td>Current app: 10 s <code>data_version</code> poll (docs/storage-seam.md)</td></tr>
+<tr><td>Full board loads</td><td>44 (2 per active day)</td><td>After that, delta sync only</td></tr>
+<tr><td>Edits</td><td>Light 10 / Medium 30 / Heavy 100 per day</td><td>Assumption</td></tr>
+<tr><td>Egress</td><td>full loads × gzip 0.3</td><td>AWS $0.09/GB, Azure $0.087/GB, GCP $0.12/GB, Cloudflare $0</td></tr>
+<tr><td>API layer</td><td>included</td><td>API Gateway + Lambda / Azure Functions / Cloud Run / Workers. Desktop clients can't hold shared database credentials.</td></tr>
+</table>
+<table class="plain">
+<tr><th>Profile</th><th>Tickets</th><th>Swimlanes</th><th>Workflows</th><th>Edits/day</th></tr>
+<tr><td>Light</td><td>100</td><td>8</td><td>1</td><td>10</td></tr>
+<tr><td>Medium</td><td>1,000</td><td>20</td><td>5</td><td>30</td></tr>
+<tr><td>Heavy</td><td>10,000</td><td>100</td><td>25</td><td>100</td></tr>
+</table>
+
+<h2 class="break">Total monthly cost by user count</h2>
+<p>Each cell shows the total per month, and the cost per user below it.</p>
+<h3>Medium profile (1,000 tickets · 20 swimlanes · 5 workflows per user)</h3>
+{{MEDIUM}}
+<h3>Light profile (100 tickets · 8 swimlanes · 1 workflow per user)</h3>
+{{LIGHT}}
+
+<h3 class="break">Heavy profile (10,000 tickets · 100 swimlanes · 25 workflows per user)</h3>
+{{HEAVY}}
+
+<h2 class="break">Per-user budget benchmarks</h2>
+<p>Cost per user per month at 1,000 users. One dimension varies from the Medium profile at a time. The first column also shows each user's stored size.</p>
+<h3>Tickets per user scaling upward</h3>
+{{TICKETS}}
+<h3>Workflows per user scaling upward</h3>
+{{WORKFLOWS}}
+<h3>Swimlanes per user scaling upward</h3>
+{{LANES}}
+<p>Workflows and swimlanes are small rows that are read with the board, so they hardly move the cost. Ticket count drives storage, egress and full-load reads. Postgres flattens the per-user cost because the instance is sized by user count, not by data.</p>
+
+<h2 class="break">Unit prices used</h2>
+<table class="plain">
+<tr><th>Option</th><th>Prices</th><th>Limits / notes</th></tr>
+<tr><td>AWS DynamoDB on-demand</td><td>$0.125/M read units, $0.625/M write units, $0.25/GB-mo (25 GB free)</td><td>Each write rewrites the whole ~6 KB item, so 6 write units + a GSI copy. Eventually consistent reads cost 0.5 unit per 4 KB.</td></tr>
+<tr><td>AWS RDS Postgres</td><td>~$12 (t4g.micro) up to ~$7.9k (HA + replicas); gp3 $0.115/GB</td><td>Instance step by user count; storage doubled for HA</td></tr>
+<tr><td>AWS S3 SQLite file</td><td>$0.023/GB, PUT $0.005/1k, GET $0.0004/1k</td><td>Single writer per file; whole-file upload</td></tr>
+<tr><td>Azure Cosmos DB serverless</td><td>$0.25/M RU, ~$0.25/GB-mo</td><td>Serverless caps at 1 TB per container and 5k RU/s. Above ~100k users it needs autoscale provisioned throughput.</td></tr>
+<tr><td>Azure Postgres Flexible</td><td>~$13 (B1ms) up to ~$8.6k</td><td>Same instance steps as RDS</td></tr>
+<tr><td>GCP Firestore (Standard)</td><td>$0.03/100k reads, $0.09/100k writes, ~$0.18/GiB-mo</td><td>Free: 50k reads and 20k writes per day, 1 GiB. Snapshot listeners can replace polling.</td></tr>
+<tr><td>GCP Cloud SQL Postgres</td><td>~$10 (shared core) up to ~$8.3k; $0.17/GB SSD</td><td>Same instance steps</td></tr>
+<tr><td>Cloudflare D1 + Workers</td><td>$5/mo base; 25B rows read and 50M rows written included, then $0.001/M reads and $1.00/M writes; 5 GB free, then $0.75/GB-mo; Workers $0.30/M requests after 10M</td><td>10 GB per database, so shard per user or team. No egress fees.</td></tr>
+<tr><td>Cloudflare R2 SQLite file</td><td>$0.015/GB (10 GB free), Class A $4.50/M, Class B $0.36/M</td><td>Single writer per file. No egress fees.</td></tr>
+</table>
+
+<div class="note">
+<b>Accuracy.</b> The per-request and storage rates come from the providers' pricing pages as of late 2026. The Postgres instance prices are approximate list prices, with an error of about ±25%. Region choice, committed-use discounts (20–50%), and free-tier changes all move the absolute numbers. The ranking is what holds up. The dominant inputs are the poll interval, the number of full loads, and egress. Re-run <code>t78-cost-model.py</code> with real telemetry once a beta exists.
+</div>
+
+<h3>Sources</h3>
+<ul>
+<li>developers.cloudflare.com/d1/platform/pricing · developers.cloudflare.com/workers/platform/pricing · developers.cloudflare.com/r2/pricing</li>
+<li>aws.amazon.com/dynamodb/pricing/on-demand · aws.amazon.com/rds/postgresql/pricing · aws.amazon.com/s3/pricing</li>
+<li>azure.microsoft.com/pricing/details/cosmos-db/serverless · learn.microsoft.com/azure/cosmos-db/understand-your-bill</li>
+<li>cloud.google.com/firestore/pricing · cloud.google.com/sql/pricing</li>
+</ul>
+</body></html>
