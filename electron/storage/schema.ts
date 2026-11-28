@@ -2,9 +2,10 @@
 // edit by any member is immediately what every other member sees. Users attach
 // to that shared data two ways — membership (who can see a project) and
 // assignment (who is working a ticket) — never by owning a private copy.
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 // First version with closing lanes; opening an older file seeds and backfills them once.
 export const CLOSING_LANES_SCHEMA_VERSION = 5
+export const CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION = 7
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -57,7 +58,11 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   output_target TEXT NOT NULL DEFAULT '',
   orchestrator_prompt TEXT NOT NULL DEFAULT '',
   orchestrator_file_path TEXT NOT NULL DEFAULT '',
+  -- Dormant since #168: copied into current_agent_orchestrator_prompt once, then
+  -- no longer read or written; kept because migrations are additive only.
   orchestrator_prompt_override TEXT NOT NULL DEFAULT '',
+  current_agent_orchestrator_prompt TEXT NOT NULL DEFAULT '',
+  default_agent_orchestrator_prompt TEXT NOT NULL DEFAULT '',
   auto_run_agent_id TEXT,
   auto_run_terminal_id TEXT,
   auto_run_worktrees INTEGER NOT NULL DEFAULT 1,
@@ -157,6 +162,21 @@ CREATE TABLE IF NOT EXISTS workflows (
   PRIMARY KEY (project_path, id)
 );
 
+-- Global lane presets (#146), not tied to a board. lane_json holds a
+-- swim_lanes row minus project_path, position and graph_position_json; the
+-- prompts travel as content because file paths are project-relative.
+CREATE TABLE IF NOT EXISTS lane_store (
+  id TEXT PRIMARY KEY,
+  lane_id TEXT NOT NULL,
+  origin_project_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  lane_json TEXT NOT NULL,
+  agent_markdown TEXT NOT NULL DEFAULT '',
+  orchestrator_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS tickets_by_board ON tickets (project_path, lane_id);
 CREATE INDEX IF NOT EXISTS tickets_by_assignee ON tickets (assignee_id);
 CREATE INDEX IF NOT EXISTS tickets_by_external_id ON tickets (external_id);
@@ -200,8 +220,11 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_rules', definition: 'TEXT' },
   { table: 'tickets', column: 'move_rules_passed_lane_id', definition: 'TEXT' },
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
+  { table: 'lane_store', column: 'origin_project_path', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
+  { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'default_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   // NULL until the board's first workflow swap or create materializes "Default".
   { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]

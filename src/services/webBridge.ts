@@ -104,6 +104,10 @@ export const webBridge = {
   deleteLane: (projectPath, laneId) => invoke('lane:delete', { projectPath, laneId }),
   activateWorkflow: (projectPath, workflowId) => invoke('workflow:activate', { projectPath, workflowId }),
   createWorkflow: (projectPath, name) => invoke('workflow:create', { projectPath, name }),
+  listLaneStore: () => invoke('lane-store:list'),
+  saveLaneToStore: (projectPath, laneId) => invoke('lane-store:save', { projectPath, laneId }),
+  deleteLaneStoreEntry: (entryId) => invoke('lane-store:delete', { entryId }),
+  addLaneFromStore: (projectPath, entryId) => invoke('lane-store:add', { projectPath, entryId }),
   updateProject: (path, patch) => invoke('project:update', { path, patch }),
   onExternalChange: (callback) => subscribe('external-change', () => callback()),
   scanProjectDirectories: (scanDirectories, hiddenPaths, thirdPartyPaths) =>
@@ -121,8 +125,10 @@ export const webBridge = {
   appStartedAt: () => invoke('app:started-at'),
   terminalTabsAlive: (targetId, titles) => invoke('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath) => invoke('project:read-readme', projectPath),
-  saveLaneMarkdown: (kind, projectPath, laneName, filePath, content, previousContent) =>
-    invoke('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content, previousContent }),
+  saveLaneMarkdown: (projectPath, laneName, filePath, content, previousContent) =>
+    invoke('lane:save-agent-markdown', { projectPath, laneName, filePath, content, previousContent }),
+  readLaneOrchestratorContext: (projectPath, laneName, filePath) =>
+    invoke('lane:read-orchestrator-context', { projectPath, laneName, filePath }),
   fetchProjectGithub: (githubUrl) => invoke('project:fetch-github', githubUrl),
   getMetrics: (projectPaths) => invoke('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl, since) => invoke('project:fetch-github-issues', { githubUrl, since }),

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createSeedState, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
+import { createSeedState, UNASSIGNED_LANE_ID, type ProjectTrackerState } from '../../src/shared/projectTypes.js'
 import { startWebServer, type RunningWebServer } from './server.js'
 
 interface Reply {
@@ -133,7 +133,7 @@ describe('web server', () => {
       expect(created).toMatchObject({ id: 't1', number: 1 })
 
       expect(await invoke('ticket:update', { id: 't1', patch: { title: 'Renamed' } })).toMatchObject({ title: 'Renamed' })
-      await expect(invoke('ticket:update', { id: 't1', patch: { number: 9 } })).rejects.toThrow('Invalid ticket update payload.')
+      await expect(invoke('ticket:update', { id: 't1', patch: { number: 9 } })).rejects.toThrow('Invalid ticket update payload')
 
       expect(await invoke('ticket:delete', { id: 't1' })).toBeUndefined()
       const state = (await invoke('project-state:get')) as ProjectTrackerState
@@ -179,12 +179,77 @@ describe('web server', () => {
       const afterDelete = (await invoke('project-state:get')) as ProjectTrackerState
       expect(afterDelete.boards?.[projectPath].lanes.map((lane) => lane.id)).toEqual(['idea'])
     })
+
+    it.each([
+      ['a normal lane', 'idea'],
+      ['the unassigned lane', UNASSIGNED_LANE_ID]
+    ])('saves and clears graphPosition on %s', async (_label, laneId) => {
+      const readLane = async () => {
+        const state = (await invoke('project-state:get')) as ProjectTrackerState
+        const board = state.boards?.[projectPath]
+        if (laneId === UNASSIGNED_LANE_ID) return board?.unassignedLane
+        return board?.lanes.find((lane) => lane.id === laneId)
+      }
+
+      const graphPosition = { x: 310, y: 140 }
+      expect(await invoke('lane:update', { projectPath, laneId, patch: { graphPosition } })).toMatchObject({ graphPosition })
+      expect((await readLane())?.graphPosition).toEqual(graphPosition)
+
+      await invoke('lane:update', { projectPath, laneId, patch: { graphPosition: null } })
+      expect((await readLane())?.graphPosition).toBeUndefined()
+    })
+
+    it('names the rejected key', async () => {
+      const badPosition = { graphPosition: { x: 'a', y: 1 } }
+      await expect(invoke('lane:update', { projectPath, laneId: 'idea', patch: badPosition }))
+        .rejects.toThrow('Invalid lane update payload: rejected key "graphPosition".')
+      await expect(invoke('lane:update', { projectPath, laneId: 'idea', patch: { bogus: 1 } }))
+        .rejects.toThrow('rejected key "bogus"')
+      await expect(invoke('lane:update', { projectPath, laneId: 'idea' }))
+        .rejects.toThrow('Invalid lane update payload: patch must be an object.')
+      await expect(invoke('ticket:update', { id: 't1', patch: { number: 9 } }))
+        .rejects.toThrow('Invalid ticket update payload: rejected key "number".')
+    })
   })
 
   describe('projects', () => {
     it('updates a project and keeps reads inside the scan directories', async () => {
       expect(await invoke('project:update', { path: projectPath, patch: { notes: 'web notes' } })).toMatchObject({ notes: 'web notes' })
       await expect(invoke('project:read-readme', '/etc')).rejects.toThrow('outside configured scan directories')
+    })
+  })
+
+  describe('orchestrator context', () => {
+    it("reads the lane's file inside the scan directories and skips one that is missing, not markdown or outside", async () => {
+      const scanDirectory = mkdtempSync(path.join(tmpdir(), 'project-tracker-web-context-'))
+      const contextProjectPath = path.join(scanDirectory, 'app')
+      const defaultContextPath = path.join(contextProjectPath, 'SwimlaneAgentPrompt', 'Idea', 'AgentOrchestratorPrompt.md')
+      mkdirSync(path.dirname(defaultContextPath), { recursive: true })
+      writeFileSync(defaultContextPath, 'Ping me on Slack.')
+      writeFileSync(path.join(contextProjectPath, 'blank.md'), '  \n')
+      const outsideDirectory = mkdtempSync(path.join(tmpdir(), 'project-tracker-web-outside-'))
+      writeFileSync(path.join(outsideDirectory, 'secret.md'), 'outside')
+      symlinkSync(path.join(outsideDirectory, 'secret.md'), path.join(contextProjectPath, 'linked.md'))
+      await invoke('project-state:save', { ...seededState(), scanDirectories: [scanDirectory] })
+      const readContext = (filePath: string) =>
+        invoke('lane:read-orchestrator-context', { projectPath: contextProjectPath, laneName: 'Idea', filePath })
+
+      try {
+        const defaultContext = (await readContext('')) as { filePath: string; content: string }
+        expect(defaultContext.content).toBe('Ping me on Slack.')
+        expect(defaultContext.filePath.endsWith('/app/SwimlaneAgentPrompt/Idea/AgentOrchestratorPrompt.md')).toBe(true)
+        for (const skippedPath of ['missing.md', 'blank.md', 'notes.txt', '/etc/outside.md', 'linked.md']) {
+          expect(await readContext(skippedPath)).toBeNull()
+        }
+      } finally {
+        rmSync(scanDirectory, { recursive: true, force: true })
+        rmSync(outsideDirectory, { recursive: true, force: true })
+      }
+    })
+
+    it('refuses an orchestrator save from a tab on the old bundle', async () => {
+      const save = { kind: 'orchestrator', projectPath, laneName: 'Idea', filePath: '', content: 'prompt', previousContent: '' }
+      await expect(invoke('lane:save-agent-markdown', save)).rejects.toThrow('Only the agent markdown file is saved.')
     })
   })
 

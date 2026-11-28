@@ -7,10 +7,16 @@
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import {
+  readLaneMarkdown,
+  readOrchestratorContext,
+  resolveAgentMarkdownPath,
+  saveAgentMarkdown,
+  writeMissingLaneMarkdown
+} from './agentMarkdown.js'
 import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { createGithubRequest } from './githubRequest.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
@@ -51,11 +57,19 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
-  type LaneMarkdownKind,
   type LaneWritePatch,
   type ProjectWritePatch,
-  type ScanProgress
+  type ScanProgress,
+  type LaneMarkdownKind
 } from '../src/shared/projectTypes.js'
+
+const realPathOrSelf = (directory: string) => {
+  try {
+    return realpathSync(directory)
+  } catch {
+    return directory
+  }
+}
 
 export const APP_NAME = 'Project Tracker'
 
@@ -112,7 +126,6 @@ const openUri = (uri: string) =>
     execFile('open', [uri], { timeout: LAUNCH_TIMEOUT_MS }, (error) => (error ? reject(error) : resolve()))
   })
 
-// Warp reads a config file within seconds of its URI, even on a cold start.
 const WARP_CONFIG_LIFETIME_MS = 60_000
 
 const run = (bin: string, args: string[]) =>
@@ -243,7 +256,7 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
-  orchestratorPromptOverride: true,
+  currentAgentOrchestratorPrompt: true, defaultAgentOrchestratorPrompt: true,
   autoRunAgentId: true, autoRunTerminalId: true, autoRunModel: true, orchestratorAgentId: true,
   orchestratorModel: true, autoRunWorktrees: true, fullAuto: true, closesTicket: true, agentSetsVersion: true,
   nextLaneId: true, orchestratorPollMinutes: true, orchestratorPollActive: true, orchestratorFilePath: true,
@@ -255,27 +268,47 @@ const LANE_PATCH_KEYS = new Set(Object.keys(LANE_PATCH_FIELDS))
 const REQUIRED_TEXT_KEYS = new Set(['laneId', 'title', 'description', 'name', 'agentPrompt', 'agentFilePath'])
 // NOT NULL text columns whose SwimLane field is optional: the repository stores
 // absent or null as '', but any other non-string is rejected.
-const OPTIONAL_TEXT_KEYS = new Set(['outputTarget', 'orchestratorPrompt', 'orchestratorPromptOverride', 'orchestratorFilePath'])
+const OPTIONAL_TEXT_KEYS = new Set([
+  'outputTarget',
+  'orchestratorPrompt',
+  'currentAgentOrchestratorPrompt',
+  'defaultAgentOrchestratorPrompt',
+  'orchestratorFilePath'
+])
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'ongoing', 'paused', 'completed', 'archived', 'hidden', 'unknown']
 const PROJECT_PRIORITIES: ProjectPriority[] = ['high', 'medium', 'low', 'none']
 
 const isGraphPosition = (value: unknown): boolean =>
   isPlainObject(value) && Number.isFinite(value.x) && Number.isFinite(value.y)
 
-const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean => {
-  if (!isPlainObject(value)) return false
-  return Object.entries(value).every(([key, fieldValue]) => {
-    if (!allowedKeys.has(key)) return false
-    const isString = typeof fieldValue === 'string'
-    if (REQUIRED_TEXT_KEYS.has(key)) return isString
-    if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
-    if (key === 'graphPosition') return fieldValue == null || isGraphPosition(fieldValue)
-    return true
-  })
+const isPatchFieldValid = (allowedKeys: Set<string>, key: string, fieldValue: unknown): boolean => {
+  if (!allowedKeys.has(key)) return false
+  const isString = typeof fieldValue === 'string'
+  if (REQUIRED_TEXT_KEYS.has(key)) return isString
+  if (OPTIONAL_TEXT_KEYS.has(key)) return isString || fieldValue == null
+  if (key === 'graphPosition') return fieldValue == null || isGraphPosition(fieldValue)
+  return true
 }
+
+const MAX_QUOTED_KEY_LENGTH = 64
+
+const patchRejection = (allowedKeys: Set<string>, value: unknown): string | undefined => {
+  if (!isPlainObject(value)) return 'patch must be an object'
+  const patchEntries = Object.entries(value)
+  const rejectedEntry = patchEntries.find(([key, fieldValue]) => !isPatchFieldValid(allowedKeys, key, fieldValue))
+  if (!rejectedEntry) return undefined
+  const shortKey = rejectedEntry[0].slice(0, MAX_QUOTED_KEY_LENGTH)
+  return `rejected key ${JSON.stringify(shortKey)}`
+}
+
+const isPatchOf = (allowedKeys: Set<string>, value: unknown): boolean =>
+  patchRejection(allowedKeys, value) === undefined
 
 const isTicketPatch = (value: unknown): value is TicketWritePatch => isPatchOf(TICKET_PATCH_KEYS, value)
 const isLanePatch = (value: unknown): value is LaneWritePatch => isPatchOf(LANE_PATCH_KEYS, value)
+
+const invalidPatchError = (payloadName: string, rejection: string): Error =>
+  new Error(`Invalid ${payloadName} update payload: ${rejection}.`)
 
 const isTicket = (value: unknown): value is Omit<Ticket, 'number'> => {
   if (!isPlainObject(value)) return false
@@ -306,17 +339,11 @@ const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
 let warpLaunchQueue: Promise<unknown> = Promise.resolve()
 
 export const createIpcHandlers = (dependencies: HandlerDependencies): Record<IpcChannel, IpcHandler> => {
-  // Each config file gets a unique stem so back-to-back launches never
-  // overwrite one another before Warp reads them, and is deleted a minute
-  // later: it's a hand-off, not a config the user keeps, and it shows in Warp's
-  // menus while present. The sweep catches files whose timer never fired
-  // because the app quit.
-  //
   // This executes the command rather than pasting it. What makes that safe is the
   // single-quote wrapping applied in ticketShellCommand: ticket text — which can
   // arrive from a GitHub issue — lands as one literal argument to the agent, never
   // as shell code.
-  const warpConfigDirectory = (directoryName: string, prefix: string, extension: string) => {
+  const sweptWarpConfigDirectory = (directoryName: string, prefix: string, extension: string) => {
     const configDirectory = path.join(dependencies.homeDirectory, '.warp', directoryName)
     mkdirSync(configDirectory, { recursive: true })
     const staleBefore = Date.now() - WARP_CONFIG_LIFETIME_MS
@@ -329,8 +356,6 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     return configDirectory
   }
 
-  // Started once `open` returns, so a slow hand-off can't delete the file
-  // before Warp reads it. A failed open leaves it for the next sweep.
   const removeAfterWarpReadsIt = (configPath: string) =>
     setTimeout(() => rmSync(configPath, { force: true }), WARP_CONFIG_LIFETIME_MS).unref()
 
@@ -346,7 +371,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
   }
 
   const openWarpTabConfigs = async (projectPath: string, tabs: TerminalTab[]) => {
-    const configDirectory = warpConfigDirectory('tab_configs', WARP_TAB_CONFIG_PREFIX, '.toml')
+    const configDirectory = sweptWarpConfigDirectory('tab_configs', WARP_TAB_CONFIG_PREFIX, '.toml')
     for (const tab of tabs) {
       const stem = uniqueStem(WARP_TAB_CONFIG_PREFIX)
       const configPath = path.join(configDirectory, `${stem}.toml`)
@@ -357,7 +382,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
   }
 
   const openWarpLaunchConfig = async (projectPath: string, tabs: TerminalTab[]) => {
-    const configDirectory = warpConfigDirectory('launch_configurations', WARP_LAUNCH_CONFIG_PREFIX, '.yaml')
+    const configDirectory = sweptWarpConfigDirectory('launch_configurations', WARP_LAUNCH_CONFIG_PREFIX, '.yaml')
     const stem = uniqueStem(WARP_LAUNCH_CONFIG_PREFIX)
     const configPath = path.join(configDirectory, `${stem}.yaml`)
     writeFileSync(configPath, warpLaunchConfigYaml(stem, projectPath, tabs), 'utf8')
@@ -376,9 +401,9 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
   // Only the terminals can run a ticket's command; the editors in the allowlist
   // have no shell to run it in and keep the clipboard hand-off. Warp adds its
-  // tabs to the focused Warp window, or opens one when none is; Ghostty to the window the app last opened
-  // while it is still open; Terminal and iTerm2 open one new window per launch
-  // with a tab per command.
+  // tabs to the focused Warp window, or opens one when none is; Ghostty to the
+  // window the app last opened while it is still open; Terminal and iTerm2 open
+  // one new window per launch with a tab per command.
   const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>> = {
     warp: openWarpWithCommands,
     terminal: openTerminalWithCommands,
@@ -421,8 +446,10 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
     'ticket:update': (payload, { repository }) => {
       const { id, patch } = (payload ?? {}) as { id?: unknown; patch?: unknown }
-      if (typeof id !== 'string' || !isTicketPatch(patch)) throw new Error('Invalid ticket update payload.')
-      return toPlainJson(repository.updateTicket(id, patch))
+      if (typeof id !== 'string') throw new Error('Invalid ticket update payload.')
+      const rejection = patchRejection(TICKET_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('ticket', rejection)
+      return toPlainJson(repository.updateTicket(id, patch as TicketWritePatch))
     },
 
     'ticket:delete': (payload, { repository }) => {
@@ -469,10 +496,10 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
     'lane:update': (payload, { repository }) => {
       const { projectPath, laneId, patch } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown; patch?: unknown }
-      if (typeof projectPath !== 'string' || typeof laneId !== 'string' || !isLanePatch(patch)) {
-        throw new Error('Invalid lane update payload.')
-      }
-      return toPlainJson(repository.updateSwimLane(normalizePath(projectPath), laneId, patch))
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane update payload.')
+      const rejection = patchRejection(LANE_PATCH_KEYS, patch)
+      if (rejection !== undefined) throw invalidPatchError('lane', rejection)
+      return toPlainJson(repository.updateSwimLane(normalizePath(projectPath), laneId, patch as LaneWritePatch))
     },
 
     'lane:reorder': (payload, { repository }) => {
@@ -497,6 +524,61 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, name } = (payload ?? {}) as { projectPath?: unknown; name?: unknown }
       if (typeof projectPath !== 'string' || typeof name !== 'string') throw new Error('Invalid workflow create payload.')
       return toPlainJson(repository.createWorkflow(normalizePath(projectPath), name))
+    },
+
+    'lane-store:list': (_payload, { repository }) => toPlainJson(repository.listLaneStore()),
+
+    'lane-store:save': (payload, { repository }) => {
+      const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane store save payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const lane = repository.lane(normalized, laneId)
+      if (!lane) throw new Error(`Lane ${laneId} does not exist.`)
+      const scanDirectories = scanDirectoriesOf(repository)
+      const readMarkdown = (kind: LaneMarkdownKind, filePath: string) => {
+        const markdownTarget = { kind, projectPath: normalized, laneName: lane.name, filePath }
+        let resolvedPath: string
+        try {
+          resolvedPath = resolveAgentMarkdownPath(markdownTarget)
+        } catch {
+          return ''
+        }
+        const readable = isInsideAny(resolvedPath, scanDirectories)
+        if (!readable) return ''
+        return kind === 'orchestrator' ? readOrchestratorContext(resolvedPath) : readLaneMarkdown(markdownTarget)
+      }
+      const markdown = {
+        agent: readMarkdown('agent', lane.agentFilePath),
+        orchestrator: readMarkdown('orchestrator', lane.orchestratorFilePath ?? '')
+      }
+      return toPlainJson(repository.saveLaneToStore(normalized, laneId, markdown))
+    },
+
+    'lane-store:delete': (payload, { repository }) => {
+      const { entryId } = (payload ?? {}) as { entryId?: unknown }
+      if (typeof entryId !== 'string') throw new Error('Invalid lane store delete payload.')
+      repository.deleteLaneStoreEntry(entryId)
+    },
+
+    'lane-store:add': (payload, { repository }) => {
+      const { projectPath, entryId } = (payload ?? {}) as { projectPath?: unknown; entryId?: unknown }
+      if (typeof projectPath !== 'string' || typeof entryId !== 'string') throw new Error('Invalid lane store add payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const writtenFiles: string[] = []
+      try {
+        repository.addLaneFromStore(normalized, entryId, (prompts) => {
+          const laneFolder = { projectPath: normalized, laneName: prompts.laneName }
+          for (const kind of ['agent', 'orchestrator'] as const) {
+            const markdown = kind === 'agent' ? prompts.agentMarkdown : prompts.orchestratorMarkdown
+            const written = writeMissingLaneMarkdown({ ...laneFolder, kind }, markdown)
+            if (written) writtenFiles.push(written)
+          }
+        })
+      } catch (error) {
+        for (const filePath of writtenFiles) rmSync(filePath, { force: true })
+        throw error
+      }
+      return toPlainJson(repository.getState())
     },
 
     'project:update': (payload, { repository }) => {
@@ -806,17 +888,17 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
         string,
         unknown
       >
+      if (kind !== undefined && kind !== 'agent') throw new Error('Only the agent markdown file is saved.')
       const fields = [projectPath, laneName, requestedFilePath, content, previousContent]
       const fieldsAreStrings = fields.every((field) => typeof field === 'string')
-      const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
-      if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid save request.')
+      if (!fieldsAreStrings) throw new Error('Invalid save request.')
 
       const normalized = assertScannedProjectPath(repository, projectPath as string)
       const project = repository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
       if (!project) throw new Error('Unknown project.')
 
       const target = {
-        kind: kind as LaneMarkdownKind,
+        kind: 'agent' as const,
         projectPath: normalized,
         laneName: laneName as string,
         filePath: requestedFilePath as string
@@ -827,11 +909,38 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
         throw new Error('Markdown file must be inside a scanned directory.')
       }
-      // The orchestrator file is a copy the launch never reads, so it is replaced
-      // freely: its generated text changes with the app, which a check would
-      // mistake for a hand edit and refuse forever.
-      const guardedPreviousContent = kind === 'agent' ? (previousContent as string) : null
-      return saveAgentMarkdown(filePath, content as string, guardedPreviousContent)
+      return saveAgentMarkdown(filePath, content as string, previousContent as string)
+    },
+
+    'lane:read-orchestrator-context': (request, { repository }) => {
+      const { projectPath, laneName, filePath: requestedFilePath } = (request ?? {}) as Record<string, unknown>
+      const fields = [projectPath, laneName, requestedFilePath]
+      const fieldsAreStrings = fields.every((field) => typeof field === 'string')
+      if (!fieldsAreStrings) throw new Error('Invalid read request.')
+
+      const normalized = assertScannedProjectPath(repository, projectPath as string)
+      const target = {
+        kind: 'orchestrator' as const,
+        projectPath: normalized,
+        laneName: laneName as string,
+        filePath: requestedFilePath as string
+      }
+      let filePath: string
+      try {
+        filePath = resolveAgentMarkdownPath(target)
+      } catch {
+        return null
+      }
+      let realFilePath: string
+      try {
+        realFilePath = realpathSync(filePath)
+      } catch {
+        return null
+      }
+      const realScanDirectories = scanDirectoriesOf(repository).map(realPathOrSelf)
+      if (!isInsideAny(realFilePath, realScanDirectories)) return null
+      const content = readOrchestratorContext(realFilePath)
+      return content.trim() ? toPlainJson({ filePath, content }) : null
     }
   }
 }
