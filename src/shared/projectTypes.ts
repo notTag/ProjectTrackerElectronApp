@@ -1113,6 +1113,17 @@ export interface OrchestratorPromptContext {
   terminalLabel: string
 }
 
+export const orchestratorPromptContext = (
+  board: ProjectBoard,
+  projectPath: string,
+  terminal: { id: string; label: string }
+): OrchestratorPromptContext => ({
+  projectPath,
+  lanes: [...board.lanes, getUnassignedLane(board)],
+  terminalId: terminal.id,
+  terminalLabel: terminal.label
+})
+
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
 // Warp tabs exit with their agent (`; exit`, warpTabConfigToml), so ending the

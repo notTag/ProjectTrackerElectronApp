@@ -39,7 +39,7 @@ import {
   orchestratorAgentChoice,
   orchestratorPromptMissingTokens,
   orchestratorPromptTemplate,
-  type OrchestratorPromptContext,
+  orchestratorPromptContext,
   checklistProgress,
   clampLaneWidth,
   findAgent,
@@ -58,7 +58,6 @@ import {
   setChecklistItemDone,
   setLaneWidth,
   steppedOrchestratorPoll,
-  getUnassignedLane,
   boardLaneColumns,
   effectiveNextLaneId,
   isReadyToMove,
@@ -1254,12 +1253,8 @@ const changeAutoRunConfirmAgent = () => {
 // the first click uses a terminal the user is known to have.
 const autoRunTerminal = (lane: SwimLane) => resolveAutoRunTerminal(lane.autoRunTerminalId, openInStore.selectedId)
 
-const orchestratorContextFor = (terminal: OpenInTarget): OrchestratorPromptContext => ({
-  projectPath: projectPath.value,
-  lanes: [...board.value.lanes, getUnassignedLane(board.value)],
-  terminalId: terminal.id,
-  terminalLabel: terminal.label
-})
+const orchestratorContextFor = (terminal: OpenInTarget) =>
+  orchestratorPromptContext(board.value, projectPath.value, terminal)
 
 const openLaneOrchestratorTemplate = computed(() => {
   const lane = openLane.value

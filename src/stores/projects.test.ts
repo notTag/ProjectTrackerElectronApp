@@ -176,6 +176,19 @@ describe('full auto handoff', () => {
     expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 
+  it("opens the destination lane's orchestrator for the handed-off tickets", async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('prd')
+    api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
+
+    await store.refresh()
+    await flushLaunches()
+
+    const [, , , , orchestrator] = api.autoRunLane.mock.calls[0]
+    expect(orchestrator.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
+    expect(orchestrator.command).toContain('#7')
+  })
+
   it('launches In Development from ticket data when a ticket skips PRD with no agent run', async () => {
     // Same round trip the preload applies to every IPC result.
     api.refreshProjectState.mockImplementation(async () => toPlainJson(stateWithTicketIn('dev')))

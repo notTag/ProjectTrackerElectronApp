@@ -56,12 +56,13 @@ const doubleQuotedString = (value: string) => {
   return jsonString.replace(RAW_DELETE, '\\u007f')
 }
 
+// Warp closes a tab when its shell exits, so every tab ends with its agent.
+// `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
+const commandThenExit = (tab: TerminalTab) => `${tab.command}; exit`
+
 // One Tab Config per tab: warp://tab_config/<stem> opens a single tab, in the
 // focused Warp window when there is one.
 export const warpTabConfigToml = (projectPath: string, tab: TerminalTab): string => {
-  // Warp closes a tab when its shell exits, so every tab ends with its agent.
-  // `; exit`, not `&& exit`: a SIGTERM'd agent exits 143 and must still close it.
-  const commandThenExit = `${tab.command}; exit`
   const titleLine = tab.title ? [`title = ${doubleQuotedString(tab.title)}`] : []
   return [
     'name = "Project Tracker ticket"',
@@ -71,10 +72,40 @@ export const warpTabConfigToml = (projectPath: string, tab: TerminalTab): string
     'id = "main"',
     'type = "terminal"',
     `directory = ${doubleQuotedString(projectPath)}`,
-    `commands = [${doubleQuotedString(commandThenExit)}]`,
+    `commands = [${doubleQuotedString(commandThenExit(tab))}]`,
     ''
   ].join('\n')
 }
+
+export const WARP_LAUNCH_CONFIG_PREFIX = 'project_tracker_launch_'
+
+export const warpLaunchConfigYaml = (launchName: string, projectPath: string, tabs: TerminalTab[]): string => {
+  const tabLines = tabs.flatMap((tab) => [
+    `      - title: ${doubleQuotedString(tab.title ?? '')}`,
+    '        layout:',
+    `          cwd: ${doubleQuotedString(projectPath)}`,
+    '          commands:',
+    `            - exec: ${doubleQuotedString(commandThenExit(tab))}`
+  ])
+  return ['---', `name: ${doubleQuotedString(launchName)}`, 'windows:', '  - tabs:', ...tabLines, ''].join('\n')
+}
+
+const NORMAL_WINDOW_LAYER = 0
+
+export const WARP_WINDOW_COUNT_ARGS = [
+  '-l',
+  'JavaScript',
+  '-e',
+  [
+    "ObjC.import('CoreGraphics')",
+    'const options = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements',
+    'const windowListReference = $.CGWindowListCopyWindowInfo(options, 0)',
+    'const windows = ObjC.deepUnwrap(ObjC.castRefToObject(windowListReference))',
+    "const isWarpWindow = (window) => window.kCGWindowOwnerName === 'Warp'",
+    `const isNormalWindow = (window) => window.kCGWindowLayer === ${NORMAL_WINDOW_LAYER}`,
+    'windows.filter((window) => isWarpWindow(window) && isNormalWindow(window)).length'
+  ].join('\n')
+]
 
 // AppleScript is passed as one -e per line. Commands and titles travel as argv
 // entries read back via `item i of argv` rather than being interpolated into the

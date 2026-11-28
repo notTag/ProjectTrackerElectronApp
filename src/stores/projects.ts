@@ -30,6 +30,9 @@ import {
   availableAgents,
   boardWrites,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
+  orchestratorAgentChoice,
+  orchestratorPromptContext,
   completionMoves,
   findAgent,
   fullAutoHandoffs,
@@ -708,7 +711,24 @@ export const useProjectsStore = defineStore('projects', {
           const launches = laneHandoffs.map(({ ticket }) =>
             buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
           )
-          const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
+          const orchestratorContext = orchestratorPromptContext(storedBoard(this.state, projectPath), projectPath, terminal)
+          const orchestratorChoice = orchestratorAgentChoice(toLane, { agent, model: toLane.autoRunModel }, agents)
+          const orchestrator = buildOrchestratorLaunch(
+            toLane,
+            launches,
+            orchestratorChoice.agent,
+            orchestratorContext,
+            orchestratorChoice.model
+          )
+          const launch = this.autoRunLane(
+            projectPath,
+            toLane.id,
+            terminal.id,
+            terminal.label,
+            launches,
+            useWorktrees,
+            orchestrator
+          )
           void launch.then((launched) => {
             if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
           })
