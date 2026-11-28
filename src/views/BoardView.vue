@@ -2458,6 +2458,14 @@ const runTicketAgent = (ticket: Ticket) => {
         </select>
         tab.
       </p>
+      <p class="auto-run-question">
+        <label>
+          Machine
+          <select>
+            <option value="local">Local</option>
+          </select>
+        </label>
+      </p>
       <p class="field-hint">
         {{
           autoRunUsesWorktrees(autoRunConfirmLane)

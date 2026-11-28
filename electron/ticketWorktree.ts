@@ -25,16 +25,33 @@ const EXCLUDE_ENTRY = `/${TICKET_WORKTREE_DIRECTORY}/`
 const GIT_TIMEOUT_MS = 60 * 1000
 const gitEnvironment = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
 
-const git = async (repositoryPath: string, args: string[]): Promise<string> => {
-  const options = { env: gitEnvironment, timeout: GIT_TIMEOUT_MS }
-  const { stdout } = await execFileAsync('git', ['-C', repositoryPath, ...args], options)
+export type MachineRunner = {
+  run: (args: string[]) => Promise<string>
+  pathExists: (filePath: string) => boolean
+  readText: (filePath: string) => string
+  appendText: (filePath: string, text: string) => void
+}
+
+export const localRunner: MachineRunner = {
+  run: async (args) => {
+    const options = { env: gitEnvironment, timeout: GIT_TIMEOUT_MS }
+    const { stdout } = await execFileAsync('git', args, options)
+    return stdout
+  },
+  pathExists: existsSync,
+  readText: (filePath) => readFileSync(filePath, 'utf8'),
+  appendText: (filePath, text) => appendFileSync(filePath, text, 'utf8')
+}
+
+const gitOn = (runner: MachineRunner) => async (repositoryPath: string, args: string[]) => {
+  const stdout = await runner.run(['-C', repositoryPath, ...args])
   return stdout.trim()
 }
 
 const gitErrorMessage = (error: unknown) => (error as { stderr?: string }).stderr?.trim() || String(error)
 
-const gitSucceeds = (repositoryPath: string, args: string[]) =>
-  git(repositoryPath, args).then(
+const gitSucceedsOn = (runner: MachineRunner) => (repositoryPath: string, args: string[]) =>
+  gitOn(runner)(repositoryPath, args).then(
     () => true,
     () => false
   )
@@ -42,19 +59,20 @@ const gitSucceeds = (repositoryPath: string, args: string[]) =>
 export const ticketWorktreePath = (repositoryRoot: string, ticketNumber: number) =>
   path.join(repositoryRoot, TICKET_WORKTREE_DIRECTORY, `t${ticketNumber}`)
 
-const excludeWorktreeDirectory = async (repositoryRoot: string) => {
+const excludeWorktreeDirectory = async (repositoryRoot: string, runner: MachineRunner) => {
+  const git = gitOn(runner)
   const commonGitDirectory = await git(repositoryRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
   const excludePath = path.join(commonGitDirectory, 'info', 'exclude')
-  const excludeText = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : ''
+  const excludeText = runner.pathExists(excludePath) ? runner.readText(excludePath) : ''
   const alreadyExcluded = excludeText.split('\n').includes(EXCLUDE_ENTRY)
   if (alreadyExcluded) return
   const separator = excludeText === '' || excludeText.endsWith('\n') ? '' : '\n'
-  appendFileSync(excludePath, `${separator}${EXCLUDE_ENTRY}\n`, 'utf8')
+  runner.appendText(excludePath, `${separator}${EXCLUDE_ENTRY}\n`)
 }
 
-export const repositoryRootOf = async (projectPath: string): Promise<string> => {
+export const repositoryRootOf = async (projectPath: string, runner = localRunner): Promise<string> => {
   try {
-    return await git(projectPath, ['rev-parse', '--show-toplevel'])
+    return await gitOn(runner)(projectPath, ['rev-parse', '--show-toplevel'])
   } catch {
     throw new Error('Auto Run needs the project to be a git repository.')
   }
@@ -66,7 +84,9 @@ const LOCAL_DEFAULT_BRANCH = 'main'
 // never from whatever the main checkout happens to have checked out. Fetched
 // once per Auto Run, not once per ticket. A project with no origin has nothing
 // to fetch, so its local main is the freshest main there is.
-export const freshMainRef = async (repositoryRoot: string): Promise<string> => {
+export const freshMainRef = async (repositoryRoot: string, runner = localRunner): Promise<string> => {
+  const git = gitOn(runner)
+  const gitSucceeds = gitSucceedsOn(runner)
   const remotes = (await git(repositoryRoot, ['remote'])).split('\n')
   if (!remotes.includes('origin')) {
     const hasLocalMain = await gitSucceeds(repositoryRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${LOCAL_DEFAULT_BRANCH}`])
@@ -93,8 +113,8 @@ export const freshMainRef = async (repositoryRoot: string): Promise<string> => {
 // checked out elsewhere (a worktree from before the tN directory naming, or one
 // made by hand) is reused where it lives. The main checkout never counts: agents
 // must not write into it.
-const linkedWorktreeHoldingBranch = async (repositoryRoot: string, branchName: string) => {
-  const porcelain = await git(repositoryRoot, ['worktree', 'list', '--porcelain'])
+const linkedWorktreeHoldingBranch = async (repositoryRoot: string, branchName: string, runner: MachineRunner) => {
+  const porcelain = await gitOn(runner)(repositoryRoot, ['worktree', 'list', '--porcelain'])
   const worktreeEntries = porcelain.split('\n\n')
   const branchLine = `branch refs/heads/${branchName}`
   const holdingEntry = worktreeEntries.find((entry) => entry.split('\n').includes(branchLine))
@@ -113,19 +133,22 @@ export const ensureTicketWorktree = async (
   repositoryRoot: string,
   ticketNumber: number,
   branchName: string,
-  baseRef: string
+  baseRef: string,
+  runner = localRunner
 ): Promise<string> => {
+  const git = gitOn(runner)
+  const gitSucceeds = gitSucceedsOn(runner)
   const branchNameIsValid = await gitSucceeds(repositoryRoot, ['check-ref-format', '--branch', branchName])
   if (!branchNameIsValid) throw new Error(`#${ticketNumber}: "${branchName}" is not a valid branch name.`)
 
-  await excludeWorktreeDirectory(repositoryRoot)
+  await excludeWorktreeDirectory(repositoryRoot, runner)
   const worktreePath = ticketWorktreePath(repositoryRoot, ticketNumber)
-  if (existsSync(path.join(worktreePath, '.git'))) return worktreePath
+  if (runner.pathExists(path.join(worktreePath, '.git'))) return worktreePath
 
   // Drops registrations whose directory was deleted by hand; otherwise git
   // still counts their branch as checked out and refuses to add it again.
   await git(repositoryRoot, ['worktree', 'prune'])
-  const existingWorktree = await linkedWorktreeHoldingBranch(repositoryRoot, branchName)
+  const existingWorktree = await linkedWorktreeHoldingBranch(repositoryRoot, branchName, runner)
   if (existingWorktree) return existingWorktree
 
   const branchExists = await gitSucceeds(repositoryRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}`])
