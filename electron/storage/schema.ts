@@ -220,6 +220,7 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_rules', definition: 'TEXT' },
   { table: 'tickets', column: 'move_rules_passed_lane_id', definition: 'TEXT' },
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
+  { table: 'lane_store', column: 'origin_project_path', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },

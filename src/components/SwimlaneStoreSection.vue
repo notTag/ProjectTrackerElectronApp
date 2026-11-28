@@ -32,13 +32,13 @@ const askToConfirm = async (entry: LaneStoreEntry, action: RowAction) => {
   confirmButtonRef.value[0]?.focus()
 }
 
-const folderName = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath
+const folderName = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
 const entryDetails = (entry: LaneStoreEntry) => ({
-  summary: `${folderName(entry.originProjectPath)} · updated ${formatDate(entry.updatedAt)}`,
+  summary: [folderName(entry.originProjectPath), `updated ${formatDate(entry.updatedAt)}`].filter(Boolean).join(' · '),
   tooltip: [
     `Swimlane id: ${entry.id}`,
-    `From: ${entry.originProjectPath}`,
+    `From: ${entry.originProjectPath || 'unknown board'}`,
     `Created: ${formatDateTime(entry.createdAt)}`,
     `Updated: ${formatDateTime(entry.updatedAt)}`
   ].join('\n')

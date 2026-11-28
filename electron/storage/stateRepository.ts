@@ -788,7 +788,8 @@ export class StateRepository {
 
   listLaneStore(): LaneStoreEntry[] {
     const rows = this.select(
-      'SELECT id, lane_id, origin_project_path, name, created_at, updated_at FROM lane_store ORDER BY lower(name), origin_project_path, id'
+      `SELECT id, lane_id, origin_project_path, name, created_at, COALESCE(updated_at, created_at) AS updated_at
+       FROM lane_store ORDER BY lower(name), origin_project_path, id`
     )
     return rows.map((row) => ({
       id: String(row.id),

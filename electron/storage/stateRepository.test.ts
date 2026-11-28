@@ -617,6 +617,21 @@ describe('swimlane store (#146)', () => {
     expect(new StateRepository(userDataPath).listLaneStore()).toEqual([])
   })
 
+  it('adds origin_project_path to a lane_store table created before it existed', () => {
+    const userDataPath = freshUserDataPath()
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    legacy.exec(
+      `CREATE TABLE lane_store (id TEXT PRIMARY KEY, lane_id TEXT NOT NULL, name TEXT NOT NULL, lane_json TEXT NOT NULL,
+       agent_markdown TEXT NOT NULL DEFAULT '', orchestrator_markdown TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT)`
+    )
+    legacy.exec(`INSERT INTO lane_store (id, lane_id, name, lane_json, created_at) VALUES ('old', 'prd', 'PRD', '{}', '2026-11-01T00:00:00.000Z')`)
+    legacy.close()
+
+    expect(new StateRepository(userDataPath).listLaneStore()).toEqual([
+      expect.objectContaining({ id: 'old', originProjectPath: '', updatedAt: '2026-11-01T00:00:00.000Z' })
+    ])
+  })
+
   it('saves a lane once, overwriting its own entry on re-save, and survives a reopen', () => {
     const userDataPath = freshUserDataPath()
     const { repository, sourcePath } = twoBoardRepository(userDataPath)
