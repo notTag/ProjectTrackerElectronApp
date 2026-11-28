@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('projectTracker', {
     ipcRenderer.invoke('ticket-images:save-bytes', { ticketId, bytes, mimeType }),
   removeTicketImage: (ticketId: string, imagePath: string) =>
     invokePlain('ticket-images:remove', { ticketId, imagePath }),
+  copyTicketImages: (ticketId: string, imagePaths: string[]) =>
+    invokePlain('ticket-images:copy', { ticketId, imagePaths }),
   openTicketImage: (imagePath: string) => invokePlain('ticket-images:open', imagePath),
   ticketImageUrl: (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),

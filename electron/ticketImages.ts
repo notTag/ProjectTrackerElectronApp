@@ -80,3 +80,12 @@ export const removeTicketImage = (attachmentsRoot: string, ticketId: string, ima
 
 export const removeTicketImages = (attachmentsRoot: string, ticketId: string) =>
   rmSync(ticketDirectoryOf(attachmentsRoot, ticketId), { recursive: true, force: true })
+
+export const copyTicketImages = (attachmentsRoot: string, ticketId: string, imagePaths: string[]) => {
+  const attachmentPaths = imagePaths.map((imagePath) => {
+    const attachmentPath = resolveAttachmentPath(attachmentsRoot, imagePath)
+    if (!attachmentPath) throw new Error('Not a ticket image.')
+    return attachmentPath
+  })
+  return addTicketImages(attachmentsRoot, ticketId, attachmentPaths)
+}

@@ -96,6 +96,7 @@ export const webBridge = {
   pickTicketImages,
   saveTicketImageBytes,
   removeTicketImage: (ticketId, imagePath) => invoke('ticket-images:remove', { ticketId, imagePath }),
+  copyTicketImages: (ticketId, imagePaths) => invoke('ticket-images:copy', { ticketId, imagePaths }),
   openTicketImage: (imagePath) => invoke('ticket-images:open', imagePath),
   ticketImageUrl: (imagePath) => `/api/ticket-image/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath, lane) => invoke('lane:create', { projectPath, lane }),
