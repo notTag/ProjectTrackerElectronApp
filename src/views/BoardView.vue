@@ -17,7 +17,7 @@ import LaneSettingsModal, { createLaneMarkdownSaveState } from '@/components/boa
 import NewTicketModal, { type TicketDraft, type TicketDraftSave } from '@/components/board/NewTicketModal.vue'
 import TicketModal from '@/components/board/TicketModal.vue'
 import { useBoardContext } from '@/components/board/boardContext'
-import { saveImageFiles } from '@/components/board/ticketImages'
+import { copyImagesToTicket, saveImageFiles } from '@/components/board/ticketImages'
 import { uiDemoPanelOpen } from '@/uiDemo'
 import { TERMINAL_TARGETS } from '@/shared/openInTargets'
 import {
@@ -318,6 +318,25 @@ const saveTicketDraft = async (draft: TicketDraftSave) => {
   openTicketId.value = ticketId
 }
 
+let cloneInFlight = false
+
+const cloneTicket = async (source: Ticket) => {
+  if (cloneInFlight) return
+  cloneInFlight = true
+  try {
+    const cloneId = await store.cloneTicket(projectPath.value, source.id)
+    if (!cloneId) return
+    if (source.images?.length) {
+      const imageError = await copyImagesToTicket(projectPath.value, { id: cloneId }, source.images)
+      if (imageError) newTicketImageError.value = { ticketId: cloneId, message: imageError }
+    }
+    const sourceStillOpen = openTicketId.value === source.id
+    if (sourceStillOpen) openTicketId.value = cloneId
+  } finally {
+    cloneInFlight = false
+  }
+}
+
 const startLaneDraftAt = (graphPosition: GraphPosition) => {
   laneDraftGraphPosition.value = graphPosition
   laneDraftName.value = ''
@@ -516,6 +535,7 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
     :initial-image-error="openTicketImageError"
     @close="closeModals"
     @delete="ticketPendingDeletion = $event"
+    @clone="cloneTicket"
   />
 
   <ConfirmDeleteModal
