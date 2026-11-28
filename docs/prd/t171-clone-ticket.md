@@ -27,13 +27,16 @@ Branch: `t171-add-the-ability` · Worktree: `.worktrees/t171`
 - Reset — identity: `id`, `number`, `createdAt`, `updatedAt`
 - Reset — the original's work, sharing would make two agents collide on one branch/worktree/PR: `branchName`, `worktreePath`, `pullRequestUrl`, `pullRequestState`, `pullRequestMergedAt`, `agentRun`
 - Reset — per-ticket lane state: `moveRulesPassedLaneId`, `readyLaneId`, `moveOnComplete` → `false` (arming is opt-in per ticket; a clone never auto-moves unless the user arms it)
-- `externalId` dropped (GitHub dedupe key — a copy would make re-pull update the clone instead of the original); `externalUrl` kept so the issue link still shows [~75% confidence the card/modal render `externalUrl` without `externalId` — verify in dev; if not, fold it into `externalLinks`]
+- `externalId` dropped (GitHub dedupe key — a copy would make re-pull update the clone instead of the original); `externalUrl` kept so the issue link still shows (verified: `TicketModal.vue:680` renders on `externalUrl` alone)
 
 ## Assumptions
 - "Original ticket will close" = its modal closes; the original ticket stays in its lane, untouched [~85% confidence — reading is symmetric with "new one will open"]
 - Clone of a clone stacks literally: `CLONE OF T#205 CLONE OF T#171 ...`
 - Button shows in lanes and graph views (unlike `ExpandToggle`, which hides in graph)
 - No confirm dialog — cloning is non-destructive, delete undoes it
+
+## Open questions
+None
 
 ## Acceptance criteria
 - Clone button is the rightmost control in the open-ticket modal header
