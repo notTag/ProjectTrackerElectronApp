@@ -615,7 +615,7 @@ describe('swimlane store (#146)', () => {
     expect(new StateRepository(userDataPath).listLaneStore()).toEqual([])
   })
 
-  it('saves a lane once, overwriting a same id + name entry, and survives a reopen', () => {
+  it('saves a lane once, overwriting its own entry on re-save, and survives a reopen', () => {
     const userDataPath = freshUserDataPath()
     const { repository, sourcePath } = twoBoardRepository(userDataPath)
 
@@ -637,6 +637,19 @@ describe('swimlane store (#146)', () => {
     expect(laneJson).not.toHaveProperty('position')
     expect(laneJson).not.toHaveProperty('graph_position_json')
     expect(stored.agent_markdown).toBe('# Agent v2')
+  })
+
+  it('keeps one entry per origin board lane, so the same lane saved from another board does not overwrite it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+
+    const fromSource = repository.saveLaneToStore(sourcePath, 'idea', markdown)
+    const fromOther = repository.saveLaneToStore(otherPath, 'idea', { agent: '# Other agent', orchestrator: '' })
+
+    expect(fromOther.id).not.toBe(fromSource.id)
+    expect(fromSource).toMatchObject({ laneId: 'idea', originProjectPath: sourcePath, updatedAt: fromSource.createdAt })
+    expect(fromOther).toMatchObject({ laneId: 'idea', originProjectPath: otherPath })
+    expect(repository.listLaneStore().map((entry) => entry.originProjectPath).sort()).toEqual([otherPath, sourcePath].sort())
   })
 
   it('refuses the No status lane and missing lanes', () => {

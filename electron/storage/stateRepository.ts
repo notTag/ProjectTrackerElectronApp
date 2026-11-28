@@ -737,13 +737,16 @@ export class StateRepository {
   }
 
   listLaneStore(): LaneStoreEntry[] {
-    const rows = this.select('SELECT id, lane_id, name, created_at, updated_at FROM lane_store ORDER BY lower(name), id')
+    const rows = this.select(
+      'SELECT id, lane_id, origin_project_path, name, created_at, updated_at FROM lane_store ORDER BY lower(name), origin_project_path, id'
+    )
     return rows.map((row) => ({
       id: String(row.id),
       laneId: String(row.lane_id),
+      originProjectPath: String(row.origin_project_path),
       name: String(row.name),
       createdAt: String(row.created_at),
-      updatedAt: asText(row.updated_at)
+      updatedAt: String(row.updated_at)
     }))
   }
 
@@ -756,7 +759,10 @@ export class StateRepository {
       const laneJson = JSON.stringify(portableRow)
       const name = String(laneRow.name)
       const now = new Date().toISOString()
-      const [existing] = this.select('SELECT id FROM lane_store WHERE lane_id = ? AND lower(name) = lower(?)', [laneId, name])
+      const [existing] = this.select('SELECT id FROM lane_store WHERE origin_project_path = ? AND lane_id = ?', [
+        projectPath,
+        laneId
+      ])
       if (existing) {
         this.run(
           'UPDATE lane_store SET name = ?, lane_json = ?, agent_markdown = ?, orchestrator_markdown = ?, updated_at = ? WHERE id = ?',
@@ -766,9 +772,9 @@ export class StateRepository {
       }
       const newId = randomUUID()
       this.run(
-        `INSERT INTO lane_store (id, lane_id, name, lane_json, agent_markdown, orchestrator_markdown, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [newId, laneId, name, laneJson, markdown.agent, markdown.orchestrator, now]
+        `INSERT INTO lane_store (id, lane_id, origin_project_path, name, lane_json, agent_markdown, orchestrator_markdown, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newId, laneId, projectPath, name, laneJson, markdown.agent, markdown.orchestrator, now, now]
       )
       return newId
     })

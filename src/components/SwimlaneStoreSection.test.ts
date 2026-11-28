@@ -40,7 +40,14 @@ describe('SwimlaneStoreSection', () => {
     const ticket = { id: 't1', number: 1, laneId: board.lanes[0].id, title: 'T', description: '', createdAt: '2026-01-01T00:00:00.000Z' }
     store.state = { ...seed, boards: { [projectPath]: { ...board, tickets: [ticket] } } }
     if (agentRunning) store.agentRunning = { t1: true }
-    store.laneStoreEntries = laneIds.map((laneId) => ({ id: `entry-${laneId}`, laneId, name: `Lane ${laneId}`, createdAt: '' }))
+    store.laneStoreEntries = laneIds.map((laneId) => ({
+      id: `entry-${laneId}`,
+      laneId,
+      originProjectPath: '/code/origin-board',
+      name: `Lane ${laneId}`,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    }))
     const app = createSSRApp({ render: () => h(SwimlaneStoreSection, { projectPath }) })
     app.use(pinia)
     return renderToString(app)
@@ -67,5 +74,11 @@ describe('SwimlaneStoreSection', () => {
   it('disables + when another board lane uses the same prompt folder', async () => {
     const html = await render(['fresh-lane'], false, 'Lane fresh-lane')
     expect(html).toMatch(/aria-label="Add Lane fresh-lane to this workflow" title="Another lane here already uses[^"]*" disabled/)
+  })
+
+  it('shows where each entry came from', async () => {
+    const html = await render(['fresh-lane'])
+    expect(html).toContain('origin-board · updated')
+    expect(html).toContain('From: /code/origin-board')
   })
 })

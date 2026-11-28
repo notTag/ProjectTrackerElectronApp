@@ -20,11 +20,11 @@
 Save a configured lane once and reuse it: a global "Swimlane Store" of lane presets (settings + prompts) that can be added to the active workflow of any board.
 
 ## Requirements
-- R1 Storage: new global table `lane_store (id TEXT PRIMARY KEY, lane_id TEXT NOT NULL, name TEXT NOT NULL, lane_json TEXT NOT NULL, agent_markdown TEXT NOT NULL DEFAULT '', orchestrator_markdown TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT)`. Add-only migration. Not tied to a project.
+- R1 Storage: new global table `lane_store (id TEXT PRIMARY KEY, lane_id TEXT NOT NULL, origin_project_path TEXT NOT NULL, name TEXT NOT NULL, lane_json TEXT NOT NULL, agent_markdown TEXT NOT NULL DEFAULT '', orchestrator_markdown TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`. `id` is the unique swimlane id.. Add-only migration. Not tied to a project.
 - R2 Save to Store: a "Save to Store" button in the lane settings modal footer (`BoardView.vue:2847`), beside "Delete lane". Hidden for the unassigned (No status) lane.
   - Snapshots the lane row (all columns except `project_path`, `position`, `graph_position_json`) into `lane_json`.
   - Reads the lane's agent + orchestrator markdown files (if they exist) into `agent_markdown` / `orchestrator_markdown`.
-  - An entry with the same `lane_id` and name (case-insensitive) is overwritten, not duplicated.
+  - Re-saving a lane from the same board (same origin project + `lane_id`) updates its entry; the same lane saved from another board is a separate entry, so presets never overwrite each other across boards.
   - Success hint "Saved to store" + inline error, same pattern as "Save to Agent Markdown".
 - R3 Store section: in the #144 Workflow modal, a "Swimlane Store" section with a scrollable list of store entries (name, sorted by name). Empty state: "No saved swimlanes yet. Use "Save to Store" in a swimlane's settings."
 - R4 Row buttons: each entry has `-` and `+` buttons on its right.
@@ -62,7 +62,7 @@ Save a configured lane once and reuse it: a global "Swimlane Store" of lane pres
 - Store is global, not per board. "Store" implies reuse across boards. Per-board would just duplicate workflows.
 - Lane keeps its original id when added, so tickets parked in that lane id (#133 R5) reappear. A collision disables `+` instead of minting a new id.
 - Prompts travel as markdown content, not file paths, since paths are project-relative.
-- Save overwrites a matching entry (same lane id + name) rather than creating duplicates.
+- Save updates the entry for the same origin board + lane id; other boards get their own entry (user decision, replaces the earlier lane id + name rule).
 
 ## Open questions
 - None.

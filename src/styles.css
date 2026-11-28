@@ -2688,6 +2688,10 @@ span.ticket-image-thumb {
   white-space: nowrap;
 }
 
+.swimlane-store-origin {
+  margin-left: 6px;
+}
+
 .swimlane-store-button {
   width: 32px;
   min-width: 32px;

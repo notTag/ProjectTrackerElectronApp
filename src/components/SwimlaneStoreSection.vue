@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { formatDate, formatDateTime } from '@/components/board/boardFormat'
 import { useRowConfirm, type RowAction } from '@/components/rowConfirm'
 import { laneFolderName, type LaneStoreEntry } from '@/shared/projectTypes'
 import { useProjectsStore } from '@/stores/projects'
@@ -31,12 +32,25 @@ const askToConfirm = async (entry: LaneStoreEntry, action: RowAction) => {
   confirmButtonRef.value[0]?.focus()
 }
 
+const folderName = (projectPath: string) => projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath
+
+const entryDetails = (entry: LaneStoreEntry) => ({
+  summary: `${folderName(entry.originProjectPath)} · updated ${formatDate(entry.updatedAt)}`,
+  tooltip: [
+    `Swimlane id: ${entry.id}`,
+    `From: ${entry.originProjectPath}`,
+    `Created: ${formatDateTime(entry.createdAt)}`,
+    `Updated: ${formatDateTime(entry.updatedAt)}`
+  ].join('\n')
+})
+
 const rows = computed(() =>
   entries.value.map((entry) => {
     const pendingAction = pendingActionOf(entry.id)
     const addBlocked = addBlockedReason(entry)
     const confirmBlocked = pendingAction === 'add' ? addBlocked : ''
-    return { entry, pendingAction, addBlocked, confirmBlocked }
+    const details = entryDetails(entry)
+    return { entry, details, pendingAction, addBlocked, confirmBlocked }
   })
 )
 
@@ -69,8 +83,11 @@ onMounted(() => {
       No saved swimlanes yet. Use "Save to Store" in a swimlane's settings.
     </p>
     <ul v-else class="swimlane-store-list">
-      <li v-for="{ entry, pendingAction, addBlocked, confirmBlocked } in rows" :key="entry.id" class="swimlane-store-row">
-        <span class="swimlane-store-name">{{ entry.name }}</span>
+      <li v-for="{ entry, details, pendingAction, addBlocked, confirmBlocked } in rows" :key="entry.id" class="swimlane-store-row">
+        <span class="swimlane-store-name" :title="details.tooltip">
+          {{ entry.name }}
+          <span class="field-hint swimlane-store-origin">{{ details.summary }}</span>
+        </span>
         <button
           v-if="pendingAction"
           ref="confirmButtonRef"

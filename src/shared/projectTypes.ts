@@ -1572,9 +1572,10 @@ export interface WorkflowSummary {
 export interface LaneStoreEntry {
   id: string
   laneId: string
+  originProjectPath: string
   name: string
   createdAt: string
-  updatedAt?: string
+  updatedAt: string
 }
 
 // A board that never swapped or created a workflow has no workflow rows; it is

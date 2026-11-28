@@ -163,12 +163,13 @@ CREATE TABLE IF NOT EXISTS workflows (
 CREATE TABLE IF NOT EXISTS lane_store (
   id TEXT PRIMARY KEY,
   lane_id TEXT NOT NULL,
+  origin_project_path TEXT NOT NULL,
   name TEXT NOT NULL,
   lane_json TEXT NOT NULL,
   agent_markdown TEXT NOT NULL DEFAULT '',
   orchestrator_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  updated_at TEXT
+  updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS tickets_by_board ON tickets (project_path, lane_id);
