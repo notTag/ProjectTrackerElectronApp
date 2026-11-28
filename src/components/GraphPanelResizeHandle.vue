@@ -15,6 +15,7 @@ function panelBesideHandle(handle: HTMLElement) {
 function startResizing(event: PointerEvent) {
   if (event.button !== 0) return
   event.preventDefault()
+  event.stopPropagation()
   const handle = event.currentTarget as HTMLElement
   const startX = event.clientX
   const startWidth = panelBesideHandle(handle).getBoundingClientRect().width
@@ -47,7 +48,10 @@ function keepWithinWindow() {
   if (graphPanelWidth.value !== null) resizeTo(graphPanelWidth.value)
 }
 
-onMounted(() => window.addEventListener('resize', keepWithinWindow))
+onMounted(() => {
+  keepWithinWindow()
+  window.addEventListener('resize', keepWithinWindow)
+})
 onBeforeUnmount(() => window.removeEventListener('resize', keepWithinWindow))
 </script>
 
