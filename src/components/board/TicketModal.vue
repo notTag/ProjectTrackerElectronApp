@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
-import { ticketModalExpanded, vEdgeResize } from '@/modalWidth'
+import { graphPanelStyle, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
 import ExpandToggle from '@/components/ExpandToggle.vue'
+import GraphPanelResizeHandle from '@/components/GraphPanelResizeHandle.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
@@ -361,7 +362,14 @@ defineExpose({
 </script>
 
 <template>
-  <div class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => emit('close'))">
+  <div
+    class="modal-backdrop"
+    :class="{ 'graph-ticket-panel': boardView === 'graph' }"
+    :style="boardView === 'graph' ? graphPanelStyle : undefined"
+    @pointerdown="notePressTarget"
+    @click.self="closeIfPressStartedOnBackdrop(() => emit('close'))"
+  >
+    <GraphPanelResizeHandle v-if="boardView === 'graph'" />
     <!-- Refresh before editing so fields include writes from other processes. -->
     <section
       v-edge-resize
