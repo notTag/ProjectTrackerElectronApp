@@ -9,11 +9,11 @@ import {
   boardLaneColumns,
   currentLaneOf,
   getUnassignedLane,
+  orchestratorPromptContext,
   toggleHiddenLane,
   type BoardFilterControl,
   UNASSIGNED_LANE_ID,
   type Agent,
-  type OrchestratorPromptContext,
   type SwimLane,
   type Ticket,
   type User
@@ -86,12 +86,8 @@ export const useBoardContext = () => {
   // the first click uses a terminal the user is known to have.
   const autoRunTerminal = (lane: SwimLane) => resolveAutoRunTerminal(lane.autoRunTerminalId, openInStore.selectedId)
 
-  const orchestratorContextFor = (terminal: OpenInTarget): OrchestratorPromptContext => ({
-    projectPath: projectPath.value,
-    lanes: [...board.value.lanes, getUnassignedLane(board.value)],
-    terminalId: terminal.id,
-    terminalLabel: terminal.label
-  })
+  const orchestratorContextFor = (terminal: OpenInTarget) =>
+    orchestratorPromptContext(board.value, projectPath.value, terminal)
 
   return {
     store,

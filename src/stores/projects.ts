@@ -31,13 +31,21 @@ import {
   availableAgents,
   boardWrites,
   changedFields,
+  clearStaleLanePositions,
+  compareLaneOrder,
+  placeTicketsInLane,
+  type LaneDropAnchor,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
+  orchestratorAgentChoice,
+  orchestratorPromptContext,
   completionMoves,
   findAgent,
   finishedRunStatus,
   fullAutoHandoffs,
   addScanDirectory,
   addTicketToBoard,
+  cloneTicketOnBoard,
   createSeedState,
   getBoard,
   getBoardPreferences,
@@ -231,6 +239,20 @@ const boardUpdate =
     const nextBoard = keepParkedLaneIds(currentState.boards?.[projectPath], editedBoard)
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
+
+const laneOrderIds = (tickets: Ticket[], laneId: string) => {
+  const laneTickets = tickets.filter((ticket) => ticket.laneId === laneId)
+  const laneOrder = laneTickets.sort(compareLaneOrder)
+  return laneOrder.map((ticket) => ticket.id).join(',')
+}
+
+const withoutStaleLanePositions =(state: ProjectTrackerState, projectPath: string): ProjectTrackerState => {
+  const board = state.boards?.[projectPath]
+  if (!board) return state
+  const clearedBoard = clearStaleLanePositions(board)
+  if (clearedBoard === board) return state
+  return { ...state, boards: { ...state.boards, [projectPath]: clearedBoard } }
+}
 
 // The board as stored, not getBoard's normalized default: a board that was
 // never saved diffs as empty, so its default lanes are written on first edit.
@@ -525,9 +547,21 @@ export const useProjectsStore = defineStore('projects', {
       return saved ? ticketId : null
     },
 
+    async cloneTicket(projectPath: string, sourceId: string): Promise<string | null> {
+      const cloneId = crypto.randomUUID()
+      let cloned = false
+      const saved = await this.updateBoard(projectPath, (board) => {
+        const storedSource = storedBoard(this.state, projectPath).tickets.find((ticket) => ticket.id === sourceId)
+        const clonedBoard = cloneTicketOnBoard(board, sourceId, cloneId, storedSource?.laneId)
+        cloned = clonedBoard !== board
+        return clonedBoard
+      })
+      return saved && cloned ? cloneId : null
+    },
+
     // Every single-ticket edit funnels through here — modal fields and checklist
     // toggles alike — so this is the only place that has to stamp updatedAt for
-    // them. Lane drags go through moveTickets.
+    // them. Lane drags go through dropTickets.
     async updateTicket(
       projectPath: string,
       ticketId: string,
@@ -548,19 +582,19 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
-    // Drag-and-drop between lanes, for one card or every checked one: a single
-    // board edit, so all moved tickets share one updatedAt. The lane check runs
-    // on the board the save queue hands over, not the one the view saw, so a
-    // ticket that got to the lane in the meantime keeps its updatedAt.
-    async moveTickets(projectPath: string, ticketIds: string[], laneId: string) {
-      if (ticketIds.length === 0) return
-      const movingIds = new Set(ticketIds)
+    async dropTickets(projectPath: string, ticketIds: string[], laneId: string, anchor: LaneDropAnchor) {
+      const ticketsBeforeDrop = getBoard(this.state, projectPath).tickets
+      const placedTickets = placeTicketsInLane(ticketsBeforeDrop, ticketIds, laneId, anchor)
+      const orderBeforeDrop = laneOrderIds(ticketsBeforeDrop, laneId)
+      const orderAfterDrop = laneOrderIds(placedTickets, laneId)
+      if (orderAfterDrop === orderBeforeDrop) return
       const updatedAt = new Date().toISOString()
-      const needsMove = (ticket: Ticket) => movingIds.has(ticket.id) && ticket.laneId !== laneId
-      await this.updateBoard(projectPath, (board) => ({
-        ...board,
-        tickets: board.tickets.map((ticket) => (needsMove(ticket) ? { ...ticket, laneId, updatedAt } : ticket))
-      }))
+      await this.updateBoard(projectPath, (board) => {
+        const placed = placeTicketsInLane(board.tickets, ticketIds, laneId, anchor)
+        const stampLaneChange = (ticket: Ticket, index: number) =>
+          ticket.laneId === board.tickets[index].laneId ? ticket : { ...ticket, updatedAt }
+        return { ...board, tickets: placed.map(stampLaneChange) }
+      })
     },
 
     // Matched against the run saved at write time, not the one the caller saw:
@@ -796,7 +830,26 @@ export const useProjectsStore = defineStore('projects', {
           const launches = laneHandoffs.map(({ ticket }) =>
             buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
           )
-          const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
+          const generatedContext = orchestratorPromptContext(this.board(projectPath), projectPath, terminal)
+          const orchestratorChoice = orchestratorAgentChoice(toLane, { agent, model: toLane.autoRunModel }, agents)
+          const orchestrator = this.readLaneOrchestratorContext(projectPath, toLane).then((additionalContext) =>
+            buildOrchestratorLaunch(
+              toLane,
+              launches,
+              orchestratorChoice.agent,
+              { ...generatedContext, additionalContext },
+              orchestratorChoice.model
+            )
+          )
+          const launch = this.autoRunLane(
+            projectPath,
+            toLane.id,
+            terminal.id,
+            terminal.label,
+            launches,
+            useWorktrees,
+            orchestrator
+          )
           void launch.then((launched) => {
             if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
           })
@@ -858,10 +911,11 @@ export const useProjectsStore = defineStore('projects', {
           const persistedState = undo ? undo(rawState) : rawState
           const candidate = update(rawState)
           const ownMoves = withCompletionMoves(rawState, candidate, alsoCompletedIds)
-          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
-          const handoffsBeforePatch = handoffsBetween(candidate, ownMoves.state)
-          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, ownMoves.state, projectPath, writes)
-          if (!appliedInPlace) this.state = ownMoves.state
+          const nextState = withoutStaleLanePositions(ownMoves.state, projectPath)
+          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(nextState, projectPath))
+          const handoffsBeforePatch = handoffsBetween(candidate, nextState)
+          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, nextState, projectPath, writes)
+          if (!appliedInPlace) this.state = nextState
           try {
             await this.dispatchBoardWrites(projectPath, writes)
           } catch (error) {
@@ -1124,7 +1178,7 @@ export const useProjectsStore = defineStore('projects', {
       terminalLabel: string,
       launches: AutoRunLaunchEntry[],
       useWorktrees: boolean,
-      orchestrator?: TerminalTab
+      orchestrator?: TerminalTab | Promise<TerminalTab>
     ): Promise<boolean> {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
@@ -1154,16 +1208,17 @@ export const useProjectsStore = defineStore('projects', {
       try {
         if (runByTicketId.size > 0) await this.updateBoard(path, agentRunsUpdate(runByTicketId))
         const ticketLaunches = launches.map((entry) => entry.launch)
+        const orchestratorLaunch = await orchestrator
         const { worktreePaths } = await projectTrackerApi.autoRunLane(
           path,
           targetId,
           ticketLaunches,
           useWorktrees,
-          orchestrator
+          orchestratorLaunch
         )
         const tabWord = launches.length === 1 ? 'tab' : 'tabs'
         const worktreeNote = useWorktrees ? ', one worktree each' : ''
-        const orchestratorNote = orchestrator ? ' plus an orchestrator tab' : ''
+        const orchestratorNote = orchestratorLaunch ? ' plus an orchestrator tab' : ''
         this.notice = `Auto Run opened ${launches.length} ${tabWord}${orchestratorNote} in ${terminalLabel}${worktreeNote}.`
         if (worktreePaths.length === 0) return true
         const updatedAt = new Date().toISOString()
@@ -1242,6 +1297,14 @@ export const useProjectsStore = defineStore('projects', {
     // prompt actually produced the output. Run always starts a fresh session.
     async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
       if (this.agentRunning[ticket.id]) return
+      const board = this.board(projectPath)
+      const currentTicket = board.tickets.find((entry) => entry.id === ticket.id) ?? ticket
+      const { skipped } = splitRunnable([currentTicket], currentTicket.laneId)
+      if (skipped.length > 0) {
+        const laneName = board.lanes.find((lane) => lane.id === currentTicket.laneId)?.name ?? currentTicket.laneId
+        this.notice = skippedRunsNotice(skipped, laneName)
+        return
+      }
       this.agentRunning[ticket.id] = true
       this.error = null
       this.notice = `Agent running on #${ticket.number}…`
@@ -1250,7 +1313,7 @@ export const useProjectsStore = defineStore('projects', {
       const runningRecord: TicketAgentRun = {
         at: startedAt,
         startedAt,
-        laneId: ticket.laneId,
+        laneId: currentTicket.laneId,
         output: '',
         status: 'running',
         mode: 'headless',

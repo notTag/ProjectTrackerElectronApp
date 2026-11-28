@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   addTicketImages,
   attachmentsRootOf,
+  copyTicketImages,
   removeTicketImage,
   removeTicketImages,
   resolveAttachmentPath,
@@ -33,6 +34,20 @@ describe('ticket images', () => {
     expect(path.dirname(imagePath)).toBe(path.join(attachmentsRoot, 'ticket-1'))
     expect(imagePath).toMatch(/\.png$/)
     expect(readFileSync(imagePath, 'utf8')).toBe('png-bytes')
+  })
+
+  it('copies a ticket\'s images into another ticket so deleting the first keeps them', () => {
+    const [originalImage] = addTicketImages(attachmentsRoot, 'ticket-1', [sourceImage])
+    const [clonedImage] = copyTicketImages(attachmentsRoot, 'ticket-2', [originalImage])
+    removeTicketImages(attachmentsRoot, 'ticket-1')
+
+    expect(path.dirname(clonedImage)).toBe(path.join(attachmentsRoot, 'ticket-2'))
+    expect(readFileSync(clonedImage, 'utf8')).toBe('png-bytes')
+  })
+
+  it('refuses to copy a path outside the attachments folder', () => {
+    expect(() => copyTicketImages(attachmentsRoot, 'ticket-2', [sourceImage])).toThrow()
+    expect(existsSync(path.join(attachmentsRoot, 'ticket-2'))).toBe(false)
   })
 
   it('rejects a non-image without copying any of the selection', () => {

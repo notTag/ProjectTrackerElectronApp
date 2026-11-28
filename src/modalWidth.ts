@@ -1,4 +1,4 @@
-import { reactive, ref, type Directive } from 'vue'
+import { computed, reactive, ref, type Directive } from 'vue'
 import type { LaneModalSection } from './shared/projectTypes'
 
 // Module scope, not component setup: App.vue remounts BoardView on Board <-> Dashboard
@@ -13,6 +13,18 @@ export const laneModalSectionsOpen = reactive<Record<LaneModalSection, boolean>>
   orchestrator: true,
   autoRun: true
 })
+
+export const graphPanelWidth = ref<number | null>(null)
+export const graphPanelStyle = computed(() => (graphPanelWidth.value === null ? undefined : { width: `${graphPanelWidth.value}px` }))
+
+const GRAPH_PANEL_MIN_PX = 280
+const GRAPH_CANVAS_MIN_PX = 320
+
+export function clampGraphPanelWidth(width: number, windowWidth: number) {
+  const widestPanel = windowWidth - GRAPH_CANVAS_MIN_PX
+  const notWiderThanWindowAllows = Math.min(width, widestPanel)
+  return Math.max(GRAPH_PANEL_MIN_PX, notWiderThanWindowAllows)
+}
 
 // Half on the backdrop, half on the modal: a scrolling modal's right edge is its
 // scrollbar, so there only the outer half is grabbable.

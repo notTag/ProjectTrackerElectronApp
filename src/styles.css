@@ -1296,6 +1296,18 @@ button.workflow-label:focus-visible {
   z-index: 3;
 }
 
+.ticket-drop-indicator {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  pointer-events: none;
+  z-index: 3;
+}
+
 .lane-add-zone {
   flex: 0 0 auto;
   display: flex;
@@ -2118,7 +2130,7 @@ span.ticket-image-thumb {
   gap: 8px;
 }
 
-.lane-modal .field-row > label,
+.lane-modal .field-row > *,
 .ticket-modal .field-row > label {
   flex: 1 1 0;
   min-width: 140px;
@@ -2236,9 +2248,13 @@ span.ticket-image-thumb {
 .graph-back { margin-bottom: 12px; }
 .graph-details { width: 340px; flex-shrink: 0; padding: 20px; border-left: 1px solid var(--color-text-muted); overflow: auto; max-height: calc(100vh - 210px); }
 .graph-details h2 { overflow-wrap: anywhere; }
-.graph-rule { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.graph-rule { display: flex; gap: 6px; align-items: flex-start; padding-top: 6px; }
 .graph-rule textarea { flex: 1; min-height: 0; resize: none; field-sizing: content; }
 .graph-rule-delete { padding: 2px 8px; }
+.graph-rule-handle { padding: 2px 6px; cursor: grab; }
+.graph-rule-handle:active { cursor: grabbing; }
+.graph-rule.drop-before { box-shadow: 0 -2px 0 var(--color-accent); }
+.graph-rule.drop-after { box-shadow: 0 2px 0 var(--color-accent); }
 .graph-rule-add { margin-top: 8px; }
 .graph-list-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
 .modal-backdrop.graph-ticket-panel { left: auto; top: 150px; bottom: 0; right: 0; width: min(440px, 45vw); padding: 0; background: transparent; align-items: stretch; }
@@ -2246,6 +2262,14 @@ span.ticket-image-thumb {
 @media (prefers-reduced-motion: reduce) { .view-switch-slider { transition: none; } }
 
 .graph-ticket-space { width: min(440px, 45vw); flex-shrink: 0; }
+
+.graph-panel-resize-handle { width: 12px; cursor: col-resize; touch-action: none; }
+.graph-panel-resize-handle:active, .graph-panel-resize-handle:focus-visible {
+  outline: none;
+  background: linear-gradient(to right, transparent 4px, var(--color-accent) 4px, var(--color-accent) 8px, transparent 8px);
+}
+.ticket-graph > .graph-panel-resize-handle { position: relative; z-index: 1; flex: none; margin: 0 -6px; }
+.graph-ticket-panel > .graph-panel-resize-handle { position: absolute; top: 0; bottom: 0; left: -6px; }
 
 .page-find {
   position: fixed;
@@ -2342,10 +2366,6 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
-/* Settings panel (#145): Metrics renders inline so the panel grows instead of
-   clipping an absolute popover. minmax(0, 1fr) tracks (here and on
-   .ui-demo-body) keep the wide table from stretching the panel; the popover
-   scrolls it sideways instead. */
 .ui-demo-panel .metrics-menu {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2356,9 +2376,34 @@ span.ticket-image-thumb {
 
 .ui-demo-panel .metrics-popover {
   position: static;
+  width: 100%;
   max-width: 100%;
+  max-height: none;
   overflow-x: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
+}
+
+.ui-demo-panel .metrics-table {
+  width: 100%;
+}
+
+.ui-demo-panel .metrics-table th,
+.ui-demo-panel .metrics-table td {
+  padding: 3px 4px;
+}
+
+.ui-demo-panel .metrics-table thead th {
+  white-space: normal;
+}
+
+.ui-demo-panel .metrics-table tbody th,
+.ui-demo-panel .metrics-table tfoot th {
+  width: 100%;
+  max-width: 0;
 }
 
 /* The titlebar selector is for the Dashboard header's Metrics popover. */
@@ -2580,9 +2625,9 @@ span.ticket-image-thumb {
      stop a resize from running off the window's right or bottom edge. */
   resize: both;
   overflow: hidden;
-  width: 680px;
+  width: 688px;
   height: 520px;
-  min-width: 420px;
+  min-width: 688px;
   min-height: 280px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -2629,19 +2674,47 @@ span.ticket-image-thumb {
   overflow-y: auto;
 }
 
+.settings-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-sidebar-group + .settings-sidebar-group {
+  margin-top: 8px;
+}
+
+.settings-sidebar-group-heading {
+  padding: 8px 10px 2px;
+}
+
 .settings-sidebar-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 0 10px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
   color: var(--color-text);
   background: transparent;
+  box-shadow: none;
+  font-weight: normal;
   text-align: left;
 }
 
 .settings-sidebar-item:not(.selected):hover {
-  background: var(--color-surface-overlay);
+  background: var(--color-hover);
+}
+
+.settings-sidebar-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.settings-sidebar-item.selected:focus-visible {
+  outline-color: var(--color-text-on-accent);
 }
 
 .settings-sidebar-item.selected {
@@ -2663,6 +2736,7 @@ span.ticket-image-thumb {
   min-width: 0;
   padding: 12px;
   overflow-y: auto;
+  background: var(--color-surface-overlay);
 }
 
 .ui-demo-row {

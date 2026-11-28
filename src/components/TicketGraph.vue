@@ -4,12 +4,15 @@ import {
   graphPositionRightOf,
   laneGraphPosition,
   laneTransitions,
+  moveRule,
   promptRules,
   rulesToPrompt,
   type GraphPosition,
   type SwimLane,
   type Ticket
 } from '@/shared/projectTypes'
+import { graphPanelStyle } from '@/modalWidth'
+import GraphPanelResizeHandle from '@/components/GraphPanelResizeHandle.vue'
 
 type PromptField = 'agentPrompt' | 'orchestratorPrompt'
 type LaneGraphPatch = Partial<Pick<SwimLane, PromptField | 'nextLaneId' | 'graphPosition'>>
@@ -288,6 +291,63 @@ function addRule(lane: SwimLane, field: PromptField, text: string) {
   addingRuleTo.value = null
   if (text.trim()) saveRules(lane, field, [...laneRules(lane, field), text])
 }
+
+type RuleSlot = { field: PromptField; index: number }
+const draggingRule = ref<RuleSlot | null>(null)
+const ruleDropTarget = ref<RuleSlot | null>(null)
+const ruleHandleToFocus = ref<RuleSlot | null>(null)
+const vFocusWhen = {
+  mounted(element: HTMLElement, binding: { value: boolean }) {
+    if (binding.value) element.focus()
+  }
+}
+const isSlot = (slot: RuleSlot | null, field: PromptField, index: number) => slot?.field === field && slot.index === index
+
+function reorderRule(lane: SwimLane, field: PromptField, fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) return
+  saveRules(lane, field, moveRule(laneRules(lane, field), fromIndex, toIndex))
+}
+function startRuleDrag(field: PromptField, index: number, event: DragEvent) {
+  draggingRule.value = { field, index }
+  if (!event.dataTransfer) return
+  event.dataTransfer.effectAllowed = 'move'
+  const ruleRow = (event.currentTarget as HTMLElement).parentElement
+  if (ruleRow) event.dataTransfer.setDragImage(ruleRow, 0, 0)
+}
+function endRuleDrag() {
+  draggingRule.value = null
+  ruleDropTarget.value = null
+}
+function dragOverRule(field: PromptField, index: number, event: DragEvent) {
+  if (draggingRule.value?.field !== field) return
+  event.preventDefault()
+  ruleDropTarget.value = { field, index }
+}
+function dropRule(lane: SwimLane, field: PromptField, index: number, event: DragEvent) {
+  const dragged = draggingRule.value
+  if (dragged?.field !== field) return
+  event.preventDefault()
+  endRuleDrag()
+  reorderRule(lane, field, dragged.index, index)
+}
+function dropIndicatorClass(field: PromptField, index: number) {
+  const dragged = draggingRule.value
+  if (!dragged || !isSlot(ruleDropTarget.value, field, index) || dragged.index === index) return undefined
+  return dragged.index > index ? 'drop-before' : 'drop-after'
+}
+const ruleStepByKey: Record<string, number> = { ArrowUp: -1, ArrowDown: 1 }
+function moveRuleByKey(lane: SwimLane, field: PromptField, index: number, event: KeyboardEvent) {
+  const step = ruleStepByKey[event.key]
+  if (!step) return
+  event.preventDefault()
+  const targetIndex = index + step
+  const rules = laneRules(lane, field)
+  const isSameText = rules[targetIndex] === rules[index]
+  if (targetIndex < 0 || targetIndex >= rules.length || isSameText) return
+  ruleHandleToFocus.value = { field, index: targetIndex }
+  reorderRule(lane, field, index, targetIndex)
+}
+
 // Enter commits the rule (blur fires change); Shift+Enter still adds a line break.
 function commitOnEnter(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
@@ -351,8 +411,9 @@ function selectLane(id: string | null) {
         </div>
       </div>
     </div>
-    <div v-if="ticketOpen" class="graph-ticket-space" aria-hidden="true" />
-    <aside v-if="!ticketOpen" class="graph-details" aria-label="Graph selection">
+    <div v-if="ticketOpen" class="graph-ticket-space" :style="graphPanelStyle" aria-hidden="true" />
+    <GraphPanelResizeHandle v-if="!ticketOpen" />
+    <aside v-if="!ticketOpen" class="graph-details" :style="graphPanelStyle" aria-label="Graph selection">
       <button v-if="selectedLane" class="secondary graph-back" @click="selectLane(null)">← {{ projectName }}</button>
       <p class="eyebrow">{{ selectedLane ? 'Swim lane' : 'Project' }}</p>
       <h2>{{ selectedLane?.name ?? projectName }}</h2>
@@ -364,7 +425,26 @@ function selectLane(id: string | null) {
         <section v-for="section in promptSections" :key="section.field" class="graph-rules" :aria-label="section.title">
           <h3 class="graph-details-heading">{{ section.title }}</h3>
           <p v-if="section.field === 'agentPrompt' && agentFileName(selectedLane)" class="field-hint">Also follows: {{ agentFileName(selectedLane) }}</p>
-          <div v-for="(rule, index) in laneRules(selectedLane, section.field)" :key="`${index}:${rule}`" class="graph-rule">
+          <div
+            v-for="(rule, index) in laneRules(selectedLane, section.field)"
+            :key="`${index}:${rule}`"
+            class="graph-rule"
+            :class="dropIndicatorClass(section.field, index)"
+            @dragover="dragOverRule(section.field, index, $event)"
+            @dragleave="ruleDropTarget = null"
+            @drop="dropRule(selectedLane, section.field, index, $event)"
+          >
+            <button
+              v-focus-when="isSlot(ruleHandleToFocus, section.field, index)"
+              class="secondary graph-rule-handle"
+              draggable="true"
+              :aria-label="`Reorder rule ${index + 1}`"
+              title="Drag or use arrow keys to reorder"
+              @dragstart="startRuleDrag(section.field, index, $event)"
+              @dragend="endRuleDrag"
+              @keydown="moveRuleByKey(selectedLane, section.field, index, $event)"
+              @focus="ruleHandleToFocus = null"
+            >☰</button>
             <textarea
               rows="1"
               :value="rule"
