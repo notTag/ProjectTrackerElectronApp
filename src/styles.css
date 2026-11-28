@@ -2338,10 +2338,6 @@ span.ticket-image-thumb {
   gap: 12px;
 }
 
-/* Settings panel (#145): Metrics renders inline so the panel grows instead of
-   clipping an absolute popover. minmax(0, 1fr) tracks (here and on
-   .ui-demo-body) keep the wide table from stretching the panel; the panel's
-   min-width guarantees the table fits (#176). */
 .ui-demo-panel .metrics-menu {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2352,9 +2348,10 @@ span.ticket-image-thumb {
 
 .ui-demo-panel .metrics-popover {
   position: static;
+  width: 100%;
   max-width: 100%;
   max-height: none;
-  overflow: visible;
+  overflow-x: auto;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -2672,6 +2669,10 @@ span.ticket-image-thumb {
 .settings-sidebar-item:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
+}
+
+.settings-sidebar-item.selected:focus-visible {
+  outline-color: var(--color-text-on-accent);
 }
 
 .settings-sidebar-item.selected {
