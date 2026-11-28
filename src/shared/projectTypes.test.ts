@@ -48,7 +48,9 @@ import {
   createDefaultBoard,
   createSeedState,
   getBoard,
-  moveLaneInBoard,
+  laneColumns,
+  lanePlacementIn,
+  placeLaneInBoard,
   removeLaneFromBoard,
   workflowNameProblem,
   getUnassignedLane,
@@ -74,6 +76,7 @@ import {
   laneTitleToken,
   currentLaneOf,
   ticketShellCommand,
+  type LanePlacement,
   type SwimLane,
   type Ticket,
   checklistProgress,
@@ -146,7 +149,121 @@ describe('removeLaneFromBoard', () => {
   })
 })
 
-describe('moveLaneInBoard', () => {
+describe('stacked lanes', () => {
+  const lane = (id: string, stacksBelowPrevious?: boolean): SwimLane => ({
+    id,
+    name: id,
+    agentPrompt: '',
+    agentFilePath: '',
+    stacksBelowPrevious
+  })
+  const isStackedId = (id: string) => id.endsWith('^')
+  const boardOf = (...laneIds: string[]): ProjectBoard => ({
+    lanes: laneIds.map((id) => lane(id.replace('^', ''), isStackedId(id) || undefined)),
+    tickets: []
+  })
+  const layout = (board: ProjectBoard) =>
+    laneColumns(board.lanes).map((column) => column.map((entry) => entry.id).join('/'))
+  const stackFlags = (board: ProjectBoard) => board.lanes.map((entry) => Boolean(entry.stacksBelowPrevious))
+
+  describe('laneColumns', () => {
+    it('gives every lane its own column when nothing is stacked', () => {
+      expect(layout(boardOf('a', 'b', 'c'))).toEqual(['a', 'b', 'c'])
+    })
+
+    it('groups a stacked lane with the lane before it', () => {
+      expect(layout(boardOf('a', 'b^', 'c', 'd^', 'e^'))).toEqual(['a/b', 'c/d/e'])
+    })
+
+    it('ignores the flag on the first lane', () => {
+      expect(layout(boardOf('a^', 'b'))).toEqual(['a', 'b'])
+    })
+
+    it('keeps the rest of a stack together when one of its lanes is hidden', () => {
+      const board = boardOf('a', 'gh^', 'b^', 'c')
+      const visibleColumns = laneColumns(board.lanes)
+        .map((column) => column.filter((entry) => entry.id !== 'gh'))
+        .filter((column) => column.length > 0)
+      expect(visibleColumns.map((column) => column.map((entry) => entry.id))).toEqual([['a', 'b'], ['c']])
+    })
+  })
+
+  describe('placeLaneInBoard', () => {
+    it('stacks a lane below another', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b', 'c'), 'c', { kind: 'stack', anchorLaneId: 'a', side: 'below' })
+      expect(layout(placed)).toEqual(['a/c', 'b'])
+    })
+
+    it('stacks a lane below the anchor, not below its whole stack', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b^', 'c'), 'c', { kind: 'stack', anchorLaneId: 'a', side: 'below' })
+      expect(layout(placed)).toEqual(['a/c/b'])
+    })
+
+    it('stacks a lane above another, taking over its column start', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b', 'c'), 'c', { kind: 'stack', anchorLaneId: 'b', side: 'above' })
+      expect(layout(placed)).toEqual(['a', 'c/b'])
+      expect(stackFlags(placed)).toEqual([false, false, true])
+    })
+
+    it('stacks above the first lane and keeps the first lane flag clear', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b'), 'b', { kind: 'stack', anchorLaneId: 'a', side: 'above' })
+      expect(layout(placed)).toEqual(['b/a'])
+      expect(stackFlags(placed)).toEqual([false, true])
+    })
+
+    it('un-stacks a lane into its own column', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b^', 'c'), 'b', { kind: 'column', beforeLaneId: 'c' })
+      expect(layout(placed)).toEqual(['a', 'b', 'c'])
+      expect(stackFlags(placed)).toEqual([false, false, false])
+    })
+
+    it('makes the next lane the column start when the top of a stack leaves', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b', 'c^', 'd^'), 'b', { kind: 'column', beforeLaneId: 'a' })
+      expect(layout(placed)).toEqual(['b', 'a', 'c/d'])
+    })
+
+    it('clears the flag when the first lane leaves its stack', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b^', 'c'), 'a', { kind: 'column', beforeLaneId: null })
+      expect(layout(placed)).toEqual(['b', 'c', 'a'])
+      expect(stackFlags(placed)).toEqual([false, false, false])
+    })
+
+    it('lands before the top of a stack when the column anchor is stacked', () => {
+      const placed = placeLaneInBoard(boardOf('a', 'b', 'c^'), 'a', { kind: 'column', beforeLaneId: 'c' })
+      expect(layout(placed)).toEqual(['a', 'b/c'])
+    })
+
+    it('never stacks with No status', () => {
+      const board = boardOf('a', 'b')
+      expect(placeLaneInBoard(board, 'b', { kind: 'stack', anchorLaneId: UNASSIGNED_LANE_ID, side: 'below' })).toBe(board)
+    })
+
+    it('returns the same board when the lane already sits there', () => {
+      const board = boardOf('a', 'b^', 'c')
+      expect(placeLaneInBoard(board, 'b', { kind: 'stack', anchorLaneId: 'a', side: 'below' })).toBe(board)
+      expect(placeLaneInBoard(board, 'a', { kind: 'stack', anchorLaneId: 'b', side: 'above' })).toBe(board)
+      expect(placeLaneInBoard(board, 'b', { kind: 'stack', anchorLaneId: 'b', side: 'above' })).toBe(board)
+      expect(placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: null })).toBe(board)
+    })
+
+    it('restores the original layout from the placement read before the move', () => {
+      const cases: Array<[string[], string, LanePlacement]> = [
+        [['a', 'b^', 'c'], 'b', { kind: 'column', beforeLaneId: null }],
+        [['a', 'b^', 'c^', 'd'], 'a', { kind: 'column', beforeLaneId: 'd' }],
+        [['a', 'b', 'c'], 'b', { kind: 'stack', anchorLaneId: 'c', side: 'below' }]
+      ]
+      for (const [laneIds, laneId, placement] of cases) {
+        const board = boardOf(...laneIds)
+        const originalPlacement = lanePlacementIn(board.lanes, laneId)
+        const restored = placeLaneInBoard(placeLaneInBoard(board, laneId, placement), laneId, originalPlacement)
+        expect(layout(restored)).toEqual(layout(board))
+        expect(stackFlags(restored)).toEqual(stackFlags(board))
+      }
+    })
+  })
+})
+
+describe('placeLaneInBoard as a column move', () => {
   const lane = (id: string): SwimLane => ({ id, name: id, agentPrompt: '', agentFilePath: '' })
   const boardOf = (...laneIds: string[]): ProjectBoard => ({
     lanes: laneIds.map(lane),
@@ -157,39 +274,39 @@ describe('moveLaneInBoard', () => {
   const laneOrder = (board: ProjectBoard) => board.lanes.map((entry) => entry.id)
 
   it('moves a lane left, before an earlier lane', () => {
-    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'c', 'a'))).toEqual(['c', 'a', 'b'])
+    expect(laneOrder(placeLaneInBoard(boardOf('a', 'b', 'c'), 'c', { kind: 'column', beforeLaneId: 'a' }))).toEqual(['c', 'a', 'b'])
   })
 
   it('moves a lane right, before a later lane', () => {
-    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c', 'd'), 'a', 'c'))).toEqual(['b', 'a', 'c', 'd'])
+    expect(laneOrder(placeLaneInBoard(boardOf('a', 'b', 'c', 'd'), 'a', { kind: 'column', beforeLaneId: 'c' }))).toEqual(['b', 'a', 'c', 'd'])
   })
 
   it('moves a lane to the end when there is no anchor', () => {
-    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'a', null))).toEqual(['b', 'c', 'a'])
+    expect(laneOrder(placeLaneInBoard(boardOf('a', 'b', 'c'), 'a', { kind: 'column', beforeLaneId: null }))).toEqual(['b', 'c', 'a'])
   })
 
   it('keeps a hidden lane in its slot when the view only sees the others', () => {
     // The view sees [a, b, c]; gh is hidden. Dropping c before a must not
     // displace gh, which an index-based move would.
-    expect(laneOrder(moveLaneInBoard(boardOf('gh', 'a', 'b', 'c'), 'c', 'a'))).toEqual(['gh', 'c', 'a', 'b'])
+    expect(laneOrder(placeLaneInBoard(boardOf('gh', 'a', 'b', 'c'), 'c', { kind: 'column', beforeLaneId: 'a' }))).toEqual(['gh', 'c', 'a', 'b'])
   })
 
   it('puts the lane first when dropped before No status', () => {
-    expect(laneOrder(moveLaneInBoard(boardOf('a', 'b', 'c'), 'c', UNASSIGNED_LANE_ID))).toEqual(['c', 'a', 'b'])
+    expect(laneOrder(placeLaneInBoard(boardOf('a', 'b', 'c'), 'c', { kind: 'column', beforeLaneId: UNASSIGNED_LANE_ID }))).toEqual(['c', 'a', 'b'])
   })
 
   it('returns the same board when nothing would move', () => {
     const board = boardOf('a', 'b', 'c')
-    expect(moveLaneInBoard(board, 'b', 'b')).toBe(board)
-    expect(moveLaneInBoard(board, 'b', 'c')).toBe(board)
-    expect(moveLaneInBoard(board, 'c', null)).toBe(board)
-    expect(moveLaneInBoard(board, 'nope', 'a')).toBe(board)
-    expect(moveLaneInBoard(board, UNASSIGNED_LANE_ID, 'a')).toBe(board)
+    expect(placeLaneInBoard(board, 'b', { kind: 'column', beforeLaneId: 'b' })).toBe(board)
+    expect(placeLaneInBoard(board, 'b', { kind: 'column', beforeLaneId: 'c' })).toBe(board)
+    expect(placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: null })).toBe(board)
+    expect(placeLaneInBoard(board, 'nope', { kind: 'column', beforeLaneId: 'a' })).toBe(board)
+    expect(placeLaneInBoard(board, UNASSIGNED_LANE_ID, { kind: 'column', beforeLaneId: 'a' })).toBe(board)
   })
 
   it('leaves tickets where they are', () => {
     const board = boardOf('a', 'b', 'c')
-    expect(moveLaneInBoard(board, 'c', 'a').tickets).toBe(board.tickets)
+    expect(placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: 'a' }).tickets).toBe(board.tickets)
   })
 })
 

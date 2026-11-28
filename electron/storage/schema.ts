@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS swim_lanes (
   next_lane_id TEXT,
   -- Where the lane's node sits in the graph view, as {x, y}. NULL means the default row slot.
   graph_position_json TEXT,
+  stacks_below_previous INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (project_path, id)
 );
 
@@ -163,8 +164,9 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 -- Global lane presets (#146), not tied to a board. lane_json holds a
--- swim_lanes row minus project_path, position and graph_position_json; the
--- prompts travel as content because file paths are project-relative.
+-- swim_lanes row minus project_path, position, graph_position_json and
+-- stacks_below_previous; the prompts travel as content because file paths are
+-- project-relative.
 CREATE TABLE IF NOT EXISTS lane_store (
   id TEXT PRIMARY KEY,
   lane_id TEXT NOT NULL,
@@ -225,6 +227,7 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'default_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'swim_lanes', column: 'stacks_below_previous', definition: 'INTEGER NOT NULL DEFAULT 0' },
   // NULL until the board's first workflow swap or create materializes "Default".
   { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]

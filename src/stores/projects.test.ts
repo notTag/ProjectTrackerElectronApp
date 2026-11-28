@@ -262,7 +262,7 @@ const storeWithLanes = (...laneIds: string[]) => {
 
 const laneOrder = (store: ReturnType<typeof useProjectsStore>) => store.board(PROJECT).lanes.map((entry) => entry.id)
 
-describe('moveLane', () => {
+describe('placeLane', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
@@ -274,7 +274,7 @@ describe('moveLane', () => {
     api.reorderLanes.mockImplementation(() => new Promise<void>((resolve) => (finishWrite = resolve)))
     const store = storeWithLanes('a', 'b', 'c')
 
-    const moving = store.moveLane(PROJECT, 'c', 'a')
+    const moving = store.placeLane(PROJECT, 'c', { kind: 'column', beforeLaneId: 'a' })
     expect(laneOrder(store)).toEqual(['c', 'a', 'b'])
 
     await vi.waitFor(() => expect(api.reorderLanes).toHaveBeenCalledWith(PROJECT, ['c', 'a', 'b']))
@@ -289,7 +289,7 @@ describe('moveLane', () => {
     api.reorderLanes.mockRejectedValue(new Error('disk full'))
     const store = storeWithLanes('a', 'b', 'c')
 
-    await store.moveLane(PROJECT, 'a', null)
+    await store.placeLane(PROJECT, 'a', { kind: 'column', beforeLaneId: null })
 
     expect(laneOrder(store)).toEqual(['a', 'b', 'c'])
     expect(api.getProjectState).toHaveBeenCalledTimes(1)
@@ -299,15 +299,36 @@ describe('moveLane', () => {
 
   it('does not write when the drop moves nothing', async () => {
     const store = storeWithLanes('a', 'b', 'c')
-    await store.moveLane(PROJECT, 'b', 'c')
+    await store.placeLane(PROJECT, 'b', { kind: 'column', beforeLaneId: 'c' })
     expect(api.reorderLanes).not.toHaveBeenCalled()
+  })
+
+  it('writes the stack flag and order together when stacking a lane', async () => {
+    const store = storeWithLanes('a', 'b', 'c')
+
+    await store.placeLane(PROJECT, 'c', { kind: 'stack', anchorLaneId: 'a', side: 'below' })
+
+    expect(laneOrder(store)).toEqual(['a', 'c', 'b'])
+    expect(api.updateLane).toHaveBeenCalledWith(PROJECT, 'c', { stacksBelowPrevious: true })
+    expect(api.reorderLanes).toHaveBeenCalledWith(PROJECT, ['a', 'c', 'b'])
+  })
+
+  it('un-stacks the lane again when the stacking write fails', async () => {
+    api.reorderLanes.mockRejectedValue(new Error('disk full'))
+    const store = storeWithLanes('a', 'b', 'c')
+
+    await store.placeLane(PROJECT, 'c', { kind: 'stack', anchorLaneId: 'a', side: 'above' })
+
+    expect(laneOrder(store)).toEqual(['a', 'b', 'c'])
+    const stackFlags = store.board(PROJECT).lanes.map((lane) => Boolean(lane.stacksBelowPrevious))
+    expect(stackFlags).toEqual([false, false, false])
   })
 
   it('takes a failed move back before a write queued behind it reads the state', async () => {
     api.reorderLanes.mockRejectedValueOnce(new Error('disk full'))
     const store = storeWithLanes('a', 'b', 'c')
 
-    const moving = store.moveLane(PROJECT, 'a', null)
+    const moving = store.placeLane(PROJECT, 'a', { kind: 'column', beforeLaneId: null })
     const laterSave = store.updateLane(PROJECT, 'b', { name: 'renamed' })
     await Promise.all([moving, laterSave])
 
@@ -734,7 +755,7 @@ describe('per-entity writes', () => {
     await store.removeTicket(PROJECT_PATH, 'ticket-1')
     await store.addLane(PROJECT_PATH, 'QA')
     await store.updateLane(PROJECT_PATH, 'prd', { name: 'Spec' })
-    await store.moveLane(PROJECT_PATH, 'dev', 'idea')
+    await store.placeLane(PROJECT_PATH, 'dev', { kind: 'column', beforeLaneId: 'idea' })
     await store.removeLane(PROJECT_PATH, 'prd')
     await store.updateProject(PROJECT_PATH, { notes: 'hello' })
 

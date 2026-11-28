@@ -297,6 +297,23 @@ describe('StateRepository', () => {
     expect(reopenedBoard(userDataPath, projectPath).lanes[0].graphPosition).toBeUndefined()
   })
 
+  it('adds the stacking column to a database created before it existed, defaulting every lane to its own column', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('ALTER TABLE swim_lanes DROP COLUMN stacks_below_previous')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const board = repository.getState().boards![projectPath]
+    expect(board.lanes.every((lane) => lane.stacksBelowPrevious === false)).toBe(true)
+    const stackedLaneId = board.lanes[1].id
+    repository.updateSwimLane(projectPath, stackedLaneId, { stacksBelowPrevious: true })
+
+    const reopened = reopenedBoard(userDataPath, projectPath)
+    expect(reopened.lanes[1].stacksBelowPrevious).toBe(true)
+    expect(reopened.lanes[0].stacksBelowPrevious).toBe(false)
+  })
+
   it('adds the agent model columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
@@ -412,12 +429,14 @@ describe('row-level writes', () => {
     const { repository, projectPath } = seededRepository(userDataPath)
     // Flagged, with a ticket in it, so the insert trigger runs on every swap.
     repository.updateSwimLane(projectPath, 'idea', { closesTicket: true })
+    repository.updateSwimLane(projectPath, 'prd', { stacksBelowPrevious: true })
     const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
     const laneRows = () => database.prepare('SELECT * FROM swim_lanes WHERE project_path = ? ORDER BY id').all(projectPath)
     const ticketLanes = () =>
       database.prepare('SELECT id, lane_id, closed_at FROM tickets WHERE project_path = ? ORDER BY id').all(projectPath)
     const defaultLanes = laneRows()
     const ticketsBefore = ticketLanes()
+    expect(defaultLanes).toContainEqual(expect.objectContaining({ id: 'prd', stacks_below_previous: 1 }))
 
     const created = repository.createWorkflow(projectPath, 'Hotfix')
     const createdBoard = created.boards?.[projectPath]
@@ -636,6 +655,7 @@ describe('swimlane store (#146)', () => {
     const userDataPath = freshUserDataPath()
     const { repository, sourcePath } = twoBoardRepository(userDataPath)
 
+    repository.updateSwimLane(sourcePath, 'prd', { stacksBelowPrevious: true })
     const first = repository.saveLaneToStore(sourcePath, 'prd', markdown)
     repository.updateSwimLane(sourcePath, 'prd', { outputTarget: 'docs/spec/' })
     const second = repository.saveLaneToStore(sourcePath, 'prd', { agent: '# Agent v2', orchestrator: '' })
@@ -653,6 +673,7 @@ describe('swimlane store (#146)', () => {
     expect(laneJson).not.toHaveProperty('project_path')
     expect(laneJson).not.toHaveProperty('position')
     expect(laneJson).not.toHaveProperty('graph_position_json')
+    expect(laneJson).not.toHaveProperty('stacks_below_previous')
     expect(stored.agent_markdown).toBe('# Agent v2')
   })
 

@@ -221,7 +221,8 @@ const laneFromRow = (row: Row): SwimLane => ({
     nextLaneId: asText(row.next_lane_id),
     graphPosition: parseJson<SwimLane['graphPosition']>(row.graph_position_json, undefined),
     orchestratorPollMinutes: Number(row.orchestrator_poll_minutes),
-    orchestratorPollActive: asBool(row.orchestrator_poll_active)
+    orchestratorPollActive: asBool(row.orchestrator_poll_active),
+    stacksBelowPrevious: asBool(row.stacks_below_previous)
   })
 
 const projectFromRow = (row: Row): ProjectRecord => ({
@@ -806,7 +807,7 @@ export class StateRepository {
     const entryId = this.transaction(() => {
       const [laneRow] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
       if (!laneRow) throw new Error(`Lane ${laneId} does not exist.`)
-      const { project_path: _projectPath, position: _position, graph_position_json: _graphPosition, ...portableRow } = laneRow
+      const { project_path: _projectPath, position: _position, graph_position_json: _graphPosition, stacks_below_previous: _stacksBelowPrevious, ...portableRow } = laneRow
       const laneJson = JSON.stringify(portableRow)
       const name = String(laneRow.name)
       const now = new Date().toISOString()
@@ -957,8 +958,8 @@ export class StateRepository {
          current_agent_orchestrator_prompt, default_agent_orchestrator_prompt,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
-         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, graph_position_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, graph_position_json, stacks_below_previous
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
@@ -971,7 +972,8 @@ export class StateRepository {
          auto_run_model = excluded.auto_run_model, orchestrator_agent_id = excluded.orchestrator_agent_id,
          orchestrator_model = excluded.orchestrator_model, next_lane_id = excluded.next_lane_id,
          orchestrator_poll_minutes = excluded.orchestrator_poll_minutes, orchestrator_poll_active = excluded.orchestrator_poll_active,
-         orchestrator_file_path = excluded.orchestrator_file_path, graph_position_json = excluded.graph_position_json`,
+         orchestrator_file_path = excluded.orchestrator_file_path, graph_position_json = excluded.graph_position_json,
+         stacks_below_previous = excluded.stacks_below_previous`,
       [
         lane.id,
         projectPath,
@@ -997,7 +999,8 @@ export class StateRepository {
         orchestratorPollMinutes(lane),
         orchestratorPollActive(lane) ? 1 : 0,
         lane.orchestratorFilePath ?? '',
-        lane.graphPosition ? JSON.stringify(lane.graphPosition) : null
+        lane.graphPosition ? JSON.stringify(lane.graphPosition) : null,
+        lane.stacksBelowPrevious ? 1 : 0
       ]
     )
   }

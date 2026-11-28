@@ -1296,6 +1296,26 @@ button.workflow-label:focus-visible {
   z-index: 3;
 }
 
+.lane-drop-indicator-horizontal {
+  bottom: auto;
+  height: 3px;
+  margin-left: 0;
+  margin-top: -1.5px;
+}
+
+.lane-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lane-column > .lane {
+  flex: 1 1 0;
+}
+
 .lane-add-zone {
   flex: 0 0 auto;
   display: flex;
