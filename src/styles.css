@@ -1516,10 +1516,13 @@ button.workflow-label:focus-visible {
 
 /* Fixed green on every theme: the ticket asks for green, and no theme token
    means "success". */
-.agent-status {
+:root {
   --agent-status-green: #22c55e;
   --agent-status-red: #ef4444;
   --agent-status-amber: #f59e0b;
+}
+
+.agent-status {
   display: inline-block;
   margin-right: 6px;
 }
