@@ -589,6 +589,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
 - When a board is read, any ticket whose lane no longer exists moves to No status, and tickets without a number get one.
 - The web build (4.8) reaches the same file through the local web server, one repository connection per browser tab.
+- Local only today. Cloud provider costs for 1 → 1M users (AWS, Azure, GCP, Cloudflare): `docs/research/t78-cloud-db-cost-analysis.pdf`, re-runnable via `python3 -I docs/research/t78-cost-model.py` (#78).
 
 ### 4.3 Agents — `src/shared/projectTypes.ts`, `electron/agentRun.ts`
 
