@@ -177,10 +177,11 @@ describe('full auto handoff', () => {
     expect(store.notice).toBe('Full auto: #7 → In Development')
   })
 
-  it("opens the destination lane's orchestrator for the handed-off tickets", async () => {
+  it("opens the destination lane's orchestrator, with its additional context, for the handed-off tickets", async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('prd')
     api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
+    api.readLaneOrchestratorContext.mockResolvedValueOnce({ filePath: '/code/orchestrator.md', content: 'Ping me on Slack.' })
 
     await store.refresh()
     await flushLaunches()
@@ -188,6 +189,7 @@ describe('full auto handoff', () => {
     const [, , , , orchestrator] = api.autoRunLane.mock.calls[0]
     expect(orchestrator.title).toBe('AUTORUN-ORCHESTRATOR-IN-DEVELOPMENT')
     expect(orchestrator.command).toContain('#7')
+    expect(orchestrator.command).toContain('Ping me on Slack.')
   })
 
   it('launches In Development from ticket data when a ticket skips PRD with no agent run', async () => {

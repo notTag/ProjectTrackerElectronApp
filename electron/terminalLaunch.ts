@@ -81,8 +81,7 @@ export const WARP_LAUNCH_CONFIG_PREFIX = 'project_tracker_launch_'
 
 export const warpLaunchConfigYaml = (launchName: string, projectPath: string, tabs: TerminalTab[]): string => {
   const tabLines = tabs.flatMap((tab) => [
-    `      - title: ${doubleQuotedString(tab.title ?? '')}`,
-    '        layout:',
+    ...(tab.title ? [`      - title: ${doubleQuotedString(tab.title)}`, '        layout:'] : ['      - layout:']),
     `          cwd: ${doubleQuotedString(projectPath)}`,
     '          commands:',
     `            - exec: ${doubleQuotedString(commandThenExit(tab))}`

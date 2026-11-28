@@ -20,11 +20,16 @@ const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1
 const AWKWARD_COMMAND = `claude 'Fix the "parser" bug\n\nIt drops C:\\path, $HOME and it'\\''s late'`
 
 describe('warpLaunchConfigYaml', () => {
-  const scalarAfter = (yaml: string, key: string) =>
-    yaml
-      .split('\n')
-      .filter((line) => line.trimStart().startsWith(`${key}: `) || line.trimStart().startsWith(`- ${key}: `))
-      .map((line) => JSON.parse(line.slice(line.indexOf(`${key}: `) + key.length + 2)))
+  const scalarAfter = (yaml: string, key: string) => {
+    const keyPrefix = `${key}: `
+    const hasKey = (line: string) => line.trimStart().replace(/^- /, '').startsWith(keyPrefix)
+    const parseScalar = (line: string) => {
+      const valueStart = line.indexOf(keyPrefix) + keyPrefix.length
+      const rawScalar = line.slice(valueStart)
+      return JSON.parse(rawScalar)
+    }
+    return yaml.split('\n').filter(hasKey).map(parseScalar)
+  }
 
   it('puts every tab in one window, named after the file so warp://launch/<name> finds it', () => {
     const yaml = warpLaunchConfigYaml('project_tracker_launch_abc', '/tmp/project', [
@@ -45,6 +50,12 @@ describe('warpLaunchConfigYaml', () => {
     expect(scalarAfter(yaml, 'cwd')).toEqual([`/tmp/${hostile}`])
     expect(scalarAfter(yaml, 'exec')).toEqual([`${hostile}; exit`])
     expect(yaml.split('\n')).toHaveLength(10)
+  })
+
+  it('leaves out the title of an untitled tab so Warp names it', () => {
+    const yaml = warpLaunchConfigYaml('n', '/tmp/project', [{ command: 'claude one' }])
+    expect(scalarAfter(yaml, 'title')).toEqual([])
+    expect(yaml).toContain('      - layout:')
   })
 })
 
