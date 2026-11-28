@@ -343,9 +343,11 @@ const ticketCanResume = (ticket: Ticket) => {
 
 const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
-const runTicketAgent = (ticket: Ticket) => {
+const runTicketAgent = async (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
-  const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
+  const lane = laneOfTicket(ticket)
+  const agentFileContext = await store.readLaneMarkdownContext(projectPath.value, lane, 'agent')
+  const prompt = ticketAgentPrompt(ticket, lane, { ...promptContext(ticket), agentFileContext })
   void store.runTicketAgent(projectPath.value, ticket, agent.id, prompt)
 }
 

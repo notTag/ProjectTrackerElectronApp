@@ -7,14 +7,14 @@
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import {
+  ensureDefaultLaneMarkdown,
   readLaneMarkdown,
-  readOrchestratorContext,
+  readLaneMarkdownContext,
   resolveAgentMarkdownPath,
-  saveAgentMarkdown,
   writeMissingLaneMarkdown
 } from './agentMarkdown.js'
 import { runAgentHeadlessWithRetry } from './agentRun.js'
@@ -40,6 +40,7 @@ import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
   availableAgents,
+  isAppWrittenAgentCopy,
   isUuid,
   pullRequestNumber,
   shellQuote,
@@ -208,6 +209,20 @@ export const assertScannedProjectPath = (repository: StateRepository, projectPat
     throw new Error('Project path is outside configured scan directories.')
   }
   return normalized
+}
+
+const withDefaultLaneMarkdownFiles = (repository: StateRepository, projectPath: string, lane: SwimLane): SwimLane => {
+  if (!existsSync(projectPath)) return lane
+  const laneFolder = { projectPath, laneName: lane.name }
+  const patch: LaneWritePatch = {}
+  if (!lane.agentFilePath.trim()) {
+    patch.agentFilePath = ensureDefaultLaneMarkdown({ ...laneFolder, kind: 'agent' })
+  }
+  if (!lane.orchestratorFilePath?.trim()) {
+    patch.orchestratorFilePath = ensureDefaultLaneMarkdown({ ...laneFolder, kind: 'orchestrator' })
+  }
+  const hasMissingPaths = Object.keys(patch).length > 0
+  return hasMissingPaths ? repository.updateSwimLane(projectPath, lane.id, patch) : lane
 }
 
 const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => {
@@ -467,7 +482,24 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
     'lane:create': (payload, { repository }) => {
       const { projectPath, lane } = (payload ?? {}) as { projectPath?: unknown; lane?: unknown }
       if (typeof projectPath !== 'string' || !isSwimLane(lane)) throw new Error('Invalid lane create payload.')
-      return toPlainJson(repository.createSwimLane(normalizePath(projectPath), lane))
+      const normalized = normalizePath(projectPath)
+      const created = repository.createSwimLane(normalized, lane)
+      const projectIsScanned = isInsideAny(normalized, scanDirectoriesOf(repository))
+      if (!projectIsScanned) return toPlainJson(created)
+      try {
+        return toPlainJson(withDefaultLaneMarkdownFiles(repository, normalized, created))
+      } catch {
+        return toPlainJson(created)
+      }
+    },
+
+    'lane:ensure-markdown-files': (payload, { repository }) => {
+      const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane markdown payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const lane = repository.lane(normalized, laneId)
+      if (!lane) return null
+      return toPlainJson(withDefaultLaneMarkdownFiles(repository, normalized, lane))
     },
 
     'lane:update': (payload, { repository }) => {
@@ -521,7 +553,9 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
         }
         const readable = isInsideAny(resolvedPath, scanDirectories)
         if (!readable) return ''
-        return kind === 'orchestrator' ? readOrchestratorContext(resolvedPath) : readLaneMarkdown(markdownTarget)
+        if (kind === 'orchestrator') return readLaneMarkdownContext(kind, resolvedPath)
+        const agentMarkdown = readLaneMarkdown(markdownTarget)
+        return isAppWrittenAgentCopy(agentMarkdown, lane) ? '' : agentMarkdown
       }
       const markdown = {
         agent: readMarkdown('agent', lane.agentFilePath),
@@ -859,44 +893,16 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       return toPlainJson({ content: readFileSync(readmePath, 'utf8'), fileName: readmeName })
     },
 
-    'lane:save-agent-markdown': (request, { repository }) => {
-      const { kind, projectPath, laneName, filePath: requestedFilePath, content, previousContent } = (request ?? {}) as Record<
-        string,
-        unknown
-      >
-      if (kind !== undefined && kind !== 'agent') throw new Error('Only the agent markdown file is saved.')
-      const fields = [projectPath, laneName, requestedFilePath, content, previousContent]
-      const fieldsAreStrings = fields.every((field) => typeof field === 'string')
-      if (!fieldsAreStrings) throw new Error('Invalid save request.')
-
-      const normalized = assertScannedProjectPath(repository, projectPath as string)
-      const project = repository.getState().snapshot.projects.find((entry) => normalizePath(entry.path) === normalized)
-      if (!project) throw new Error('Unknown project.')
-
-      const target = {
-        kind: 'agent' as const,
-        projectPath: normalized,
-        laneName: laneName as string,
-        filePath: requestedFilePath as string
-      }
-      // Same boundary as every other path IPC: keeps a typed path from reaching
-      // agent config outside the projects, e.g. ~/.claude/CLAUDE.md.
-      const filePath = resolveAgentMarkdownPath(target)
-      if (!isInsideAny(filePath, scanDirectoriesOf(repository))) {
-        throw new Error('Markdown file must be inside a scanned directory.')
-      }
-      return saveAgentMarkdown(filePath, content as string, previousContent as string)
-    },
-
-    'lane:read-orchestrator-context': (request, { repository }) => {
-      const { projectPath, laneName, filePath: requestedFilePath } = (request ?? {}) as Record<string, unknown>
+    'lane:read-markdown-context': (request, { repository }) => {
+      const { kind, projectPath, laneName, filePath: requestedFilePath } = (request ?? {}) as Record<string, unknown>
       const fields = [projectPath, laneName, requestedFilePath]
       const fieldsAreStrings = fields.every((field) => typeof field === 'string')
-      if (!fieldsAreStrings) throw new Error('Invalid read request.')
+      const kindIsKnown = kind === 'agent' || kind === 'orchestrator'
+      if (!fieldsAreStrings || !kindIsKnown) throw new Error('Invalid read request.')
 
       const normalized = assertScannedProjectPath(repository, projectPath as string)
       const target = {
-        kind: 'orchestrator' as const,
+        kind: kind as LaneMarkdownKind,
         projectPath: normalized,
         laneName: laneName as string,
         filePath: requestedFilePath as string
@@ -915,7 +921,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       }
       const realScanDirectories = scanDirectoriesOf(repository).map(realPathOrSelf)
       if (!isInsideAny(realFilePath, realScanDirectories)) return null
-      const content = readOrchestratorContext(realFilePath)
+      const content = readLaneMarkdownContext(target.kind, realFilePath)
       return content.trim() ? toPlainJson({ filePath, content }) : null
     }
   }

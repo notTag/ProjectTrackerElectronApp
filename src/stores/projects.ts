@@ -23,6 +23,7 @@ import {
   splitRunnable,
   skippedRunsNotice,
   joinNotices,
+  laneHasAgentWork,
   ticketTabTitle,
   type AgentRetryEvent,
   type AutoRunLaunchEntry,
@@ -51,6 +52,7 @@ import {
   ticketBranchName,
   updateLaneInBoard,
   type BoardWrite,
+  type LaneMarkdownKind,
   type TerminalTab,
   type CompletionMove,
   type FullAutoHandoff,
@@ -392,22 +394,33 @@ export const useProjectsStore = defineStore('projects', {
       return this.updateBoard(projectPath, (board) => updateLaneInBoard(board, laneId, patch))
     },
 
-    // File first, DB second: a failed write throws before the lane is touched.
-    // Only a new path is stored; the prompt text is stored on blur.
-    async saveLaneMarkdown(projectPath: string, lane: SwimLane, prompt: string, previousPrompt: string, filePath: string) {
-      const saved = await projectTrackerApi.saveLaneMarkdown(projectPath, lane.name, filePath, prompt, previousPrompt)
-      const pathIsStored = lane.agentFilePath === saved.filePath
-      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { agentFilePath: saved.filePath }))
-      return { filePath: saved.filePath, laneUpdated }
-    },
-
-    async readLaneOrchestratorContext(projectPath: string, lane: SwimLane) {
+    async readLaneMarkdownContext(projectPath: string, lane: SwimLane, kind: LaneMarkdownKind) {
       try {
-        const filePath = lane.orchestratorFilePath ?? ''
-        const additionalContext = await projectTrackerApi.readLaneOrchestratorContext(projectPath, lane.name, filePath)
-        return additionalContext ?? undefined
+        const filePath = kind === 'agent' ? lane.agentFilePath : (lane.orchestratorFilePath ?? '')
+        const markdownContext = await projectTrackerApi.readLaneMarkdownContext(kind, projectPath, lane.name, filePath)
+        return markdownContext ?? undefined
       } catch {
         return undefined
+      }
+    },
+
+    async lanesWithAgentFileText(projectPath: string, lanes: SwimLane[]) {
+      const contexts = await Promise.all(lanes.map((lane) => this.readLaneMarkdownContext(projectPath, lane, 'agent')))
+      return lanes.filter((_lane, index) => contexts[index] !== undefined).map((lane) => lane.id)
+    },
+
+    async ensureLaneMarkdownFiles(projectPath: string, laneId: string) {
+      const boardIsStored = this.state.boards?.[projectPath] !== undefined
+      if (!boardIsStored) {
+        await this.updateBoard(projectPath, (board) => board)
+        return
+      }
+      try {
+        const lane = await projectTrackerApi.ensureLaneMarkdownFiles(projectPath, laneId)
+        if (!lane) return
+        const board = withWrittenLane(storedBoard(this.state, projectPath), lane)
+        this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
+      } catch {
       }
     },
 
@@ -760,12 +773,12 @@ export const useProjectsStore = defineStore('projects', {
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       }
-      this.startFullAutoHandoffs(handoffs)
+      void this.startFullAutoHandoffs(handoffs)
     },
 
     // Launched after the queue settles rather than inside it, so a slow
     // worktree fetch never holds up saves.
-    startFullAutoHandoffs(projectHandoffs: ProjectHandoffs[]) {
+    async startFullAutoHandoffs(projectHandoffs: ProjectHandoffs[]) {
       if (projectHandoffs.length === 0) return
       const agents = availableAgents(this.state)
       const pickerTargetId = useOpenInStore().selectedId
@@ -782,6 +795,8 @@ export const useProjectsStore = defineStore('projects', {
             this.notice = skippedNotice
             continue
           }
+          const agentFileContext = await this.readLaneMarkdownContext(projectPath, toLane, 'agent')
+          if (!laneHasAgentWork(toLane, agentFileContext !== undefined)) continue
           const ticketNumbers = laneHandoffs.map(({ ticket }) => `#${ticket.number}`).join(', ')
           if (this.autoRunning[autoRunKey(projectPath, toLane.id)]) {
             deferHandoffs(projectPath, laneHandoffs)
@@ -792,9 +807,10 @@ export const useProjectsStore = defineStore('projects', {
           const agent = findAgent(agents, toLane.autoRunAgentId)
           const terminal = resolveAutoRunTerminal(toLane.autoRunTerminalId, pickerTargetId)
           const useWorktrees = autoRunUsesWorktrees(toLane, laneHandoffs[0].ticket)
-          const launches = laneHandoffs.map(({ ticket }) =>
-            buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
-          )
+          const launches = laneHandoffs.map(({ ticket }) => {
+            const promptContext = { ...this.promptContextFor(ticket, projectPath), agentFileContext }
+            return buildAutoRunLaunch(ticket, toLane, agent, promptContext, useWorktrees, toLane.autoRunModel)
+          })
           const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
           void launch.then((launched) => {
             if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
@@ -953,7 +969,7 @@ export const useProjectsStore = defineStore('projects', {
         return false
       } finally {
         this.saving = false
-        this.startFullAutoHandoffs(handoffs)
+        void this.startFullAutoHandoffs(handoffs)
       }
     },
 
@@ -1233,7 +1249,7 @@ export const useProjectsStore = defineStore('projects', {
         return isStillInLane ? [{ ...handoff, ticket: currentTicket }] : []
       })
       if (stillWaiting.length === 0) return
-      this.startFullAutoHandoffs([{ projectPath: deferred.projectPath, handoffs: stillWaiting }])
+      void this.startFullAutoHandoffs([{ projectPath: deferred.projectPath, handoffs: stillWaiting }])
     },
 
     // The lane is captured at start, not read back at the end: the ticket may be

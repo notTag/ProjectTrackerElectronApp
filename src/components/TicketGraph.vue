@@ -363,7 +363,7 @@ function selectLane(id: string | null) {
         <p v-if="selectedLaneDetails.incoming.length">Incoming: {{ selectedLaneDetails.incoming.join(', ') }}</p>
         <section v-for="section in promptSections" :key="section.field" class="graph-rules" :aria-label="section.title">
           <h3 class="graph-details-heading">{{ section.title }}</h3>
-          <p v-if="section.field === 'agentPrompt' && agentFileName(selectedLane)" class="field-hint">Also follows: {{ agentFileName(selectedLane) }}</p>
+          <p v-if="section.field === 'agentPrompt' && agentFileName(selectedLane)" class="field-hint">Additional context: {{ agentFileName(selectedLane) }}</p>
           <div v-for="(rule, index) in laneRules(selectedLane, section.field)" :key="`${index}:${rule}`" class="graph-rule">
             <textarea
               rows="1"
