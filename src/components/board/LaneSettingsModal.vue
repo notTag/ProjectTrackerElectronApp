@@ -502,7 +502,7 @@ defineExpose({
             </span>
           </label>
 
-          <div class="auto-run-pickers">
+          <div class="field-row">
             <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
                  clicking a wrapping caption would fire − and switch the lane off. -->
             <div v-if="showsLaneField('orchestratorPoll', lane.id)" class="orchestrator-poll-row">
@@ -580,7 +580,7 @@ defineExpose({
       >
         <summary class="eyebrow">Auto Run</summary>
         <div class="lane-settings-section-body ticket-agent">
-          <div class="auto-run-pickers">
+          <div class="field-row">
             <label v-if="showsLaneField('autoRunAgent', lane.id)">
               Agent
               <select
