@@ -13,8 +13,8 @@ import {
   isReadyToMove,
   moveLaneInBoard,
   setLaneWidth,
-  ticketIdsToMove,
   UNASSIGNED_LANE_ID,
+  type LaneDropAnchor,
   type SwimLane,
   type Ticket
 } from '@/shared/projectTypes'
@@ -316,12 +316,78 @@ const startTicketDrag = (event: DragEvent, ticketId: string) => {
   requestAnimationFrame(() => ghost.remove())
 }
 
-const dropOnLane = async (laneId: string) => {
-  const ticketId = draggedTicketId.value
+const ticketDrop = ref<{ laneId: string; anchor: LaneDropAnchor; indicatorTop: number } | null>(null)
+
+const endTicketDrag = () => {
   draggedTicketId.value = null
+  ticketDrop.value = null
+}
+
+// Half the 8px card gap, so the line sits centered between two cards.
+const HALF_CARD_GAP_PX = 4
+
+// Mirrors laneAnchorAt on Y: the first visible, uncarried card whose midpoint
+// is below the pointer is the one the drop lands in front of.
+const ticketAnchorAt = (laneElement: HTMLElement, pointerY: number) => {
+  const cards = Array.from(laneElement.querySelectorAll<HTMLElement>('.ticket[data-ticket-id]'))
+  const neighbours = cards.filter((card) => !carriedIds.value.has(card.dataset.ticketId ?? ''))
+  const beforeCard = neighbours.find((card) => {
+    const rect = card.getBoundingClientRect()
+    return rect.top + rect.height / 2 > pointerY
+  })
+  const lastCard = neighbours.at(-1)
+  const afterCard = beforeCard ? undefined : lastCard
+  const laneTop = laneElement.getBoundingClientRect().top
+  const indicatorCard = beforeCard ?? lastCard
+  let indicatorTop = laneElement.querySelector<HTMLElement>('.lane-body')?.offsetTop ?? 0
+  if (beforeCard) indicatorTop = beforeCard.getBoundingClientRect().top - laneTop - HALF_CARD_GAP_PX
+  else if (indicatorCard) indicatorTop = indicatorCard.getBoundingClientRect().bottom - laneTop + HALF_CARD_GAP_PX
+  const anchor = { beforeTicketId: beforeCard?.dataset.ticketId ?? null, afterTicketId: afterCard?.dataset.ticketId ?? null }
+  return { anchor, indicatorTop }
+}
+
+const trackTicketDrop = (laneId: string, event: DragEvent) => {
+  if (!draggedTicketId.value) return
+  const laneElement = event.currentTarget as HTMLElement
+  ticketDrop.value = { laneId, ...ticketAnchorAt(laneElement, event.clientY) }
+}
+
+const leaveTicketDrop = (laneId: string, event: DragEvent) => {
+  const laneElement = event.currentTarget as HTMLElement
+  const stillInsideLane = laneElement.contains(event.relatedTarget as Node | null)
+  if (!stillInsideLane && ticketDrop.value?.laneId === laneId) ticketDrop.value = null
+}
+
+const dropOnLane = async (laneId: string, event: DragEvent) => {
+  const ticketId = draggedTicketId.value
+  const ticketIds = [...carriedIds.value]
+  const laneElement = event.currentTarget as HTMLElement
+  const { anchor } = ticketAnchorAt(laneElement, event.clientY)
+  endTicketDrag()
   if (!ticketId) return
-  const ticketIds = ticketIdsToMove(ticketId, props.selectedTicketIds, props.visibleTickets, laneId)
-  await store.moveTickets(projectPath.value, ticketIds, laneId)
+  await store.dropTickets(projectPath.value, ticketIds, laneId, anchor)
+}
+
+const focusTicketCard = (ticketId: string) => {
+  const cardSelector = `.ticket[data-ticket-id="${CSS.escape(ticketId)}"]`
+  boardElement.value?.querySelector<HTMLElement>(cardSelector)?.focus()
+}
+
+// One slot among the cards the user can see: moving down lands after the next
+// visible card, moving up lands before the previous one.
+const moveTicketByKeyboard = async (ticket: Ticket, direction: 'up' | 'down') => {
+  const laneTickets = props.ticketsInLane(ticket.laneId)
+  const position = laneTickets.findIndex((entry) => entry.id === ticket.id)
+  const neighbour = laneTickets[direction === 'up' ? position - 1 : position + 1]
+  if (position < 0 || !neighbour) return
+  const anchor: LaneDropAnchor =
+    direction === 'up'
+      ? { beforeTicketId: neighbour.id, afterTicketId: null }
+      : { beforeTicketId: null, afterTicketId: neighbour.id }
+  const saving = store.dropTickets(projectPath.value, [ticket.id], ticket.laneId, anchor)
+  await nextTick()
+  focusTicketCard(ticket.id)
+  await saving
 }
 
 const readyLaneNameByTicketId = computed(() => {
@@ -376,10 +442,17 @@ defineExpose({
         'lane-dragging': laneDrag?.active && laneDrag.laneId === lane.id
       }"
       :style="{ width: `${laneWidth(lane.id)}px`, ...laneDragStyle(lane.id) }"
-      @dragover.prevent
-      @drop.prevent="dropOnLane(lane.id)"
+      @dragover.prevent="trackTicketDrop(lane.id, $event)"
+      @dragleave="leaveTicketDrop(lane.id, $event)"
+      @drop.prevent="dropOnLane(lane.id, $event)"
       @dblclick.self="emit('newTicket', lane.id)"
     >
+      <div
+        v-if="ticketDrop?.laneId === lane.id"
+        class="ticket-drop-indicator"
+        :style="{ top: `${ticketDrop.indicatorTop}px` }"
+        aria-hidden="true"
+      />
       <header
         class="lane-heading"
         :class="{ 'lane-heading-movable': laneCanMove(lane.id) }"
@@ -443,7 +516,8 @@ defineExpose({
           @open="emit('openTicket', $event)"
           @toggle-select="emit('toggleSelected', $event)"
           @drag-start="startTicketDrag"
-          @drag-end="draggedTicketId = null"
+          @drag-end="endTicketDrag"
+          @move="moveTicketByKeyboard(ticket, $event)"
         />
       </LaneCardList>
 

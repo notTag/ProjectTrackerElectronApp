@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { toPlainJson } from '@/shared/plainJson'
 import {
+  compareLaneOrder,
   createSeedState,
   getBoard,
   GITHUB_UNREACHABLE_MESSAGE,
@@ -653,7 +654,7 @@ describe('refreshBoardPullRequests', () => {
   })
 })
 
-describe('moveTickets', () => {
+describe('dropTickets', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
@@ -670,12 +671,20 @@ describe('moveTickets', () => {
     return { ...state, boards: { [PROJECT_PATH]: { ...board, tickets } } }
   }
 
+  const toBottom = { beforeTicketId: null, afterTicketId: null }
+  const laneOrder = (store: ReturnType<typeof useProjectsStore>, laneId: string) =>
+    store
+      .board(PROJECT_PATH)
+      .tickets.filter((ticket) => ticket.laneId === laneId)
+      .sort(compareLaneOrder)
+      .map((ticket) => ticket.id)
+
   it('moves every id in one board edit with a shared updatedAt', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
     const updateBoard = vi.spyOn(store, 'updateBoard')
 
-    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-2', 'ticket-3'], 'dev')
+    await store.dropTickets(PROJECT_PATH, ['ticket-1', 'ticket-2', 'ticket-3'], 'dev', toBottom)
 
     expect(updateBoard).toHaveBeenCalledTimes(1)
     expect(api.updateTicket).toHaveBeenCalledTimes(3)
@@ -683,31 +692,63 @@ describe('moveTickets', () => {
     const sentUpdatedAts = new Set(sentPatches.map((patch) => patch.updatedAt))
     expect(sentPatches.every((patch) => patch.laneId === 'dev')).toBe(true)
     expect(sentUpdatedAts.size).toBe(1)
-    expect(store.board(PROJECT_PATH).tickets.every((ticket) => ticket.laneId === 'dev')).toBe(true)
+    expect(laneOrder(store, 'dev')).toEqual(['ticket-1', 'ticket-2', 'ticket-3'])
   })
 
-  it('leaves a ticket already in the target lane untouched', async () => {
+  it('stamps updatedAt only on tickets that changed lane', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
-    const prdTicketBefore = toPlainJson(store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3'))
+    const prdUpdatedAtBefore = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')?.updatedAt
 
-    await store.moveTickets(PROJECT_PATH, ['ticket-1', 'ticket-3'], 'prd')
+    await store.dropTickets(PROJECT_PATH, ['ticket-1'], 'prd', { beforeTicketId: 'ticket-3', afterTicketId: null })
 
-    const prdTicketAfter = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-3')
-    const writtenIds = api.updateTicket.mock.calls.map(([id]) => id)
-    expect(writtenIds).toEqual(['ticket-1'])
-    expect(toPlainJson(prdTicketAfter)).toStrictEqual(prdTicketBefore)
+    const tickets = store.board(PROJECT_PATH).tickets
+    const prdTicket = tickets.find((ticket) => ticket.id === 'ticket-3')
+    const movedTicket = tickets.find((ticket) => ticket.id === 'ticket-1')
+    expect(laneOrder(store, 'prd')).toEqual(['ticket-1', 'ticket-3'])
+    expect(prdTicket?.updatedAt).toBe(prdUpdatedAtBefore)
+    expect(movedTicket?.updatedAt).not.toBe(prdUpdatedAtBefore)
   })
 
-  it('writes nothing for an empty id list', async () => {
+  it('reorders within a lane without stamping updatedAt', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
+    const updatedAtBefore = store.board(PROJECT_PATH).tickets.map((ticket) => ticket.updatedAt)
+
+    await store.dropTickets(PROJECT_PATH, ['ticket-2'], 'idea', { beforeTicketId: 'ticket-1', afterTicketId: null })
+
+    const sentPatches = api.updateTicket.mock.calls.map(([, patch]) => patch)
+    expect(laneOrder(store, 'idea')).toEqual(['ticket-2', 'ticket-1'])
+    expect(sentPatches.map((patch) => patch.lanePosition)).toEqual([2, 1])
+    expect(store.board(PROJECT_PATH).tickets.map((ticket) => ticket.updatedAt)).toEqual(updatedAtBefore)
+  })
+
+  it('skips the save for a drop that lands where the tickets already are', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    await store.dropTickets(PROJECT_PATH, ['ticket-1'], 'idea', { beforeTicketId: 'ticket-2', afterTicketId: null })
+    vi.clearAllMocks()
     const updateBoard = vi.spyOn(store, 'updateBoard')
 
-    await store.moveTickets(PROJECT_PATH, [], 'dev')
+    await store.dropTickets(PROJECT_PATH, ['ticket-1'], 'idea', { beforeTicketId: 'ticket-2', afterTicketId: null })
+    await store.dropTickets(PROJECT_PATH, [], 'dev', toBottom)
 
     expect(updateBoard).not.toHaveBeenCalled()
     expect(api.updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('drops a slot left in another lane, so moving back lands at the bottom', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithThreeTickets()
+    await store.dropTickets(PROJECT_PATH, ['ticket-2'], 'idea', { beforeTicketId: 'ticket-1', afterTicketId: null })
+
+    await store.updateTicket(PROJECT_PATH, 'ticket-2', { laneId: 'prd' })
+    const leftTicket = store.board(PROJECT_PATH).tickets.find((ticket) => ticket.id === 'ticket-2')
+    expect(leftTicket?.lanePosition).toBeUndefined()
+    expect(leftTicket?.lanePositionLaneId).toBeUndefined()
+
+    await store.updateTicket(PROJECT_PATH, 'ticket-2', { laneId: 'idea' })
+    expect(laneOrder(store, 'idea')).toEqual(['ticket-1', 'ticket-2'])
   })
 })
 

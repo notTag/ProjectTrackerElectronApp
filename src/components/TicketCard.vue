@@ -28,7 +28,25 @@ const emit = defineEmits<{
   'toggle-select': [ticketId: string]
   'drag-start': [event: DragEvent, ticketId: string]
   'drag-end': []
+  move: [direction: 'up' | 'down']
 }>()
+
+const ARROW_DIRECTIONS: Record<string, 'up' | 'down'> = { ArrowUp: 'up', ArrowDown: 'down' }
+
+// Keys from the checkbox or the PR link inside the card are theirs, not the card's.
+const handleCardKey = (event: KeyboardEvent) => {
+  if (event.target !== event.currentTarget) return
+  const direction = ARROW_DIRECTIONS[event.key]
+  if (event.altKey && direction) {
+    event.preventDefault()
+    emit('move', direction)
+    return
+  }
+  const opensCard = event.key === 'Enter' || event.key === ' '
+  if (!opensCard) return
+  event.preventDefault()
+  emit('open', props.ticket.id)
+}
 
 const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; glyph?: string }> = {
   running: { className: 'agent-status-running', label: 'Agent running' },
@@ -53,6 +71,9 @@ const showsField = (field: TicketCardField) => props.cardFields.includes(field)
     :data-ticket-id="ticket.id"
     :class="{ 'ticket-carried': carried }"
     draggable="true"
+    tabindex="0"
+    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+    @keydown="handleCardKey"
     @dragstart="emit('drag-start', $event, ticket.id)"
     @dragend="emit('drag-end')"
     @click="emit('open', ticket.id)"

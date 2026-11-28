@@ -250,7 +250,8 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
   externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
-  images: true, moveRules: true, moveRulesPassedLaneId: true, readyLaneId: true
+  images: true, moveRules: true, moveRulesPassedLaneId: true, readyLaneId: true,
+  lanePosition: true, lanePositionLaneId: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,

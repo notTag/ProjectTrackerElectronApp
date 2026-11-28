@@ -1296,6 +1296,18 @@ button.workflow-label:focus-visible {
   z-index: 3;
 }
 
+.ticket-drop-indicator {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  pointer-events: none;
+  z-index: 3;
+}
+
 .lane-add-zone {
   flex: 0 0 auto;
   display: flex;
