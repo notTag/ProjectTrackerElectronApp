@@ -33,6 +33,7 @@ export const IPC_CHANNELS = [
   'ticket:delete',
   'ticket-images:save-bytes',
   'ticket-images:remove',
+  'ticket-images:copy',
   'ticket-images:open',
   'lane:create',
   'lane:update',
@@ -87,6 +88,7 @@ export interface ProjectTrackerBridge {
   pickTicketImages(ticketId: string): Promise<string[]>
   saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string): Promise<string>
   removeTicketImage(ticketId: string, imagePath: string): Promise<void>
+  copyTicketImages(ticketId: string, imagePaths: string[]): Promise<string[]>
   openTicketImage(imagePath: string): Promise<void>
   // Where an <img> loads an attachment: a custom scheme in Electron, a server route on the web.
   ticketImageUrl(imagePath: string): string

@@ -35,7 +35,13 @@ import {
   warpTabConfigToml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
-import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicketImageBytes } from './ticketImages.js'
+import {
+  copyTicketImages,
+  removeTicketImage,
+  removeTicketImages,
+  resolveAttachmentPath,
+  saveTicketImageBytes
+} from './ticketImages.js'
 import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
@@ -455,6 +461,12 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { ticketId, imagePath } = (payload ?? {}) as { ticketId?: unknown; imagePath?: unknown }
       if (typeof ticketId !== 'string' || typeof imagePath !== 'string') throw new Error('Invalid ticket image payload.')
       removeTicketImage(attachmentsRoot, ticketId, imagePath)
+    },
+
+    'ticket-images:copy': (payload) => {
+      const { ticketId, imagePaths } = (payload ?? {}) as { ticketId?: unknown; imagePaths?: unknown }
+      if (typeof ticketId !== 'string' || !isStringArray(imagePaths)) throw new Error('Invalid ticket image payload.')
+      return copyTicketImages(attachmentsRoot, ticketId, imagePaths)
     },
 
     'ticket-images:open': async (payload) => {

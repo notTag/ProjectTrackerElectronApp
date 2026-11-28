@@ -37,6 +37,7 @@ import {
   fullAutoHandoffs,
   addScanDirectory,
   addTicketToBoard,
+  cloneTicketOnBoard,
   createSeedState,
   getBoard,
   getBoardPreferences,
@@ -522,6 +523,12 @@ export const useProjectsStore = defineStore('projects', {
         addTicketToBoard(board, { id: ticketId, laneId, title, description, ...completion })
       )
       return saved ? ticketId : null
+    },
+
+    async cloneTicket(projectPath: string, sourceId: string): Promise<string | null> {
+      const cloneId = crypto.randomUUID()
+      const saved = await this.updateBoard(projectPath, (board) => cloneTicketOnBoard(board, sourceId, cloneId))
+      return saved ? cloneId : null
     },
 
     // Every single-ticket edit funnels through here — modal fields and checklist
