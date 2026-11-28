@@ -38,13 +38,13 @@ Ticket asks for a side-by-side Settings modal: left list grouped as Board Settin
 - Run-app check (isolated DB copy, CDP) is the real verification
 
 ## Acceptance
-- [ ] Sidebar shows "Board Settings" heading above Display + Metrics
-- [ ] Sidebar shows "UI Settings" heading above the UI Settings item
-- [ ] Headings use `.eyebrow` style, are not buttons, can't take focus or be selected (Tab skips them)
-- [ ] Order Display → Metrics → UI Settings; Display selected on open
-- [ ] Clicking each item swaps the right pane to only that section; Display toggles, Metrics table, UI sliders/Reset behave as before
-- [ ] `bun run test` + typecheck green
-- [ ] App exercised on an isolated DB copy before merge: open ⚙ Settings → headings visible, Display selected, click each item, Tab through sidebar
+- [x] Sidebar shows "Board Settings" heading above Display + Metrics
+- [x] Sidebar shows "UI Settings" heading above the UI Settings item
+- [x] Headings use `.eyebrow` style, are not buttons, can't take focus or be selected (Tab skips them)
+- [x] Order Display → Metrics → UI Settings; Display selected on open
+- [x] Clicking each item swaps the right pane to only that section; Display toggles, Metrics table, UI sliders/Reset behave as before
+- [x] `bun run test` + typecheck green
+- [x] App exercised on an isolated DB copy before merge: open ⚙ Settings → headings visible, Display selected, click each item, Tab through sidebar
 
 ## Out of scope
 - Section contents

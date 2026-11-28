@@ -248,7 +248,7 @@ From left to right:
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists **Metrics** (the Dashboard's panel (2.1) for this project only, inline), **Display** (3.5) and **UI Settings**; the selected one shows on the right. The selection lasts for the app session, never saved |
+| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists, under a **Board Settings** heading, **Display** (3.5) and **Metrics** (the Dashboard's panel (2.1) for this project only, inline), then under a **UI Settings** heading, **UI Settings**; the selected one shows on the right. Headings aren't clickable or focusable. The selection lasts for the app session, never saved |
 
 ### 3.2 Notices and errors
 
@@ -327,7 +327,7 @@ From left to right:
 
 #### Settings panel (⚙ Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Display (default, top) / Metrics / UI Settings; Metrics shows its table directly, no toggle button; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Display (default, top) / Metrics under a Board Settings heading, then UI Settings under a UI Settings heading; Metrics shows its table directly, no toggle button; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Position isn't remembered.
 - UI Settings section: each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
