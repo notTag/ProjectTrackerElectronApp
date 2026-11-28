@@ -2220,6 +2220,10 @@ span.ticket-image-thumb {
 .graph-rule { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
 .graph-rule textarea { flex: 1; min-height: 0; resize: none; field-sizing: content; }
 .graph-rule-delete { padding: 2px 8px; }
+.graph-rule-handle { padding: 2px 6px; cursor: grab; }
+.graph-rule-handle:active { cursor: grabbing; }
+.graph-rule.drop-before { box-shadow: 0 -2px 0 var(--color-accent); }
+.graph-rule.drop-after { box-shadow: 0 2px 0 var(--color-accent); }
 .graph-rule-add { margin-top: 8px; }
 .graph-list-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-top: 8px; white-space: normal; }
 .modal-backdrop.graph-ticket-panel { left: auto; top: 150px; bottom: 0; right: 0; width: min(440px, 45vw); padding: 0; background: transparent; align-items: stretch; }

@@ -40,6 +40,7 @@ import {
   laneFolderName,
   promptRules,
   rulesToPrompt,
+  moveRule,
   addScanDirectory,
   addTicketToBoard,
   mergeScannedProjects,
@@ -2380,6 +2381,30 @@ describe('promptRules / rulesToPrompt', () => {
   it('maps an empty prompt to no rules and back', () => {
     expect(promptRules('  \n\n')).toEqual([])
     expect(rulesToPrompt([])).toBe('')
+  })
+})
+
+describe('moveRule', () => {
+  const rules = ['a', 'b', 'c', 'd']
+
+  it('moves the first rule to last', () => {
+    expect(moveRule(rules, 0, 3)).toEqual(['b', 'c', 'd', 'a'])
+  })
+
+  it('moves the last rule to first', () => {
+    expect(moveRule(rules, 3, 0)).toEqual(['d', 'a', 'b', 'c'])
+  })
+
+  it('moves a middle rule', () => {
+    expect(moveRule(rules, 1, 2)).toEqual(['a', 'c', 'b', 'd'])
+  })
+
+  it('returns an unchanged copy for the same or an out-of-range index', () => {
+    expect(moveRule(rules, 2, 2)).toEqual(rules)
+    expect(moveRule(rules, 0, -1)).toEqual(rules)
+    expect(moveRule(rules, 4, 0)).toEqual(rules)
+    expect(moveRule(rules, 1, 2)).not.toBe(rules)
+    expect(rules).toEqual(['a', 'b', 'c', 'd'])
   })
 })
 

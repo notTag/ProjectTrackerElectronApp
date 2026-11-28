@@ -759,6 +759,15 @@ export const promptRules = (prompt: string): string[] => {
 export const rulesToPrompt = (rules: string[]): string =>
   rules.map((rule) => (NUMBERED_RULE.test(rule) ? rule : `- ${rule}`)).join('\n')
 
+export const moveRule = (rules: string[], fromIndex: number, toIndex: number): string[] => {
+  const movedRules = [...rules]
+  const isInRange = (index: number) => index >= 0 && index < rules.length
+  if (!isInRange(fromIndex) || !isInRange(toIndex)) return movedRules
+  const [rule] = movedRules.splice(fromIndex, 1)
+  movedRules.splice(toIndex, 0, rule)
+  return movedRules
+}
+
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
 // embedded quote cannot appear inside them at all — it has to close the string,
