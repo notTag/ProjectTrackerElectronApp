@@ -47,12 +47,12 @@ The benchmark tables are priced at 1k users only (the per-user cost flattens by 
    - `t78-cost-model.py`
    - `t78-cost-model-template.html`
 2. Re-run the model from the worktree to prove it reproduces:
-   - `python3 -I docs/research/t78-cost-model.py` → `report.html`
+   - `python3 -I docs/research/t78-cost-model.py` → `docs/research/t78-cost-model-report.html`
    - print to PDF with headless Chrome, check the totals match the attached PDF
-   - delete the generated `report.html` / scratch PDF afterwards; don't commit them
+   - delete the generated `t78-cost-model-report.html` / scratch PDF afterwards; don't commit them
 3. Settle the duplicate draft `docs/research/t78-cloud-db-pricing.pdf`:
    - The canonical PDF lacks a few points the draft has. Add them as lines in the canonical template's Recommendation, then regenerate the PDF:
-     - the $5 Workers Paid quota covers about 750 typical users, and the 10M-request allowance runs out first
+     - the $5 Workers Paid quota covers about 530 Medium users; the 30M CPU-ms allowance runs out first, the 10M-request allowance at about 890
      - D1 allows 50k databases per account by default (raisable) and 1 TB per account
      - a cheapest first step: a nightly per-user SQLite snapshot to R2 (backup + new-device restore), about $0 up to 1k users
    - Then delete `t78-cloud-db-pricing.pdf`. Two PDFs with different numbers confuse readers.
