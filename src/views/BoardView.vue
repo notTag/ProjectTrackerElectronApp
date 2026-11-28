@@ -318,12 +318,23 @@ const saveTicketDraft = async (draft: TicketDraftSave) => {
   openTicketId.value = ticketId
 }
 
+let cloneInFlight = false
+
 const cloneTicket = async (source: Ticket) => {
-  const cloneId = await store.cloneTicket(projectPath.value, source.id)
-  if (!cloneId) return
-  const imageError = source.images?.length ? await copyImagesToTicket(projectPath.value, { id: cloneId }, source.images) : null
-  if (imageError) newTicketImageError.value = { ticketId: cloneId, message: imageError }
-  openTicketId.value = cloneId
+  if (cloneInFlight) return
+  cloneInFlight = true
+  try {
+    const cloneId = await store.cloneTicket(projectPath.value, source.id)
+    if (!cloneId) return
+    if (source.images?.length) {
+      const imageError = await copyImagesToTicket(projectPath.value, { id: cloneId }, source.images)
+      if (imageError) newTicketImageError.value = { ticketId: cloneId, message: imageError }
+    }
+    const sourceStillOpen = openTicketId.value === source.id
+    if (sourceStillOpen) openTicketId.value = cloneId
+  } finally {
+    cloneInFlight = false
+  }
 }
 
 const startLaneDraftAt = (graphPosition: GraphPosition) => {

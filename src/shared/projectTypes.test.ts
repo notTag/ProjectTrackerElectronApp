@@ -504,6 +504,20 @@ describe('cloning a ticket', () => {
     expect(cloneTicketOnBoard(board, 'b', 'clone').tickets[1]).toBe(original)
     expect(cloneTicketOnBoard(board, 'missing', 'clone')).toBe(board)
   })
+
+  it('keeps a parked source lane instead of the No status fallback', () => {
+    const parkedOriginal = { ...original, laneId: UNASSIGNED_LANE_ID }
+    const board = { ...boardWithTickets(), tickets: [parkedOriginal] }
+    const clone = cloneOf(cloneTicketOnBoard(board, 'b', 'clone', 'other-workflow-lane'))
+    expect(clone?.laneId).toBe('other-workflow-lane')
+  })
+
+  it('leaves absent list fields absent', () => {
+    const bare = { id: 'c', number: 9, laneId: 'prd', title: 'Bare', description: '', createdAt: original.createdAt }
+    const clone = cloneOf(cloneTicketOnBoard({ ...boardWithTickets(), tickets: [bare] }, 'c', 'clone'))
+    expect(Object.keys(clone ?? {})).not.toContain('labels')
+    expect(Object.keys(clone ?? {})).not.toContain('checklist')
+  })
 })
 
 describe('ticket numbering', () => {

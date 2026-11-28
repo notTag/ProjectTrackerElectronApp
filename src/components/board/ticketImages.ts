@@ -58,4 +58,8 @@ export const saveImageFiles = (projectPath: string, ticket: Pick<Ticket, 'id'>, 
   attachImages(projectPath, ticket, files.map((file) => saveImageFile(ticket, file)))
 
 export const copyImagesToTicket = (projectPath: string, ticket: Pick<Ticket, 'id'>, imagePaths: string[]) =>
-  attachImages(projectPath, ticket, [projectTrackerApi.copyTicketImages(ticket.id, imagePaths)])
+  attachImages(
+    projectPath,
+    ticket,
+    imagePaths.map((imagePath) => projectTrackerApi.copyTicketImages(ticket.id, [imagePath]))
+  )
