@@ -56,3 +56,10 @@ const saveImageFile = async (ticket: Pick<Ticket, 'id'>, file: File) => {
 // Paste and drop both send bytes: clipboard images have no file path at all.
 export const saveImageFiles = (projectPath: string, ticket: Pick<Ticket, 'id'>, files: File[]) =>
   attachImages(projectPath, ticket, files.map((file) => saveImageFile(ticket, file)))
+
+export const copyImagesToTicket = (projectPath: string, ticket: Pick<Ticket, 'id'>, imagePaths: string[]) =>
+  attachImages(
+    projectPath,
+    ticket,
+    imagePaths.map((imagePath) => projectTrackerApi.copyTicketImages(ticket.id, [imagePath]))
+  )

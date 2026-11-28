@@ -42,6 +42,7 @@ import {
   rulesToPrompt,
   addScanDirectory,
   addTicketToBoard,
+  cloneTicketOnBoard,
   mergeScannedProjects,
   removeScanDirectory,
   type ProjectRecord,
@@ -415,6 +416,107 @@ describe('pulling issues onto a board with every lane deleted', () => {
     expect(board.lanes.map((lane) => lane.id)).toEqual([GITHUB_IMPORT_LANE_ID])
     expect(board.tickets.at(-1)?.laneId).toBe(GITHUB_IMPORT_LANE_ID)
     expect(getBoard({ ...createSeedState(), boards: { '/p': board } }, '/p').tickets).toHaveLength(3)
+  })
+})
+
+describe('cloning a ticket', () => {
+  const original: Ticket = {
+    id: 'b',
+    number: 2,
+    laneId: 'prd',
+    title: ' Build it ',
+    description: 'Spec',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    labels: ['feature'],
+    assigneeId: 'u1',
+    checklist: [{ text: 'Step', done: true }],
+    agentId: 'claude',
+    model: 'opus',
+    fullAuto: true,
+    externalLinks: ['https://example.com/doc'],
+    externalId: 'github:9',
+    externalUrl: 'https://github.com/o/r/issues/9',
+    moveToLaneId: 'idea',
+    moveOnComplete: true,
+    moveRules: 'tests pass',
+    moveRulesPassedLaneId: 'prd',
+    readyLaneId: 'prd',
+    version: '1.2.0',
+    branchName: 't2-build',
+    worktreePath: '/wt/t2',
+    pullRequestUrl: 'https://github.com/o/r/pull/3',
+    pullRequestState: 'open',
+    pullRequestMergedAt: '2026-01-03T00:00:00.000Z',
+    agentRun: { at: '2026-01-02T00:00:00.000Z', laneId: 'prd', output: 'done' },
+    images: ['/attachments/b/x.png']
+  }
+  const boardWithOriginal = (): ProjectBoard => ({ ...boardWithTickets(), tickets: [boardWithTickets().tickets[0], original] })
+  const cloneOf = (board: ProjectBoard) => board.tickets.find((ticket) => ticket.id === 'clone')
+
+  it('adds the clone with the next number, same lane and a CLONE OF title', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone).toMatchObject({ number: 3, laneId: 'prd', title: 'CLONE OF T#2 Build it' })
+    expect(clone?.createdAt).not.toBe(original.createdAt)
+  })
+
+  it('copies metadata but not branch, worktree, PR, run, import key, images or arming', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone).toMatchObject({
+      description: 'Spec',
+      labels: ['feature'],
+      assigneeId: 'u1',
+      checklist: [{ text: 'Step', done: true }],
+      agentId: 'claude',
+      model: 'opus',
+      fullAuto: true,
+      externalLinks: ['https://example.com/doc'],
+      externalUrl: original.externalUrl,
+      moveToLaneId: 'idea',
+      moveRules: 'tests pass',
+      version: '1.2.0',
+      moveOnComplete: false
+    })
+    const resetFields = [
+      'updatedAt',
+      'branchName',
+      'worktreePath',
+      'pullRequestUrl',
+      'pullRequestState',
+      'pullRequestMergedAt',
+      'agentRun',
+      'externalId',
+      'images',
+      'moveRulesPassedLaneId',
+      'readyLaneId'
+    ] as const
+    for (const field of resetFields) expect(clone?.[field]).toBeUndefined()
+  })
+
+  it('deep copies the checklist so ticking one ticket leaves the other alone', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone?.checklist?.[0]).not.toBe(original.checklist?.[0])
+    expect(clone?.labels).not.toBe(original.labels)
+  })
+
+  it('leaves the original untouched and ignores an unknown source', () => {
+    const board = boardWithOriginal()
+    expect(cloneTicketOnBoard(board, 'b', 'clone').tickets[1]).toBe(original)
+    expect(cloneTicketOnBoard(board, 'missing', 'clone')).toBe(board)
+  })
+
+  it('keeps a parked source lane instead of the No status fallback', () => {
+    const parkedOriginal = { ...original, laneId: UNASSIGNED_LANE_ID }
+    const board = { ...boardWithTickets(), tickets: [parkedOriginal] }
+    const clone = cloneOf(cloneTicketOnBoard(board, 'b', 'clone', 'other-workflow-lane'))
+    expect(clone?.laneId).toBe('other-workflow-lane')
+  })
+
+  it('leaves absent list fields absent', () => {
+    const bare = { id: 'c', number: 9, laneId: 'prd', title: 'Bare', description: '', createdAt: original.createdAt }
+    const clone = cloneOf(cloneTicketOnBoard({ ...boardWithTickets(), tickets: [bare] }, 'c', 'clone'))
+    expect(Object.keys(clone ?? {})).not.toContain('labels')
+    expect(Object.keys(clone ?? {})).not.toContain('checklist')
   })
 })
 

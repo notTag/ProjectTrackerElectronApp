@@ -5,6 +5,7 @@ import ExpandToggle from '@/components/ExpandToggle.vue'
 import GraphPanelResizeHandle from '@/components/GraphPanelResizeHandle.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
+import CopyIcon from '@/components/icons/CopyIcon.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
@@ -56,7 +57,7 @@ const props = defineProps<{
   // An upload that failed while the new-ticket draft saved: shown on the ticket it belongs to.
   initialImageError?: string | null
 }>()
-const emit = defineEmits<{ close: []; delete: [ticket: Ticket] }>()
+const emit = defineEmits<{ close: []; delete: [ticket: Ticket]; clone: [ticket: Ticket] }>()
 
 const {
   store,
@@ -413,6 +414,9 @@ defineExpose({
           </div>
         </div>
         <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
+        <button type="button" class="icon-button" title="Clone ticket" aria-label="Clone ticket" @click="emit('clone', ticket)">
+          <CopyIcon />
+        </button>
       </div>
       <input
         class="ticket-title-input"
