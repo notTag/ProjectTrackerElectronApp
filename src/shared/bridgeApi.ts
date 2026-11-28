@@ -4,7 +4,8 @@ import type {
   GithubIssueLists,
   LaneStoreEntry,
   LaneWritePatch,
-  OrchestratorAdditionalContext,
+  LaneMarkdownContext,
+  LaneMarkdownKind,
   ProjectGithubData,
   ProjectMetrics,
   ProjectRecord,
@@ -33,6 +34,7 @@ export const IPC_CHANNELS = [
   'ticket:delete',
   'ticket-images:save-bytes',
   'ticket-images:remove',
+  'ticket-images:copy',
   'ticket-images:open',
   'lane:create',
   'lane:update',
@@ -58,20 +60,20 @@ export const IPC_CHANNELS = [
   'ticket:fetch-pull-request',
   'project:fetch-github-issues',
   'project:read-readme',
-  'lane:save-agent-markdown',
-  'lane:read-orchestrator-context'
+  'lane:read-markdown-context',
+  'lane:ensure-markdown-files'
 ] as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
-export type PageFindResult = { activeMatchOrdinal: number; matches: number }
+export type PageFindResult = { activeMatchOrdinal: number; matches: number; finalUpdate: boolean }
 
 // window.projectTracker. The preload and src/services/webBridge.ts both
 // `satisfies` this, so neither can drift from what the renderer calls.
 export interface ProjectTrackerBridge {
   // Electron-only: the web build leaves them out and the browser's own find and
   // theme handling take over.
-  findInPage?(text: string, forward?: boolean, next?: boolean): Promise<void>
+  findInPage?(text: string, forward?: boolean, newSession?: boolean): Promise<void>
   stopFindInPage?(): Promise<void>
   onFindResult?(callback: (result: PageFindResult) => void): () => void
   setNativeTheme?(type: 'light' | 'dark'): Promise<void>
@@ -87,6 +89,7 @@ export interface ProjectTrackerBridge {
   pickTicketImages(ticketId: string): Promise<string[]>
   saveTicketImageBytes(ticketId: string, bytes: Uint8Array, mimeType: string): Promise<string>
   removeTicketImage(ticketId: string, imagePath: string): Promise<void>
+  copyTicketImages(ticketId: string, imagePaths: string[]): Promise<string[]>
   openTicketImage(imagePath: string): Promise<void>
   // Where an <img> loads an attachment: a custom scheme in Electron, a server route on the web.
   ticketImageUrl(imagePath: string): string
@@ -132,23 +135,18 @@ export interface ProjectTrackerBridge {
     prompt: string,
     model?: string,
     sessionId?: string
-  ): Promise<{ succeeded: boolean; output: string; attempts?: number }>
+  ): Promise<{ succeeded: boolean; blocked?: boolean; output: string; attempts?: number }>
   onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void
   appStartedAt(): Promise<string>
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
-  saveLaneMarkdown(
-    projectPath: string,
-    laneName: string,
-    filePath: string,
-    content: string,
-    previousContent: string
-  ): Promise<{ filePath: string }>
-  readLaneOrchestratorContext(
+  readLaneMarkdownContext(
+    kind: LaneMarkdownKind,
     projectPath: string,
     laneName: string,
     filePath: string
-  ): Promise<OrchestratorAdditionalContext | null>
+  ): Promise<LaneMarkdownContext | null>
+  ensureLaneMarkdownFiles(projectPath: string, laneId: string): Promise<SwimLane>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>

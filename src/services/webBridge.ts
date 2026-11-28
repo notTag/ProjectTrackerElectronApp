@@ -96,6 +96,7 @@ export const webBridge = {
   pickTicketImages,
   saveTicketImageBytes,
   removeTicketImage: (ticketId, imagePath) => invoke('ticket-images:remove', { ticketId, imagePath }),
+  copyTicketImages: (ticketId, imagePaths) => invoke('ticket-images:copy', { ticketId, imagePaths }),
   openTicketImage: (imagePath) => invoke('ticket-images:open', imagePath),
   ticketImageUrl: (imagePath) => `/api/ticket-image/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath, lane) => invoke('lane:create', { projectPath, lane }),
@@ -125,10 +126,9 @@ export const webBridge = {
   appStartedAt: () => invoke('app:started-at'),
   terminalTabsAlive: (targetId, titles) => invoke('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath) => invoke('project:read-readme', projectPath),
-  saveLaneMarkdown: (projectPath, laneName, filePath, content, previousContent) =>
-    invoke('lane:save-agent-markdown', { projectPath, laneName, filePath, content, previousContent }),
-  readLaneOrchestratorContext: (projectPath, laneName, filePath) =>
-    invoke('lane:read-orchestrator-context', { projectPath, laneName, filePath }),
+  readLaneMarkdownContext: (kind, projectPath, laneName, filePath) =>
+    invoke('lane:read-markdown-context', { kind, projectPath, laneName, filePath }),
+  ensureLaneMarkdownFiles: (projectPath, laneId) => invoke('lane:ensure-markdown-files', { projectPath, laneId }),
   fetchProjectGithub: (githubUrl) => invoke('project:fetch-github', githubUrl),
   getMetrics: (projectPaths) => invoke('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl, since) => invoke('project:fetch-github-issues', { githubUrl, since }),

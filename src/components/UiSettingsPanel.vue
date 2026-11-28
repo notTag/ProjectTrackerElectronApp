@@ -30,7 +30,7 @@ const SECTION_GROUPS: { id: string; label: string; sections: SidebarSection[] }[
   {
     id: 'ui',
     label: 'UI Settings',
-    sections: [{ id: 'ui', icon: '🎚', label: 'UI Settings' }]
+    sections: [{ id: 'ui', icon: '🎨', label: 'UI Settings' }]
   }
 ]
 

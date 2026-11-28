@@ -29,7 +29,7 @@ const invokePlain = async <T,>(channel: IpcChannel, payload?: unknown): Promise<
 }
 
 contextBridge.exposeInMainWorld('projectTracker', {
-  findInPage: (text: string, forward = true, next = false) => ipcRenderer.invoke('page-find:search', text, forward, next),
+  findInPage: (text: string, forward = true, newSession = true) => ipcRenderer.invoke('page-find:search', text, forward, newSession),
   stopFindInPage: () => ipcRenderer.invoke('page-find:stop'),
   onFindResult: (callback: (result: PageFindResult) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, result: PageFindResult) => callback(result)
@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('projectTracker', {
     ipcRenderer.invoke('ticket-images:save-bytes', { ticketId, bytes, mimeType }),
   removeTicketImage: (ticketId: string, imagePath: string) =>
     invokePlain('ticket-images:remove', { ticketId, imagePath }),
+  copyTicketImages: (ticketId: string, imagePaths: string[]) =>
+    invokePlain('ticket-images:copy', { ticketId, imagePaths }),
   openTicketImage: (imagePath: string) => invokePlain('ticket-images:open', imagePath),
   ticketImageUrl: (imagePath: string) => `ticket-image://local/${encodeURIComponent(imagePath)}`,
   createLane: (projectPath: string, lane: SwimLane) => invokePlain('lane:create', { projectPath, lane }),
@@ -99,10 +101,10 @@ contextBridge.exposeInMainWorld('projectTracker', {
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
-  saveLaneMarkdown: (projectPath: string, laneName: string, filePath: string, content: string, previousContent: string) =>
-    invokePlain('lane:save-agent-markdown', { projectPath, laneName, filePath, content, previousContent }),
-  readLaneOrchestratorContext: (projectPath: string, laneName: string, filePath: string) =>
-    invokePlain('lane:read-orchestrator-context', { projectPath, laneName, filePath }),
+  readLaneMarkdownContext: (kind: string, projectPath: string, laneName: string, filePath: string) =>
+    invokePlain('lane:read-markdown-context', { kind, projectPath, laneName, filePath }),
+  ensureLaneMarkdownFiles: (projectPath: string, laneId: string) =>
+    invokePlain('lane:ensure-markdown-files', { projectPath, laneId }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string, since?: string) =>

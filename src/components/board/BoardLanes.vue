@@ -14,8 +14,8 @@ import {
   laneColumns,
   placeLaneInBoard,
   setLaneWidth,
-  ticketIdsToMove,
   UNASSIGNED_LANE_ID,
+  type LaneDropAnchor,
   type LanePlacement,
   type SwimLane,
   type Ticket
@@ -409,12 +409,111 @@ const startTicketDrag = (event: DragEvent, ticketId: string) => {
   requestAnimationFrame(() => ghost.remove())
 }
 
-const dropOnLane = async (laneId: string) => {
-  const ticketId = draggedTicketId.value
+const ticketDrop = ref<{ laneId: string; anchor: LaneDropAnchor; indicatorTop: number } | null>(null)
+
+const endTicketDrag = () => {
   draggedTicketId.value = null
+  ticketDrop.value = null
+}
+
+const HALF_CARD_GAP_PX = 4
+
+const isBelowPointer = (card: HTMLElement, pointerY: number) => {
+  const rect = card.getBoundingClientRect()
+  const cardMidpoint = rect.top + rect.height / 2
+  return cardMidpoint > pointerY
+}
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const isInsideViewport = (card: HTMLElement, viewport: DOMRect) => {
+  const rect = card.getBoundingClientRect()
+  return rect.bottom > viewport.top && rect.top < viewport.bottom
+}
+
+const indicatorViewportY = (viewport: DOMRect, beforeCard?: HTMLElement, lastCard?: HTMLElement) => {
+  if (beforeCard) return beforeCard.getBoundingClientRect().top - HALF_CARD_GAP_PX
+  if (lastCard) return lastCard.getBoundingClientRect().bottom + HALF_CARD_GAP_PX
+  return viewport.top
+}
+
+const ticketAnchorAt = (laneElement: HTMLElement, pointerY: number) => {
+  const laneBody = laneElement.querySelector<HTMLElement>('.lane-body') ?? laneElement
+  const viewport = laneBody.getBoundingClientRect()
+  const cards = Array.from(laneBody.querySelectorAll<HTMLElement>('.ticket[data-ticket-id]'))
+  const neighbours = cards.filter(
+    (card) => !carriedIds.value.has(card.dataset.ticketId ?? '') && isInsideViewport(card, viewport)
+  )
+  const pointerInViewport = clamp(pointerY, viewport.top, viewport.bottom)
+  const beforeCard = neighbours.find((card) => isBelowPointer(card, pointerInViewport))
+  const lastCard = neighbours.at(-1)
+  const afterCard = beforeCard ? undefined : lastCard
+  const anchor: LaneDropAnchor = {
+    beforeTicketId: beforeCard?.dataset.ticketId ?? null,
+    afterTicketId: afterCard?.dataset.ticketId ?? null
+  }
+  const indicatorY = clamp(indicatorViewportY(viewport, beforeCard, lastCard), viewport.top, viewport.bottom)
+  const indicatorTop = indicatorY - laneElement.getBoundingClientRect().top
+  return { anchor, indicatorTop }
+}
+
+const isSameDrop = (
+  current: typeof ticketDrop.value,
+  next: { laneId: string; anchor: LaneDropAnchor; indicatorTop: number }
+) =>
+  current?.laneId === next.laneId &&
+  current.indicatorTop === next.indicatorTop &&
+  current.anchor.beforeTicketId === next.anchor.beforeTicketId &&
+  current.anchor.afterTicketId === next.anchor.afterTicketId
+
+const trackTicketDrop = (laneId: string, event: DragEvent) => {
+  if (!draggedTicketId.value) return
+  const laneElement = event.currentTarget as HTMLElement
+  const nextDrop = { laneId, ...ticketAnchorAt(laneElement, event.clientY) }
+  if (!isSameDrop(ticketDrop.value, nextDrop)) ticketDrop.value = nextDrop
+}
+
+const leaveTicketDrop = (laneId: string, event: DragEvent) => {
+  const laneElement = event.currentTarget as HTMLElement
+  const stillInsideLane = laneElement.contains(event.relatedTarget as Node | null)
+  if (!stillInsideLane && ticketDrop.value?.laneId === laneId) ticketDrop.value = null
+}
+
+const dropOnLane = async (laneId: string, event: DragEvent) => {
+  const ticketId = draggedTicketId.value
+  const ticketIds = [...carriedIds.value]
+  const laneElement = event.currentTarget as HTMLElement
+  const { anchor } = ticketAnchorAt(laneElement, event.clientY)
+  endTicketDrag()
   if (!ticketId) return
-  const ticketIds = ticketIdsToMove(ticketId, props.selectedTicketIds, props.visibleTickets, laneId)
-  await store.moveTickets(projectPath.value, ticketIds, laneId)
+  await store.dropTickets(projectPath.value, ticketIds, laneId, anchor)
+}
+
+const focusTicketCard = (ticketId: string) => {
+  const cardSelector = `.ticket[data-ticket-id="${CSS.escape(ticketId)}"]`
+  boardElement.value?.querySelector<HTMLElement>(cardSelector)?.focus()
+}
+
+let keyboardMoveSaving: Promise<void> | null = null
+
+const moveTicketByKeyboard = async (ticket: Ticket, direction: 'up' | 'down') => {
+  if (keyboardMoveSaving) return
+  const laneTickets = props.ticketsInLane(ticket.laneId)
+  const position = laneTickets.findIndex((entry) => entry.id === ticket.id)
+  const neighbour = laneTickets[direction === 'up' ? position - 1 : position + 1]
+  if (position < 0 || !neighbour) return
+  const anchor: LaneDropAnchor =
+    direction === 'up'
+      ? { beforeTicketId: neighbour.id, afterTicketId: null }
+      : { beforeTicketId: null, afterTicketId: neighbour.id }
+  keyboardMoveSaving = store.dropTickets(projectPath.value, [ticket.id], ticket.laneId, anchor)
+  try {
+    await nextTick()
+    focusTicketCard(ticket.id)
+    await keyboardMoveSaving
+  } finally {
+    keyboardMoveSaving = null
+  }
 }
 
 const readyLaneNameByTicketId = computed(() => {
@@ -476,10 +575,17 @@ defineExpose({
           'lane-dragging': laneDrag?.active && laneDrag.laneId === lane.id
         }"
         :style="laneDragStyle(lane.id)"
-        @dragover.prevent
-        @drop.prevent="dropOnLane(lane.id)"
+        @dragover.prevent="trackTicketDrop(lane.id, $event)"
+        @dragleave="leaveTicketDrop(lane.id, $event)"
+        @drop.prevent="dropOnLane(lane.id, $event)"
         @dblclick.self="emit('newTicket', lane.id)"
       >
+        <div
+          v-if="ticketDrop?.laneId === lane.id"
+          class="ticket-drop-indicator"
+          :style="{ top: `${ticketDrop.indicatorTop}px` }"
+          aria-hidden="true"
+        />
         <header
           class="lane-heading"
           :class="{ 'lane-heading-movable': laneCanMove(lane.id) }"
@@ -543,7 +649,8 @@ defineExpose({
             @open="emit('openTicket', $event)"
             @toggle-select="emit('toggleSelected', $event)"
             @drag-start="startTicketDrag"
-            @drag-end="draggedTicketId = null"
+            @drag-end="endTicketDrag"
+            @move="moveTicketByKeyboard(ticket, $event)"
           />
         </LaneCardList>
 

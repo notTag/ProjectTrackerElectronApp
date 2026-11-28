@@ -86,6 +86,10 @@ describe('canResume', () => {
     expect(canResume(ticketWithRun({ status: 'failed', sessionId: SESSION_ID }), DEFAULT_AGENT)).toBe(true)
   })
 
+  it('offers Resume for a blocked run, so it can carry on once access is granted', () => {
+    expect(canResume(ticketWithRun({ status: 'blocked', sessionId: SESSION_ID }), DEFAULT_AGENT)).toBe(true)
+  })
+
   it('hides it for a running or finished run, no session, another lane, or a CLI that cannot resume', () => {
     expect(canResume(ticketWithRun({ status: 'running', sessionId: SESSION_ID }), DEFAULT_AGENT)).toBe(false)
     expect(canResume(ticketWithRun({ status: 'succeeded', sessionId: SESSION_ID }), DEFAULT_AGENT)).toBe(false)
@@ -106,6 +110,12 @@ describe('agentRunBadge with run status', () => {
     expect(agentRunBadge(ticketWithRun({ status: 'interrupted', succeeded: false }), false)).toBe('interrupted')
     expect(hasUnseenAgentResult(ticketWithRun({ status: 'interrupted' }))).toBe(true)
     expect(agentRunBadge(ticketWithRun({ status: 'interrupted', seenAt: 'x' }), false)).toBeNull()
+  })
+
+  it('shows blocked until seen, as an unseen result', () => {
+    expect(agentRunBadge(ticketWithRun({ status: 'blocked', succeeded: false }), false)).toBe('blocked')
+    expect(hasUnseenAgentResult(ticketWithRun({ status: 'blocked', succeeded: false }))).toBe(true)
+    expect(agentRunBadge(ticketWithRun({ status: 'blocked', seenAt: 'x' }), false)).toBeNull()
   })
 
   it('reads a record saved before status existed by succeeded alone', () => {

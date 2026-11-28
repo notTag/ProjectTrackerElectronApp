@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
-import { ticketModalExpanded, vEdgeResize } from '@/modalWidth'
+import { graphPanelStyle, ticketModalExpanded, vEdgeResize } from '@/modalWidth'
 import ExpandToggle from '@/components/ExpandToggle.vue'
+import GraphPanelResizeHandle from '@/components/GraphPanelResizeHandle.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
+import CopyIcon from '@/components/icons/CopyIcon.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
@@ -25,6 +27,7 @@ import {
   pullRequestStatusLabel,
   removeChecklistItem,
   removeExternalLink,
+  runningAgentRuns,
   setChecklistItemDone,
   ticketAgentPrompt,
   ticketShellCommand,
@@ -55,7 +58,7 @@ const props = defineProps<{
   // An upload that failed while the new-ticket draft saved: shown on the ticket it belongs to.
   initialImageError?: string | null
 }>()
-const emit = defineEmits<{ close: []; delete: [ticket: Ticket] }>()
+const emit = defineEmits<{ close: []; delete: [ticket: Ticket]; clone: [ticket: Ticket] }>()
 
 const {
   store,
@@ -349,9 +352,13 @@ const ticketCanResume = (ticket: Ticket) => {
 
 const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
-const runTicketAgent = (ticket: Ticket) => {
+const hasLiveAgentInLane = (ticket: Ticket) => runningAgentRuns([ticket]).length > 0
+
+const runTicketAgent = async (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
-  const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
+  const lane = laneOfTicket(ticket)
+  const agentFileContext = await store.readLaneMarkdownContext(projectPath.value, lane, 'agent')
+  const prompt = ticketAgentPrompt(ticket, lane, { ...promptContext(ticket), agentFileContext })
   void store.runTicketAgent(projectPath.value, ticket, agent.id, prompt)
 }
 
@@ -367,7 +374,14 @@ defineExpose({
 </script>
 
 <template>
-  <div class="modal-backdrop" :class="{ 'graph-ticket-panel': boardView === 'graph' }" @pointerdown="notePressTarget" @click.self="closeIfPressStartedOnBackdrop(() => emit('close'))">
+  <div
+    class="modal-backdrop"
+    :class="{ 'graph-ticket-panel': boardView === 'graph' }"
+    :style="boardView === 'graph' ? graphPanelStyle : undefined"
+    @pointerdown="notePressTarget"
+    @click.self="closeIfPressStartedOnBackdrop(() => emit('close'))"
+  >
+    <GraphPanelResizeHandle v-if="boardView === 'graph'" />
     <!-- Refresh before editing so fields include writes from other processes. -->
     <section
       v-edge-resize
@@ -405,6 +419,9 @@ defineExpose({
           </div>
         </div>
         <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
+        <button type="button" class="icon-button" title="Clone ticket" aria-label="Clone ticket" @click="emit('clone', ticket)">
+          <CopyIcon />
+        </button>
       </div>
       <input
         class="ticket-title-input"
@@ -703,8 +720,12 @@ defineExpose({
         <pre class="agent-command">{{ ticketCommand(ticket) }}</pre>
         <div class="agent-actions">
           <button
-            :disabled="store.agentRunning[ticket.id]"
-            :title="`Run ${agentForTicket(ticket, agents).name} in the background`"
+            :disabled="store.agentRunning[ticket.id] || hasLiveAgentInLane(ticket)"
+            :title="
+              !store.agentRunning[ticket.id] && hasLiveAgentInLane(ticket)
+                ? 'An agent is already running on this ticket in this lane'
+                : `Run ${agentForTicket(ticket, agents).name} in the background`
+            "
             @click="runTicketAgent(ticket)"
           >
             {{ store.agentRunning[ticket.id] ? 'Running…' : '▶ Run' }}
@@ -729,6 +750,7 @@ defineExpose({
         <div v-if="ticket.agentRun && !hidesModalField('lastAgentRun')" class="ticket-agent-run">
           <p class="eyebrow">
             Last agent run · {{ laneName(ticket.agentRun.laneId) }} · {{ formatDateTime(ticket.agentRun.at) }}
+            <template v-if="ticket.agentRun.status === 'blocked'"> · <span class="agent-status-blocked">Blocked</span></template>
           </p>
           <pre v-if="ticket.agentRun.output.trim()">{{ ticket.agentRun.output }}</pre>
           <p

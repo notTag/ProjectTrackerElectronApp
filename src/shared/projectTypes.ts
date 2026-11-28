@@ -270,7 +270,7 @@ export interface ChecklistItem {
   done: boolean
 }
 
-export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'interrupted'
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'blocked' | 'interrupted'
 
 // Captures what a swim lane's agent produced for a ticket. Only the most recent
 // run is kept: the board is a working surface, not an audit log.
@@ -303,7 +303,12 @@ export interface TicketAgentRun {
   tabTitle?: string
 }
 
-export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
+export const finishedRunStatus = ({ succeeded, blocked }: { succeeded: boolean; blocked?: boolean }): AgentRunStatus => {
+  if (blocked) return 'blocked'
+  return succeeded ? 'succeeded' : 'failed'
+}
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'blocked' | 'interrupted'
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
 // lane says nothing about the work in this one. A running record shows even
@@ -315,6 +320,7 @@ export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge |
   if (lastRun.status === 'running') return 'running'
   if (lastRun.seenAt !== undefined) return null
   if (lastRun.status === 'interrupted') return 'interrupted'
+  if (lastRun.status === 'blocked') return 'blocked'
   if (lastRun.succeeded === undefined) return null
   return lastRun.succeeded ? 'succeeded' : 'failed'
 }
@@ -376,6 +382,10 @@ export interface Ticket {
   readyLaneId?: string
   // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
   version?: string
+  // Slot set by a drag, 1-based. It counts only while lanePositionLaneId is the
+  // ticket's laneId; anywhere else the ticket is unplaced and sorts by number.
+  lanePosition?: number
+  lanePositionLaneId?: string
 }
 
 export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
@@ -439,6 +449,21 @@ export const ticketSearchText = (ticket: Ticket) => {
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
 }
 
+const placedPosition = (ticket: Ticket): number | undefined => {
+  const placedInItsLane = ticket.lanePositionLaneId === ticket.laneId
+  return placedInItsLane ? ticket.lanePosition : undefined
+}
+
+export const compareLaneOrder = (left: Ticket, right: Ticket) => {
+  const leftPosition = placedPosition(left)
+  const rightPosition = placedPosition(right)
+  const byNumber = left.number - right.number
+  if (leftPosition === undefined && rightPosition === undefined) return byNumber
+  if (leftPosition === undefined) return 1
+  if (rightPosition === undefined) return -1
+  return leftPosition - rightPosition || byNumber
+}
+
 export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticket) => boolean) => {
   const ticketsByLane = new Map<string, Ticket[]>()
   for (const ticket of tickets) {
@@ -447,7 +472,56 @@ export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticke
     if (laneTickets) laneTickets.push(ticket)
     else ticketsByLane.set(ticket.laneId, [ticket])
   }
+  for (const laneTickets of ticketsByLane.values()) laneTickets.sort(compareLaneOrder)
   return ticketsByLane
+}
+
+export interface LaneDropAnchor {
+  beforeTicketId: string | null
+  afterTicketId: string | null
+}
+
+const insertIndexFor = (laneOrder: Ticket[], anchor: LaneDropAnchor) => {
+  const beforeIndex = laneOrder.findIndex((ticket) => ticket.id === anchor.beforeTicketId)
+  if (beforeIndex >= 0) return beforeIndex
+  const afterIndex = laneOrder.findIndex((ticket) => ticket.id === anchor.afterTicketId)
+  if (afterIndex >= 0) return afterIndex + 1
+  return laneOrder.length
+}
+
+export const placeTicketsInLane = (
+  tickets: Ticket[],
+  carriedIds: string[],
+  targetLaneId: string,
+  anchor: LaneDropAnchor
+): Ticket[] => {
+  const carriedIdSet = new Set(carriedIds)
+  const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket]))
+  const carriedBlock = carriedIds.flatMap((ticketId) => ticketById.get(ticketId) ?? [])
+  const stayingInLane = tickets.filter((ticket) => ticket.laneId === targetLaneId && !carriedIdSet.has(ticket.id))
+  const laneOrder = stayingInLane.sort(compareLaneOrder)
+  const insertIndex = insertIndexFor(laneOrder, anchor)
+  const nextLaneOrder = [...laneOrder.slice(0, insertIndex), ...carriedBlock, ...laneOrder.slice(insertIndex)]
+  const positionById = new Map(nextLaneOrder.map((ticket, index) => [ticket.id, index + 1]))
+  return tickets.map((ticket) => {
+    const lanePosition = positionById.get(ticket.id)
+    if (lanePosition === undefined) return ticket
+    const alreadyThere =
+      ticket.laneId === targetLaneId && ticket.lanePosition === lanePosition && ticket.lanePositionLaneId === targetLaneId
+    if (alreadyThere) return ticket
+    return { ...ticket, laneId: targetLaneId, lanePosition, lanePositionLaneId: targetLaneId }
+  })
+}
+
+export const clearStaleLanePositions = (board: ProjectBoard): ProjectBoard => {
+  const isStale = (ticket: Ticket) => ticket.lanePositionLaneId != null && ticket.lanePositionLaneId !== ticket.laneId
+  if (!board.tickets.some(isStale)) return board
+  const withoutStale = (ticket: Ticket): Ticket => {
+    if (!isStale(ticket)) return ticket
+    const { lanePosition: _lanePosition, lanePositionLaneId: _lanePositionLaneId, ...unplaced } = ticket
+    return unplaced
+  }
+  return { ...board, tickets: board.tickets.map(withoutStale) }
 }
 
 // A coding agent a ticket can be handed to. `command` is the CLI that takes the
@@ -580,6 +654,7 @@ export interface TicketPromptContext {
   // This launch's session and tab, so the agent can name itself to the orchestrator (#124).
   sessionId?: string
   tabTitle?: string
+  agentFileContext?: LaneMarkdownContext
 }
 
 const sessionIdentityInstruction = (context: TicketPromptContext): string => {
@@ -687,10 +762,9 @@ const moveRulesInstruction = (ticket: Ticket, context: TicketPromptContext): str
 // output location closes it out as the last thing the agent reads.
 export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext = {}): string => {
   const lanePrompt = lane.agentPrompt.trim()
-  const laneFilePath = lane.agentFilePath.trim()
-  // The file autosaves a copy of the prompt, so it is only pointed at when there
-  // is no typed prompt (a hand-written guide); otherwise the agent reads it twice.
-  const laneFileReference = laneFilePath && !lanePrompt ? `Follow the guidance in ${laneFilePath}.` : ''
+  const agentFileContext = context.agentFileContext
+  const isOldAgentCopy = agentFileContext !== undefined && isAppWrittenAgentCopy(agentFileContext.content, lane)
+  const laneFileContext = isOldAgentCopy ? '' : additionalContextBlock(agentFileContext)
   const ticketMetadata = ticketMetadataLines(ticket, lane, context)
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
@@ -701,7 +775,7 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const sessionIdentity = sessionIdentityInstruction(context)
   const sections = [
     lanePrompt,
-    laneFileReference,
+    laneFileContext,
     ticketMetadata,
     sessionIdentity,
     ticketDescription,
@@ -718,6 +792,16 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
 export const SWIMLANE_PROMPT_DIRECTORY = 'SwimlaneAgentPrompt'
 export const AGENT_PROMPT_FILE_NAME = 'AgentPrompt.md'
 export const ORCHESTRATOR_PROMPT_FILE_NAME = 'AgentOrchestratorPrompt.md'
+
+export const CONTEXT_FILE_EXTENSIONS = ['.md', '.txt']
+
+export const isContextFilePath = (filePath: string): boolean => {
+  const trimmedPath = filePath.trim().toLowerCase()
+  const fileName = trimmedPath.split('/').pop() ?? ''
+  const extensionStart = fileName.lastIndexOf('.')
+  const extension = extensionStart > 0 ? fileName.slice(extensionStart) : ''
+  return trimmedPath === '' || CONTEXT_FILE_EXTENSIONS.includes(extension)
+}
 
 // Path separators become word breaks ("In Review/QA" reads as "In-Review-QA");
 // the other characters filesystems reject are dropped. Leading dots go so a
@@ -759,6 +843,15 @@ export const promptRules = (prompt: string): string[] => {
 
 export const rulesToPrompt = (rules: string[]): string =>
   rules.map((rule) => (NUMBERED_RULE.test(rule) ? rule : `- ${rule}`)).join('\n')
+
+export const moveRule = (rules: string[], fromIndex: number, toIndex: number): string[] => {
+  const movedRules = [...rules]
+  const isInRange = (index: number) => index >= 0 && index < rules.length
+  if (!isInRange(fromIndex) || !isInRange(toIndex)) return movedRules
+  const [rule] = movedRules.splice(fromIndex, 1)
+  movedRules.splice(toIndex, 0, rule)
+  return movedRules
+}
 
 // Single quotes are the only POSIX quoting that leaves the contents completely
 // literal, so a prompt full of backticks, $ and newlines survives intact. An
@@ -881,7 +974,8 @@ export const agentResumeCommand = (agent: Agent, run: Pick<TicketAgentRun, 'sess
 export const canResume = (ticket: Ticket, agent: Agent): boolean => {
   const run = ticket.agentRun
   if (!run || run.laneId !== ticket.laneId) return false
-  const endedUnfinished = run.status === 'interrupted' || run.status === 'failed'
+  const unfinishedStatuses: (AgentRunStatus | undefined)[] = ['interrupted', 'failed', 'blocked']
+  const endedUnfinished = unfinishedStatuses.includes(run.status)
   return endedUnfinished && isUuid(run.sessionId) && agentSupportsResume(agent)
 }
 
@@ -1048,8 +1142,18 @@ export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<S
   return { orchestratorPollMinutes: steppedMinutes }
 }
 
-export const laneHasAgentWork = (lane: SwimLane): boolean =>
+export const laneHasAgentWork = (lane: SwimLane, agentFileHasText = false): boolean =>
+  Boolean(lane.agentPrompt.trim()) || agentFileHasText
+
+export const laneMayHaveAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
+
+export const isAppWrittenAgentCopy = (content: string, lane: Pick<SwimLane, 'agentPrompt'>): boolean => {
+  const trimmedContent = content.trim()
+  return trimmedContent !== '' && trimmedContent === lane.agentPrompt.trim()
+}
+
+export const isAppWrittenOrchestratorCopy = (content: string): boolean => content.includes('{{ticket_numbers}}')
 
 const ORCHESTRATOR_TAB_TITLE_PREFIX = 'AUTORUN-ORCHESTRATOR-'
 // main drops titles over 200 UTF-16 units; 100 code points stays under that
@@ -1110,13 +1214,25 @@ export interface OrchestratorPromptContext {
   lanes: SwimLane[]
   terminalId: string
   terminalLabel: string
-  additionalContext?: OrchestratorAdditionalContext
+  additionalContext?: LaneMarkdownContext
+  lanesWithAgentFileText?: string[]
 }
 
-export interface OrchestratorAdditionalContext {
+export interface LaneMarkdownContext {
   filePath: string
   content: string
 }
+
+export const orchestratorPromptContext = (
+  board: ProjectBoard,
+  projectPath: string,
+  terminal: { id: string; label: string }
+): OrchestratorPromptContext => ({
+  projectPath,
+  lanes: [...board.lanes, getUnassignedLane(board)],
+  terminalId: terminal.id,
+  terminalLabel: terminal.label
+})
 
 const sqlStringLiteral = (value: string): string => `'${value.split("'").join("''")}'`
 
@@ -1295,6 +1411,8 @@ const orchestratorPromptParts = (
     if (watchesSessions) return isUuid(sessionId) ? ` — session ${sessionId}` : WARP_NO_SESSION_NOTE
     return sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
   }
+  const agentFileLaneIds = new Set(context.lanesWithAgentFileText ?? [])
+  const boardLaneHasAgentWork = (boardLane: SwimLane) => laneHasAgentWork(boardLane, agentFileLaneIds.has(boardLane.id))
   const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
     const line = `- #${launch.number} ${ticket.title}${sessionPartFor(sessionId)} — tab "${tabTitle}" — branch ${launch.branchName}`
@@ -1302,7 +1420,7 @@ const orchestratorPromptParts = (
     if (!handsOff) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
     const handoffTitles = context.lanes
-      .filter(laneHasAgentWork)
+      .filter(boardLaneHasAgentWork)
       .map((boardLane) => ticketTabTitle(ticket, boardLane))
       // A handoff's session id is picked at handoff, so only the part before " · <id>" is predictable (#124).
       .filter((title) => title !== tabTitle && !tabTitle.startsWith(`${title} · `))
@@ -1311,7 +1429,7 @@ const orchestratorPromptParts = (
     return `${line} — handoff tabs ${quotedHandoffTitles}`
   })
   const laneLines = context.lanes.map(
-    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${boardLaneHasAgentWork(boardLane) ? 'yes' : 'no'}`
   )
   const ticketNumbers = entries.map(({ launch }) => launch.number).join(', ')
   return {
@@ -1346,11 +1464,16 @@ export const APP_ORCHESTRATOR_PROMPT_PATCH = {
   currentAgentOrchestratorPrompt: ''
 } as const satisfies Partial<SwimLane>
 
-const withAdditionalContext = (prompt: string, additionalContext: OrchestratorAdditionalContext | undefined): string => {
+const additionalContextBlock = (additionalContext: LaneMarkdownContext | undefined): string => {
   const content = additionalContext?.content.trim()
-  if (!additionalContext || !content) return prompt
+  if (!additionalContext || !content) return ''
   const header = `Additional context (from ${additionalContext.filePath}):`
-  return [prompt, [header, content].join('\n')].join('\n\n')
+  return [header, content].join('\n')
+}
+
+const withAdditionalContext = (prompt: string, additionalContext: LaneMarkdownContext | undefined): string => {
+  const contextBlock = additionalContextBlock(additionalContext)
+  return [prompt, contextBlock].filter(Boolean).join('\n\n')
 }
 
 export const orchestratorPromptMissingTokens = (text: string): string[] =>
@@ -1439,7 +1562,7 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
     const fromLane = boardLaneById(previousBoard, previousLaneId)
     const toLane = boardLaneById(nextBoard, ticket.laneId)
     if (!fromLane || !toLane) continue
-    if (!isFullAuto(ticket, fromLane) || !laneHasAgentWork(toLane)) continue
+    if (!isFullAuto(ticket, fromLane) || !laneMayHaveAgentWork(toLane)) continue
     handoffs.push({ ticket, fromLane, toLane })
   }
   return handoffs
@@ -1824,6 +1947,45 @@ export const addTicketToBoard = (
   const { id = crypto.randomUUID(), ...fields } = input
   const ticket = { id, number: nextTicketNumber(board), createdAt: new Date().toISOString(), ...fields }
   return { ...board, tickets: [...board.tickets, ticket] }
+}
+
+const cloneTitleOf = (ticket: Pick<Ticket, 'number' | 'title'>) => `CLONE OF T#${ticket.number} ${ticket.title.trim()}`
+
+export const cloneTicketOnBoard = (
+  board: ProjectBoard,
+  sourceId: string,
+  cloneId: string,
+  storedLaneId?: string
+): ProjectBoard => {
+  const source = board.tickets.find((ticket) => ticket.id === sourceId)
+  if (!source) return board
+  const {
+    updatedAt,
+    branchName,
+    worktreePath,
+    pullRequestUrl,
+    pullRequestState,
+    pullRequestMergedAt,
+    agentRun,
+    externalId,
+    images,
+    moveRulesPassedLaneId,
+    readyLaneId,
+    ...copiedFields
+  } = source
+  const clone: Ticket = {
+    ...copiedFields,
+    ...(copiedFields.labels && { labels: [...copiedFields.labels] }),
+    ...(copiedFields.checklist && { checklist: copiedFields.checklist.map((item) => ({ ...item })) }),
+    ...(copiedFields.externalLinks && { externalLinks: [...copiedFields.externalLinks] }),
+    id: cloneId,
+    laneId: storedLaneId ?? source.laneId,
+    number: nextTicketNumber(board),
+    createdAt: new Date().toISOString(),
+    title: cloneTitleOf(source),
+    moveOnComplete: false
+  }
+  return { ...board, tickets: [...board.tickets, clone] }
 }
 
 export const getBoard = (state: ProjectTrackerState, projectPath: string): ProjectBoard =>
@@ -2313,18 +2475,6 @@ export const carriedTicketIds = (
   selectedTicketIds: ReadonlySet<string>,
   visibleTickets: Ticket[]
 ): string[] => carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets).map((ticket) => ticket.id)
-
-// Tickets already in the target lane are left out so their updatedAt stays put.
-export const ticketIdsToMove = (
-  draggedTicketId: string,
-  selectedTicketIds: ReadonlySet<string>,
-  visibleTickets: Ticket[],
-  targetLaneId: string
-): string[] => {
-  const carried = carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets)
-  const ticketsToMove = carried.filter((ticket) => ticket.laneId !== targetLaneId)
-  return ticketsToMove.map((ticket) => ticket.id)
-}
 
 // Per-entity patches cross IPC as JSON, which drops undefined keys, so an
 // explicit clear travels as null.

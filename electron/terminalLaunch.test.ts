@@ -7,6 +7,7 @@ import {
   tabLiveness,
   tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
+  warpLaunchConfigYaml,
   warpTabConfigToml
 } from './terminalLaunch.js'
 import type { TerminalTab } from '../src/shared/projectTypes.js'
@@ -17,6 +18,46 @@ const argvAfterSeparator = (args: string[]) => args.slice(args.indexOf('--') + 1
 
 // A prompt that breaks every naive escaping attempt at once.
 const AWKWARD_COMMAND = `claude 'Fix the "parser" bug\n\nIt drops C:\\path, $HOME and it'\\''s late'`
+
+describe('warpLaunchConfigYaml', () => {
+  const scalarAfter = (yaml: string, key: string) => {
+    const keyPrefix = `${key}: `
+    const hasKey = (line: string) => line.trimStart().replace(/^- /, '').startsWith(keyPrefix)
+    const parseScalar = (line: string) => {
+      const valueStart = line.indexOf(keyPrefix) + keyPrefix.length
+      const rawScalar = line.slice(valueStart)
+      return JSON.parse(rawScalar)
+    }
+    return yaml.split('\n').filter(hasKey).map(parseScalar)
+  }
+
+  it('puts every tab in one window, named after the file so warp://launch/<name> finds it', () => {
+    const yaml = warpLaunchConfigYaml('project_tracker_launch_abc', '/tmp/project', [
+      { command: 'claude one', title: '#1 One' },
+      { command: 'claude orchestrate', title: 'AUTORUN-ORCHESTRATOR-PRD' }
+    ])
+    expect(yaml.split('\n').filter((line) => line === '  - tabs:')).toHaveLength(1)
+    expect(scalarAfter(yaml, 'name')).toEqual(['project_tracker_launch_abc'])
+    expect(scalarAfter(yaml, 'title')).toEqual(['#1 One', 'AUTORUN-ORCHESTRATOR-PRD'])
+    expect(scalarAfter(yaml, 'cwd')).toEqual(['/tmp/project', '/tmp/project'])
+    expect(scalarAfter(yaml, 'exec')).toEqual(['claude one; exit', 'claude orchestrate; exit'])
+  })
+
+  it('carries hostile titles, paths and commands as quoted scalars', () => {
+    const hostile = 'a"b\\c\nd $(rm -rf ~) `x` #: - [ ]'
+    const yaml = warpLaunchConfigYaml('n', `/tmp/${hostile}`, [{ command: hostile, title: hostile }])
+    expect(scalarAfter(yaml, 'title')).toEqual([hostile])
+    expect(scalarAfter(yaml, 'cwd')).toEqual([`/tmp/${hostile}`])
+    expect(scalarAfter(yaml, 'exec')).toEqual([`${hostile}; exit`])
+    expect(yaml.split('\n')).toHaveLength(10)
+  })
+
+  it('leaves out the title of an untitled tab so Warp names it', () => {
+    const yaml = warpLaunchConfigYaml('n', '/tmp/project', [{ command: 'claude one' }])
+    expect(scalarAfter(yaml, 'title')).toEqual([])
+    expect(yaml).toContain('      - layout:')
+  })
+})
 
 describe('warpTabConfigToml', () => {
   // The emitted strings are JSON strings, so parsing them back is a genuine

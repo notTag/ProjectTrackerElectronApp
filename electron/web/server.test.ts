@@ -232,13 +232,13 @@ describe('web server', () => {
       symlinkSync(path.join(outsideDirectory, 'secret.md'), path.join(contextProjectPath, 'linked.md'))
       await invoke('project-state:save', { ...seededState(), scanDirectories: [scanDirectory] })
       const readContext = (filePath: string) =>
-        invoke('lane:read-orchestrator-context', { projectPath: contextProjectPath, laneName: 'Idea', filePath })
+        invoke('lane:read-markdown-context', { kind: 'orchestrator', projectPath: contextProjectPath, laneName: 'Idea', filePath })
 
       try {
         const defaultContext = (await readContext('')) as { filePath: string; content: string }
         expect(defaultContext.content).toBe('Ping me on Slack.')
         expect(defaultContext.filePath.endsWith('/app/SwimlaneAgentPrompt/Idea/AgentOrchestratorPrompt.md')).toBe(true)
-        for (const skippedPath of ['missing.md', 'blank.md', 'notes.txt', '/etc/outside.md', 'linked.md']) {
+        for (const skippedPath of ['missing.md', 'blank.md', 'notes.rtf', '/etc/outside.md', 'linked.md']) {
           expect(await readContext(skippedPath)).toBeNull()
         }
       } finally {
@@ -247,9 +247,9 @@ describe('web server', () => {
       }
     })
 
-    it('refuses an orchestrator save from a tab on the old bundle', async () => {
-      const save = { kind: 'orchestrator', projectPath, laneName: 'Idea', filePath: '', content: 'prompt', previousContent: '' }
-      await expect(invoke('lane:save-agent-markdown', save)).rejects.toThrow('Only the agent markdown file is saved.')
+    it('no longer writes the agent file from the prompt box', async () => {
+      const save = { kind: 'agent', projectPath, laneName: 'Idea', filePath: '', content: 'prompt', previousContent: '' }
+      await expect(invoke('lane:save-agent-markdown', save)).rejects.toThrow()
     })
   })
 

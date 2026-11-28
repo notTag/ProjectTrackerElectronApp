@@ -225,6 +225,42 @@ describe('StateRepository', () => {
     expect(reopenedBoard(userDataPath, projectPath).tickets[0]).toMatchObject(moveFields)
   })
 
+  it('adds the lane position columns to an older database, keeping the board in number order', () => {
+    const { projectPath } = seededRepository(userDataPath)
+    const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    olderDatabase.exec('DROP TRIGGER tickets_lane_position_on_move')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN lane_position')
+    olderDatabase.exec('ALTER TABLE tickets DROP COLUMN lane_position_lane_id')
+    olderDatabase.close()
+
+    const repository = new StateRepository(userDataPath)
+    const state = repository.getState()
+    const tickets = state.boards![projectPath].tickets
+    expect(tickets.map((ticket) => ticket.number)).toEqual([1, 2])
+    expect(tickets[0]).toMatchObject({ lanePosition: undefined, lanePositionLaneId: undefined })
+    Object.assign(tickets[0], { lanePosition: 1, lanePositionLaneId: 'idea' })
+    repository.saveState(state)
+
+    expect(reopenedBoard(userDataPath, projectPath).tickets[0]).toMatchObject({ lanePosition: 1, lanePositionLaneId: 'idea' })
+  })
+
+  it('clears a lane position when anything but a drag moves the ticket', () => {
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const state = repository.getState()
+    Object.assign(state.boards![projectPath].tickets[0], { lanePosition: 2, lanePositionLaneId: 'idea' })
+    repository.saveState(state)
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const positionOf = () =>
+      database.prepare("SELECT lane_position, lane_position_lane_id FROM tickets WHERE id = 'ticket-a'").get()
+
+    database.exec("UPDATE tickets SET lane_id = 'prd', lane_position = 1, lane_position_lane_id = 'prd' WHERE id = 'ticket-a'")
+    expect(positionOf()).toEqual({ lane_position: 1, lane_position_lane_id: 'prd' })
+
+    database.exec("UPDATE tickets SET lane_id = 'idea' WHERE id = 'ticket-a'")
+    expect(positionOf()).toEqual({ lane_position: null, lane_position_lane_id: null })
+    database.close()
+  })
+
   it('adds the version columns to a database created before they existed', () => {
     const { projectPath } = seededRepository(userDataPath)
     const olderDatabase = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
