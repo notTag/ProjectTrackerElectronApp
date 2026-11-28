@@ -26,6 +26,7 @@ import {
   ticketTabTitle,
   type AgentRetryEvent,
   type AutoRunLaunchEntry,
+  type HeadlessAutoRunEntry,
   type TabLiveness,
   type TicketAgentRun,
   availableAgents,
@@ -187,6 +188,13 @@ const agentRunsUpdate =
       return agentRun ? { ...ticket, agentRun } : ticket
     })
   })
+
+type WorktreePlacement = Pick<Ticket, 'branchName' | 'worktreePath'>
+
+const withWorktreePlacement = (ticket: Ticket, placement: WorktreePlacement, updatedAt: string): Ticket => {
+  const isUnchanged = ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath
+  return isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+}
 
 // Only touches a run that is still the one the caller saw: a run restarted or
 // resumed in between keeps its own record.
@@ -1184,9 +1192,7 @@ export const useProjectsStore = defineStore('projects', {
           tickets: board.tickets.map((ticket) => {
             const placement = placementByTicketId.get(ticket.id)
             if (!placement) return ticket
-            const isUnchanged =
-              ticket.branchName === placement.branchName && ticket.worktreePath === placement.worktreePath
-            const placed = isUnchanged ? ticket : { ...ticket, ...placement, updatedAt }
+            const placed = withWorktreePlacement(ticket, placement, updatedAt)
             return withRunInWorktree(placed, placement.worktreePath)
           })
         }))
@@ -1221,6 +1227,56 @@ export const useProjectsStore = defineStore('projects', {
       }
     },
 
+    async autoRunLaneHeadless(
+      path: string,
+      laneId: string,
+      agentId: string,
+      model: string,
+      entries: HeadlessAutoRunEntry[],
+      useWorktrees: boolean
+    ): Promise<boolean> {
+      const runKey = autoRunKey(path, laneId)
+      if (this.autoRunning[runKey]) return false
+      this.autoRunning[runKey] = true
+      const releaseLane = () => {
+        this.autoRunning[runKey] = false
+        this.startDeferredHandoffs(runKey)
+      }
+      try {
+        const worktreePaths = useWorktrees ? await this.placeInTicketWorktrees(path, entries) : []
+        const runs = entries.map(({ ticket, prompt }, index) =>
+          this.runTicketAgent(path, ticket, agentId, prompt, { model, cwd: worktreePaths[index] })
+        )
+        const runWord = entries.length === 1 ? 'run' : 'runs'
+        const worktreeNote = useWorktrees ? ', one worktree each' : ''
+        this.notice = `Auto Run started ${entries.length} headless ${runWord}${worktreeNote}.`
+        void Promise.allSettled(runs).then(releaseLane)
+        return true
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
+        this.notice = null
+        releaseLane()
+        return false
+      }
+    },
+
+    async placeInTicketWorktrees(path: string, entries: HeadlessAutoRunEntry[]): Promise<string[]> {
+      const requests = entries.map(({ ticket, branchName }) => ({ number: ticket.number, branchName }))
+      const { worktreePaths } = await projectTrackerApi.prepareTicketWorktrees(path, requests)
+      const updatedAt = new Date().toISOString()
+      const placementByTicketId = new Map(
+        entries.map(({ ticket, branchName }, index) => [ticket.id, { branchName, worktreePath: worktreePaths[index] }])
+      )
+      await this.updateBoard(path, (board) => ({
+        ...board,
+        tickets: board.tickets.map((ticket) => {
+          const placement = placementByTicketId.get(ticket.id)
+          return placement ? withWorktreePlacement(ticket, placement, updatedAt) : ticket
+        })
+      }))
+      return worktreePaths
+    },
+
     // A queued ticket may have moved on (or been dragged away) while it waited;
     // only the ones still in the destination lane launch, as they are now.
     startDeferredHandoffs(runKey: string) {
@@ -1239,7 +1295,13 @@ export const useProjectsStore = defineStore('projects', {
     // The lane is captured at start, not read back at the end: the ticket may be
     // dragged to another column mid-run, and the record should say which lane's
     // prompt actually produced the output. Run always starts a fresh session.
-    async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
+    async runTicketAgent(
+      projectPath: string,
+      ticket: Ticket,
+      agentId: string,
+      prompt: string,
+      { model = ticket.model, cwd }: { model?: string; cwd?: string } = {}
+    ) {
       if (this.agentRunning[ticket.id]) return
       this.agentRunning[ticket.id] = true
       this.error = null
@@ -1254,7 +1316,7 @@ export const useProjectsStore = defineStore('projects', {
         status: 'running',
         mode: 'headless',
         sessionId: newAgentSessionId(agent),
-        cwd: projectPath,
+        cwd: cwd ?? projectPath,
         agentId: agent.id,
         attempts: 1
       }
@@ -1263,7 +1325,7 @@ export const useProjectsStore = defineStore('projects', {
         // A run that throws is still recorded as a failed run, so an older
         // success in this lane stops showing its checkmark.
         const result = await projectTrackerApi
-          .runTicketAgent(projectPath, agentId, prompt, ticket.model, runningRecord.sessionId)
+          .runTicketAgent(projectPath, agentId, prompt, model, runningRecord.sessionId, cwd)
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false,

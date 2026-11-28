@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
+  TicketWorktreeRequest,
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -89,8 +90,16 @@ contextBridge.exposeInMainWorld('projectTracker', {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ) => invokePlain('lane:auto-run', { projectPath, targetId, tickets, useWorktrees, orchestrator }),
-  runTicketAgent: (projectPath: string, agentId: string, prompt: string, model?: string, sessionId?: string) =>
-    invokePlain('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId }),
+  prepareTicketWorktrees: (projectPath: string, tickets: TicketWorktreeRequest[]) =>
+    invokePlain('lane:prepare-worktrees', { projectPath, tickets }),
+  runTicketAgent: (
+    projectPath: string,
+    agentId: string,
+    prompt: string,
+    model?: string,
+    sessionId?: string,
+    cwd?: string
+  ) => invokePlain('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId, cwd }),
   onAgentRetry: (callback: (notice: AgentRetryEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, notice: AgentRetryEvent) => callback(notice)
     ipcRenderer.on('ticket:agent-retry', listener)

@@ -989,6 +989,14 @@ export interface AutoRunTicketLaunch {
   title?: string
 }
 
+export type TicketWorktreeRequest = Pick<AutoRunTicketLaunch, 'number' | 'branchName'>
+
+export interface HeadlessAutoRunEntry {
+  ticket: Ticket
+  prompt: string
+  branchName: string
+}
+
 export interface AutoRunLaunchEntry {
   ticket: Ticket
   launch: AutoRunTicketLaunch
@@ -1000,6 +1008,23 @@ export interface AutoRunLaunchEntry {
 // built, so the agent is told which branch it is working on. Any older
 // worktree path is dropped from the prompt: the tab runs in the one main
 // returns, which for a ticket that already has one is the same path.
+const ticketAsAutoRun = (ticket: Ticket, useWorktrees: boolean) => {
+  const branchName = ticketBranchName(ticket)
+  const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
+  return { branchName, ticketAsRun }
+}
+
+export const buildHeadlessAutoRunEntry = (
+  ticket: Ticket,
+  lane: SwimLane,
+  context: TicketPromptContext,
+  useWorktrees: boolean
+): HeadlessAutoRunEntry => {
+  const { branchName, ticketAsRun } = ticketAsAutoRun(ticket, useWorktrees)
+  const prompt = ticketAgentPrompt(ticketAsRun, lane, context)
+  return { ticket, prompt, branchName }
+}
+
 export const buildAutoRunLaunch = (
   ticket: Ticket,
   lane: SwimLane,
@@ -1008,8 +1033,7 @@ export const buildAutoRunLaunch = (
   useWorktrees: boolean,
   model?: string
 ): AutoRunLaunchEntry => {
-  const branchName = ticketBranchName(ticket)
-  const ticketAsRun = useWorktrees ? { ...ticket, branchName, worktreePath: undefined } : ticket
+  const { branchName, ticketAsRun } = ticketAsAutoRun(ticket, useWorktrees)
   // Fresh per launch: the CLI refuses a session id that is already in use.
   const sessionId = newAgentSessionId(agent)
   const title = ticketTabTitle(ticket, lane, sessionId)

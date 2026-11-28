@@ -2,6 +2,7 @@ import { toPlainJson } from '@/shared/plainJson'
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
+  TicketWorktreeRequest,
   Clearable,
   LaneStoreEntry,
   ProjectRecord,
@@ -154,8 +155,12 @@ export const projectTrackerApi = {
     return bridge().autoRunLane(path, targetId, tickets, useWorktrees, orchestrator)
   },
 
-  runTicketAgent(path: string, agentId: string, prompt: string, model?: string, sessionId?: string) {
-    return bridge().runTicketAgent(path, agentId, prompt, model, sessionId)
+  prepareTicketWorktrees(path: string, tickets: TicketWorktreeRequest[]) {
+    return bridge().prepareTicketWorktrees(path, tickets)
+  },
+
+  runTicketAgent(path: string, agentId: string, prompt: string, model?: string, sessionId?: string, cwd?: string) {
+    return bridge().runTicketAgent(path, agentId, prompt, model, sessionId, cwd)
   },
 
   onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void {

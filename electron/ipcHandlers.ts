@@ -34,7 +34,7 @@ import {
   usableTabTitle,
   warpTabConfigToml
 } from './terminalLaunch.js'
-import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
+import { isWorktreeOf, prepareTicketWorktrees } from './ticketWorktree.js'
 import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicketImageBytes } from './ticketImages.js'
 import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
@@ -46,6 +46,7 @@ import {
   toPullRequestStatus,
   type AgentRetryEvent,
   type AutoRunTicketLaunch,
+  type TicketWorktreeRequest,
   type GithubPullRequest,
   type TerminalTab,
   type ProjectPriority,
@@ -220,6 +221,25 @@ const isAutoRunTicketLaunch = (value: unknown): value is AutoRunTicketLaunch => 
     typeof candidate.command === 'string' &&
     (candidate.title === undefined || typeof candidate.title === 'string')
   )
+}
+
+const isTicketWorktreeRequest = (value: unknown): value is TicketWorktreeRequest => {
+  const candidate = value as Partial<TicketWorktreeRequest> | null
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    Number.isInteger(candidate.number) &&
+    typeof candidate.branchName === 'string'
+  )
+}
+
+const agentRunDirectory = async (projectPath: string, cwd: string | undefined) => {
+  if (cwd === undefined) return projectPath
+  const requestedDirectory = normalizePath(cwd)
+  if (requestedDirectory === projectPath) return projectPath
+  const isProjectWorktree = await isWorktreeOf(projectPath, requestedDirectory)
+  if (!isProjectWorktree) throw new Error('Agent directory is not a worktree of this project.')
+  return requestedDirectory
 }
 
 const isStringArray = (value: unknown): value is string[] =>
@@ -652,15 +672,7 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
         return { worktreePaths: [] }
       }
 
-      // Fetched once for the whole lane. Worktrees are made one at a time: git
-      // locks the repository's worktree list, so parallel adds would trip on it.
-      const repositoryRoot = await repositoryRootOf(normalized)
-      const baseRef = await freshMainRef(repositoryRoot)
-      const worktreePaths: string[] = []
-      for (const ticket of tickets) {
-        const worktreePath = await ensureTicketWorktree(repositoryRoot, ticket.number, ticket.branchName, baseRef)
-        worktreePaths.push(worktreePath)
-      }
+      const worktreePaths = await prepareTicketWorktrees(normalized, tickets)
       const tabsInWorktrees = tickets.map((ticket, index) => ({
         command: `cd ${shellQuote(worktreePaths[index])} && ${ticket.command}`,
         title: usableTabTitle(ticket.title)
@@ -669,27 +681,40 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       return { worktreePaths }
     },
 
+    'lane:prepare-worktrees': async (payload, { repository }) => {
+      const { projectPath, tickets } = (payload ?? {}) as { projectPath?: unknown; tickets?: unknown }
+      if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
+      if (!Array.isArray(tickets) || tickets.length === 0) throw new Error('No tickets to run.')
+      if (!tickets.every(isTicketWorktreeRequest)) throw new Error('Invalid Auto Run ticket.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const worktreePaths = await prepareTicketWorktrees(normalized, tickets)
+      return { worktreePaths }
+    },
+
     'ticket:run-agent': async (payload, { repository, onAgentRetry }) => {
-      const { projectPath, agentId, prompt, model, sessionId } = (payload ?? {}) as {
+      const { projectPath, agentId, prompt, model, sessionId, cwd } = (payload ?? {}) as {
         projectPath?: unknown
         agentId?: unknown
         prompt?: unknown
         model?: unknown
         sessionId?: unknown
+        cwd?: unknown
       }
       if (typeof projectPath !== 'string') throw new Error('Invalid project path.')
       if (typeof agentId !== 'string') throw new Error('Invalid agent.')
       if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Invalid agent prompt.')
       if (model !== undefined && typeof model !== 'string') throw new Error('Invalid agent model.')
       if (sessionId !== undefined && !isUuid(sessionId)) throw new Error('Invalid agent session id.')
+      if (cwd !== undefined && typeof cwd !== 'string') throw new Error('Invalid agent directory.')
       // Resolved by id against known agents rather than taking a command from the
       // payload, so the renderer can pick which agent runs but never what binary.
       const agent = availableAgents(repository.getState()).find((entry) => entry.id === agentId)
       if (!agent) throw new Error(`Unknown agent: ${agentId}`)
       const normalized = assertScannedProjectPath(repository, projectPath)
+      const runDirectory = await agentRunDirectory(normalized, cwd)
       const onRetry = (notice: { attempt: number; of: number; delayMs: number }) => onAgentRetry({ sessionId, ...notice })
       const options = { model, sessionId, onRetry }
-      return toPlainJson(await runAgentHeadlessWithRetry(agent, prompt, normalized, dependencies.homeDirectory, options))
+      return toPlainJson(await runAgentHeadlessWithRetry(agent, prompt, runDirectory, dependencies.homeDirectory, options))
     },
 
     'app:started-at': () => dependencies.startedAt,

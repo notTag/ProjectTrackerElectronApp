@@ -119,8 +119,9 @@ export const webBridge = {
     invoke('project:open-in', { projectPath, targetId, command, title }),
   autoRunLane: (projectPath, targetId, tickets, useWorktrees, orchestrator) =>
     invoke('lane:auto-run', { projectPath, targetId, tickets, useWorktrees, orchestrator }),
-  runTicketAgent: (projectPath, agentId, prompt, model, sessionId) =>
-    invoke('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId }),
+  prepareTicketWorktrees: (projectPath, tickets) => invoke('lane:prepare-worktrees', { projectPath, tickets }),
+  runTicketAgent: (projectPath, agentId, prompt, model, sessionId, cwd) =>
+    invoke('ticket:run-agent', { projectPath, agentId, prompt, model, sessionId, cwd }),
   onAgentRetry: (callback) => subscribe('agent-retry', (notice) => callback(notice as AgentRetryEvent)),
   appStartedAt: () => invoke('app:started-at'),
   terminalTabsAlive: (targetId, titles) => invoke('terminal:tabs-alive', { targetId, titles }),

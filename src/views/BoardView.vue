@@ -6,7 +6,7 @@ import TicketGraph from '@/components/TicketGraph.vue'
 import MessageBanners from '@/components/MessageBanners.vue'
 import MetricsPanel from '@/components/MetricsPanel.vue'
 import UiSettingsPanel from '@/components/UiSettingsPanel.vue'
-import AutoRunConfirmModal, { type AutoRunPicks } from '@/components/board/AutoRunConfirmModal.vue'
+import AutoRunConfirmModal, { HEADLESS_AUTO_RUN_ID, type AutoRunPicks } from '@/components/board/AutoRunConfirmModal.vue'
 import BoardFilters from '@/components/board/BoardFilters.vue'
 import BoardLanes from '@/components/board/BoardLanes.vue'
 import BoardTitlebar from '@/components/board/BoardTitlebar.vue'
@@ -23,6 +23,7 @@ import { TERMINAL_TARGETS } from '@/shared/openInTargets'
 import {
   autoRunUsesWorktrees,
   buildAutoRunLaunch,
+  buildHeadlessAutoRunEntry,
   buildOrchestratorLaunch,
   findAgent,
   groupTicketsByLane,
@@ -35,6 +36,7 @@ import {
   TICKET_DESCRIPTION_TEMPLATE,
   UNASSIGNED_LANE_ID,
   UNASSIGNED_LANE_NAME,
+  type Agent,
   type BoardFilterControl,
   type GraphPosition,
   type SwimLane,
@@ -373,21 +375,43 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
   autoRunConfirmLaneId.value = null
   if (!lane) return
   const agent = findAgent(agents.value, picks.agentId)
-  const model = picks.model
-  const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === picks.terminalId)
-  const terminal = chosenTerminal ?? autoRunTerminal(lane)
   const useWorktrees = autoRunUsesWorktrees(lane)
   const { runnable, skipped } = autoRunSplit(lane)
   const skippedNotice = skippedRunsNotice(skipped, lane.name)
-  const launches = runnable.map((ticket) =>
-    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
-  )
-  if (launches.length === 0) {
+  if (runnable.length === 0) {
     if (skippedNotice) store.notice = skippedNotice
     return
   }
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
-  for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
+  for (const ticket of runnable) selectedTicketIds.value.delete(ticket.id)
+  const launch =
+    picks.terminalId === HEADLESS_AUTO_RUN_ID
+      ? launchHeadlessAutoRun(lane, agent, picks.model, runnable, useWorktrees)
+      : launchTerminalAutoRun(lane, agent, picks, runnable, useWorktrees)
+  // Shown whether or not the launch went ahead: a refused second Auto Run is the case this notice is for.
+  void launch.then(() => {
+    if (skippedNotice) store.notice = joinNotices(store.notice, skippedNotice)
+  })
+}
+
+const launchHeadlessAutoRun = (lane: SwimLane, agent: Agent, model: string, runnable: Ticket[], useWorktrees: boolean) => {
+  const entries = runnable.map((ticket) => buildHeadlessAutoRunEntry(ticket, lane, promptContext(ticket), useWorktrees))
+  return store.autoRunLaneHeadless(projectPath.value, lane.id, agent.id, model, entries, useWorktrees)
+}
+
+const launchTerminalAutoRun = async (
+  lane: SwimLane,
+  agent: Agent,
+  picks: AutoRunPicks,
+  runnable: Ticket[],
+  useWorktrees: boolean
+) => {
+  const model = picks.model
+  const chosenTerminal = TERMINAL_TARGETS.find((target) => target.id === picks.terminalId)
+  const terminal = chosenTerminal ?? autoRunTerminal(lane)
+  const launches = runnable.map((ticket) =>
+    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
+  )
   const boardPath = projectPath.value
   const generatedContext = orchestratorContextFor(terminal)
   const additionalContext = await store.readLaneOrchestratorContext(boardPath, lane)
@@ -404,19 +428,7 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
     orchestratorContext,
     orchestratorChoice.model
   )
-  const launch = store.autoRunLane(
-    boardPath,
-    lane.id,
-    terminal.id,
-    terminal.label,
-    launches,
-    useWorktrees,
-    orchestrator
-  )
-  // Shown whether or not the launch went ahead: a refused second Auto Run is the case this notice is for.
-  void launch.then(() => {
-    if (skippedNotice) store.notice = joinNotices(store.notice, skippedNotice)
-  })
+  return store.autoRunLane(boardPath, lane.id, terminal.id, terminal.label, launches, useWorktrees, orchestrator)
 }
 </script>
 

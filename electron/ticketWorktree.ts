@@ -8,9 +8,10 @@
  */
 
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import type { TicketWorktreeRequest } from '../src/shared/projectTypes.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -138,4 +139,33 @@ export const ensureTicketWorktree = async (
     throw new Error(`#${ticketNumber}: could not create worktree — ${gitErrorMessage(error)}`)
   }
   return worktreePath
+}
+
+// Fetched once for the whole lane. Worktrees are made one at a time: git
+// locks the repository's worktree list, so parallel adds would trip on it.
+export const prepareTicketWorktrees = async (projectPath: string, tickets: TicketWorktreeRequest[]) => {
+  const repositoryRoot = await repositoryRootOf(projectPath)
+  const baseRef = await freshMainRef(repositoryRoot)
+  const worktreePaths: string[] = []
+  for (const ticket of tickets) {
+    const worktreePath = await ensureTicketWorktree(repositoryRoot, ticket.number, ticket.branchName, baseRef)
+    worktreePaths.push(worktreePath)
+  }
+  return worktreePaths
+}
+
+const resolvedPath = (candidatePath: string) => {
+  try {
+    return realpathSync(candidatePath)
+  } catch {
+    return path.resolve(candidatePath)
+  }
+}
+
+export const isWorktreeOf = async (projectPath: string, candidatePath: string): Promise<boolean> => {
+  const porcelain = await git(projectPath, ['worktree', 'list', '--porcelain']).catch(() => '')
+  const worktreeLines = porcelain.split('\n').filter((line) => line.startsWith('worktree '))
+  const worktreePaths = worktreeLines.map((line) => line.slice('worktree '.length))
+  const candidate = resolvedPath(candidatePath)
+  return worktreePaths.some((worktreePath) => resolvedPath(worktreePath) === candidate)
 }

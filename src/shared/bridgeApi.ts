@@ -1,6 +1,7 @@
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
+  TicketWorktreeRequest,
   GithubIssueLists,
   LaneStoreEntry,
   LaneWritePatch,
@@ -50,6 +51,7 @@ export const IPC_CHANNELS = [
   'dialog:pick-scan-directory',
   'project:open-in',
   'lane:auto-run',
+  'lane:prepare-worktrees',
   'ticket:run-agent',
   'app:started-at',
   'terminal:tabs-alive',
@@ -126,12 +128,14 @@ export interface ProjectTrackerBridge {
     useWorktrees: boolean,
     orchestrator?: TerminalTab
   ): Promise<{ worktreePaths: string[] }>
+  prepareTicketWorktrees(path: string, tickets: TicketWorktreeRequest[]): Promise<{ worktreePaths: string[] }>
   runTicketAgent(
     path: string,
     agentId: string,
     prompt: string,
     model?: string,
-    sessionId?: string
+    sessionId?: string,
+    cwd?: string
   ): Promise<{ succeeded: boolean; output: string; attempts?: number }>
   onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void
   appStartedAt(): Promise<string>

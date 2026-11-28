@@ -7,10 +7,12 @@ export type AutoRunPicks = {
   orchestratorModel: string
   terminalId: string
 }
+
+export const HEADLESS_AUTO_RUN_ID = 'headless'
 </script>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ModelField from '@/components/ModelField.vue'
 import { TERMINAL_TARGETS } from '@/shared/openInTargets'
 import { autoRunUsesWorktrees, findAgent, type SwimLane } from '@/shared/projectTypes'
@@ -29,6 +31,7 @@ const model = ref(props.lane.autoRunModel || laneAgent.defaultModel || '')
 const orchestratorAgentId = ref(props.lane.orchestratorAgentId ?? '')
 const orchestratorModel = ref(props.lane.orchestratorModel ?? '')
 const terminalId = ref(autoRunTerminal(props.lane).id)
+const isHeadless = computed(() => terminalId.value === HEADLESS_AUTO_RUN_ID)
 
 const changeAgent = () => {
   const agent = findAgent(agents.value, agentId.value)
@@ -63,7 +66,7 @@ const confirm = () =>
         />
         for {{ ticketCount }} tickets?
       </p>
-      <section class="auto-run-orchestrator">
+      <section v-if="!isHeadless" class="auto-run-orchestrator">
         <p class="eyebrow">Orchestrator</p>
         <div class="auto-run-orchestrator-fields">
           <label>
@@ -84,13 +87,14 @@ const confirm = () =>
         </div>
       </section>
       <p class="auto-run-question">
-        Each opens in its own
+        Each {{ isHeadless ? 'runs' : 'opens in its own' }}
         <select v-model="terminalId" aria-label="Shell">
           <option v-for="terminal in TERMINAL_TARGETS" :key="terminal.id" :value="terminal.id">
             {{ terminal.label }}
           </option>
+          <option :value="HEADLESS_AUTO_RUN_ID">Headless</option>
         </select>
-        tab.
+        {{ isHeadless ? 'in the background.' : 'tab.' }}
       </p>
       <p class="field-hint">
         {{

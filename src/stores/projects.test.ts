@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   updateProject: vi.fn(),
   autoRunLane: vi.fn(),
   runTicketAgent: vi.fn(),
+  prepareTicketWorktrees: vi.fn(),
   fetchProjectGithubIssues: vi.fn(),
   fetchTicketPullRequest: vi.fn(),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
@@ -1079,5 +1080,81 @@ describe('scan progress and cancel', () => {
   it('cancel does nothing when no scan is running', async () => {
     await useProjectsStore().cancelScan()
     expect(api.cancelScan).not.toHaveBeenCalled()
+  })
+})
+
+describe('autoRunLaneHeadless', () => {
+  const WORKTREE_PATH = `${PROJECT_PATH}/.worktrees/t7`
+  const entry = () => {
+    const ticket = getBoard(useProjectsStore().state, PROJECT_PATH).tickets[0]
+    return { ticket, prompt: 'Build it.', branchName: 't7-add-the-thing' }
+  }
+  const storedTicket = () => getBoard(useProjectsStore().state, PROJECT_PATH).tickets[0]
+
+  let finishRun: (result: { succeeded: boolean; output: string }) => void = () => undefined
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    api.saveProjectState.mockImplementation(async (state: ProjectTrackerState) => state)
+    mockEntityWrites()
+    api.prepareTicketWorktrees.mockResolvedValue({ worktreePaths: [WORKTREE_PATH] })
+    api.runTicketAgent.mockImplementation(
+      () => new Promise((resolve) => {
+        finishRun = resolve
+      })
+    )
+  })
+
+  it('runs each ticket headless in its worktree with the picked model and opens no tabs', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+
+    const started = await store.autoRunLaneHeadless(PROJECT_PATH, 'dev', 'claude-code', 'opus', [entry()], true)
+
+    expect(started).toBe(true)
+    expect(api.autoRunLane).not.toHaveBeenCalled()
+    expect(api.prepareTicketWorktrees).toHaveBeenCalledWith(PROJECT_PATH, [{ number: 7, branchName: 't7-add-the-thing' }])
+    await flushLaunches()
+    const [projectPath, agentId, prompt, model, sessionId, cwd] = api.runTicketAgent.mock.calls[0]
+    expect([projectPath, agentId, prompt, model, cwd]).toStrictEqual([PROJECT_PATH, 'claude-code', 'Build it.', 'opus', WORKTREE_PATH])
+    expect(storedTicket()).toMatchObject({ branchName: 't7-add-the-thing', worktreePath: WORKTREE_PATH })
+    expect(storedTicket().agentRun).toMatchObject({ status: 'running', mode: 'headless', cwd: WORKTREE_PATH, sessionId })
+    expect(store.notice).toBe('Auto Run started 1 headless run, one worktree each.')
+
+    finishRun({ succeeded: true, output: 'done' })
+    await flushLaunches()
+
+    expect(storedTicket().agentRun).toMatchObject({ status: 'succeeded', output: 'done' })
+  })
+
+  it('refuses a second Auto Run of the lane until every headless run settles', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+
+    await store.autoRunLaneHeadless(PROJECT_PATH, 'dev', 'claude-code', '', [entry()], false)
+    await flushLaunches()
+    const secondWhileRunning = await store.autoRunLaneHeadless(PROJECT_PATH, 'dev', 'claude-code', '', [entry()], false)
+    finishRun({ succeeded: false, output: 'broke' })
+    await flushLaunches()
+
+    expect(secondWhileRunning).toBe(false)
+    expect(api.prepareTicketWorktrees).not.toHaveBeenCalled()
+    expect(api.runTicketAgent.mock.calls[0][5]).toBeUndefined()
+    expect(storedTicket().agentRun).toMatchObject({ status: 'failed', cwd: PROJECT_PATH })
+    const againAfterSettling = await store.autoRunLaneHeadless(PROJECT_PATH, 'dev', 'claude-code', '', [entry()], false)
+    expect(againAfterSettling).toBe(true)
+  })
+
+  it('starts no run when worktree prep fails', async () => {
+    api.prepareTicketWorktrees.mockRejectedValue(new Error('Could not fetch origin'))
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('dev')
+
+    const started = await store.autoRunLaneHeadless(PROJECT_PATH, 'dev', 'claude-code', '', [entry()], true)
+
+    expect(started).toBe(false)
+    expect(api.runTicketAgent).not.toHaveBeenCalled()
+    expect(store.error).toBe('Could not fetch origin')
   })
 })

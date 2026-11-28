@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ensureTicketWorktree, freshMainRef, repositoryRootOf, ticketWorktreePath } from './ticketWorktree.js'
+import {
+  ensureTicketWorktree,
+  freshMainRef,
+  isWorktreeOf,
+  prepareTicketWorktrees,
+  repositoryRootOf,
+  ticketWorktreePath
+} from './ticketWorktree.js'
 
 // Runs real git against throwaway repos: the behaviour under test is git's.
 const runGit = (repositoryPath: string, ...args: string[]) =>
@@ -65,6 +72,26 @@ describe('ticket worktrees', () => {
     expect(first).not.toBe(second)
     expect(runGit(first, 'branch', '--show-current')).toBe('ticket-3-first')
     expect(runGit(second, 'branch', '--show-current')).toBe('ticket-4-second')
+  })
+
+  it('prepares one worktree per ticket from a single fetch', async () => {
+    const worktreePaths = await prepareTicketWorktrees(checkoutPath, [
+      { number: 20, branchName: 'ticket-20' },
+      { number: 21, branchName: 'ticket-21' }
+    ])
+    const root = await repositoryRootOf(checkoutPath)
+    expect(worktreePaths).toStrictEqual([ticketWorktreePath(root, 20), ticketWorktreePath(root, 21)])
+  })
+
+  it('accepts only checkouts git lists for the project as an agent directory', async () => {
+    const { root, baseRef } = await setUp()
+    const worktree = await ensureTicketWorktree(root, 22, 'ticket-22', baseRef)
+    const plainDirectoryInside = path.join(root, '.worktrees')
+    await expect(isWorktreeOf(checkoutPath, worktree)).resolves.toBe(true)
+    await expect(isWorktreeOf(checkoutPath, checkoutPath)).resolves.toBe(true)
+    await expect(isWorktreeOf(checkoutPath, plainDirectoryInside)).resolves.toBe(false)
+    await expect(isWorktreeOf(checkoutPath, teammatePath)).resolves.toBe(false)
+    await expect(isWorktreeOf(checkoutPath, '/')).resolves.toBe(false)
   })
 
   it('reuses the worktree on a re-run instead of failing', async () => {
