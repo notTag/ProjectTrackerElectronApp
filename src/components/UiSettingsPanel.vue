@@ -19,7 +19,7 @@ import InfoTip from './InfoTip.vue'
 const SECTIONS: { id: SettingsSection; icon: string; label: string }[] = [
   { id: 'display', icon: '👁', label: 'Display' },
   { id: 'metrics', icon: '📊', label: 'Metrics' },
-  { id: 'ui', icon: '🎚', label: 'UI Settings' }
+  { id: 'ui', icon: '🎨', label: 'UI Settings' }
 ]
 
 const panel = ref<HTMLElement | null>(null)
