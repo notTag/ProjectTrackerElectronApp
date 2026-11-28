@@ -352,6 +352,42 @@ describe('Move to on completion', () => {
     expect(store.error).toBeNull()
   })
 
+  const liveTerminalRun = (laneId: string) => ({
+    at: '2026-11-27T07:00:00.000Z',
+    startedAt: '2026-11-27T07:00:00.000Z',
+    laneId,
+    output: '',
+    status: 'running' as const,
+    mode: 'terminal' as const,
+    sessionId: 'session-a',
+    tabTitle: '7-PRD',
+    cwd: PROJECT_PATH,
+    agentId: 'claude'
+  })
+
+  it('keeps a live terminal agent in this lane and never starts ▶ Run, even from a stale modal copy', async () => {
+    const { store, ticket } = armedStore()
+    const staleModalTicket = { ...ticket }
+    ticket.agentRun = liveTerminalRun('prd')
+
+    await store.runTicketAgent(PROJECT_PATH, staleModalTicket, 'claude', 'prompt')
+
+    expect(api.runTicketAgent).not.toHaveBeenCalled()
+    expect(api.updateTicket).not.toHaveBeenCalled()
+    expect(storedTicket(store).agentRun).toMatchObject({ sessionId: 'session-a', mode: 'terminal', status: 'running' })
+    expect(store.notice).toBe('Skipped #7: agent already running in PRD')
+  })
+
+  it('starts ▶ Run when the running agent belongs to another lane', async () => {
+    const { store, ticket } = armedStore()
+    ticket.agentRun = liveTerminalRun('dev')
+    api.runTicketAgent.mockResolvedValue({ output: 'ok', succeeded: true })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
+
+    expect(api.runTicketAgent).toHaveBeenCalledTimes(1)
+  })
+
   it('leaves the ticket where it is when ▶ Run fails', async () => {
     const { store, ticket } = armedStore()
     api.runTicketAgent.mockResolvedValue({ output: 'boom', succeeded: false })

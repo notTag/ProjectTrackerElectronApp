@@ -436,6 +436,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
   - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4). The **Run** caption's ⓘ says what the agent gets and how Run differs from Run in.
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
+  - Disabled while another agent (terminal tab, Auto Run, Full auto) is running on the ticket in its current lane (#174), with a tooltip saying so. The live agent's record stays untouched, so the #121 ownership check still sees the same session.
   - Claude Code and Codex runs can write files but can't run shell commands.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.

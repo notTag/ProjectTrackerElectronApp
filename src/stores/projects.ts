@@ -1254,6 +1254,14 @@ export const useProjectsStore = defineStore('projects', {
     // prompt actually produced the output. Run always starts a fresh session.
     async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
       if (this.agentRunning[ticket.id]) return
+      const board = this.board(projectPath)
+      const currentTicket = board.tickets.find((entry) => entry.id === ticket.id) ?? ticket
+      const { skipped } = splitRunnable([currentTicket], currentTicket.laneId)
+      if (skipped.length > 0) {
+        const laneName = board.lanes.find((lane) => lane.id === currentTicket.laneId)?.name ?? currentTicket.laneId
+        this.notice = skippedRunsNotice(skipped, laneName)
+        return
+      }
       this.agentRunning[ticket.id] = true
       this.error = null
       this.notice = `Agent running on #${ticket.number}…`
@@ -1262,7 +1270,7 @@ export const useProjectsStore = defineStore('projects', {
       const runningRecord: TicketAgentRun = {
         at: startedAt,
         startedAt,
-        laneId: ticket.laneId,
+        laneId: currentTicket.laneId,
         output: '',
         status: 'running',
         mode: 'headless',
