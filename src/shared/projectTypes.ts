@@ -1763,6 +1763,45 @@ export const addTicketToBoard = (
   return { ...board, tickets: [...board.tickets, ticket] }
 }
 
+const cloneTitleOf = (ticket: Pick<Ticket, 'number' | 'title'>) => `CLONE OF T#${ticket.number} ${ticket.title.trim()}`
+
+export const cloneTicketOnBoard = (
+  board: ProjectBoard,
+  sourceId: string,
+  cloneId: string,
+  storedLaneId?: string
+): ProjectBoard => {
+  const source = board.tickets.find((ticket) => ticket.id === sourceId)
+  if (!source) return board
+  const {
+    updatedAt,
+    branchName,
+    worktreePath,
+    pullRequestUrl,
+    pullRequestState,
+    pullRequestMergedAt,
+    agentRun,
+    externalId,
+    images,
+    moveRulesPassedLaneId,
+    readyLaneId,
+    ...copiedFields
+  } = source
+  const clone: Ticket = {
+    ...copiedFields,
+    ...(copiedFields.labels && { labels: [...copiedFields.labels] }),
+    ...(copiedFields.checklist && { checklist: copiedFields.checklist.map((item) => ({ ...item })) }),
+    ...(copiedFields.externalLinks && { externalLinks: [...copiedFields.externalLinks] }),
+    id: cloneId,
+    laneId: storedLaneId ?? source.laneId,
+    number: nextTicketNumber(board),
+    createdAt: new Date().toISOString(),
+    title: cloneTitleOf(source),
+    moveOnComplete: false
+  }
+  return { ...board, tickets: [...board.tickets, clone] }
+}
+
 export const getBoard = (state: ProjectTrackerState, projectPath: string): ProjectBoard =>
   normalizeBoard(state.boards?.[projectPath] ?? createDefaultBoard())
 

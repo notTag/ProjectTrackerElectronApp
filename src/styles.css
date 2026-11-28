@@ -2114,7 +2114,7 @@ span.ticket-image-thumb {
   gap: 8px;
 }
 
-.lane-modal .field-row > label,
+.lane-modal .field-row > *,
 .ticket-modal .field-row > label {
   flex: 1 1 0;
   min-width: 140px;

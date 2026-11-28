@@ -4,6 +4,7 @@ import { ticketModalExpanded, vEdgeResize } from '@/modalWidth'
 import ExpandToggle from '@/components/ExpandToggle.vue'
 import ModelField from '@/components/ModelField.vue'
 import InfoTip from '@/components/InfoTip.vue'
+import CopyIcon from '@/components/icons/CopyIcon.vue'
 import EyeOffIcon from '@/components/icons/EyeOffIcon.vue'
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import {
@@ -25,6 +26,7 @@ import {
   pullRequestStatusLabel,
   removeChecklistItem,
   removeExternalLink,
+  runningAgentRuns,
   setChecklistItemDone,
   ticketAgentPrompt,
   ticketShellCommand,
@@ -55,7 +57,7 @@ const props = defineProps<{
   // An upload that failed while the new-ticket draft saved: shown on the ticket it belongs to.
   initialImageError?: string | null
 }>()
-const emit = defineEmits<{ close: []; delete: [ticket: Ticket] }>()
+const emit = defineEmits<{ close: []; delete: [ticket: Ticket]; clone: [ticket: Ticket] }>()
 
 const {
   store,
@@ -349,6 +351,8 @@ const ticketCanResume = (ticket: Ticket) => {
 
 const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
+const hasLiveAgentInLane = (ticket: Ticket) => runningAgentRuns([ticket]).length > 0
+
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
   const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
@@ -405,6 +409,9 @@ defineExpose({
           </div>
         </div>
         <ExpandToggle v-if="boardView !== 'graph'" v-model="ticketModalExpanded" />
+        <button type="button" class="icon-button" title="Clone ticket" aria-label="Clone ticket" @click="emit('clone', ticket)">
+          <CopyIcon />
+        </button>
       </div>
       <input
         class="ticket-title-input"
@@ -703,8 +710,12 @@ defineExpose({
         <pre class="agent-command">{{ ticketCommand(ticket) }}</pre>
         <div class="agent-actions">
           <button
-            :disabled="store.agentRunning[ticket.id]"
-            :title="`Run ${agentForTicket(ticket, agents).name} in the background`"
+            :disabled="store.agentRunning[ticket.id] || hasLiveAgentInLane(ticket)"
+            :title="
+              !store.agentRunning[ticket.id] && hasLiveAgentInLane(ticket)
+                ? 'An agent is already running on this ticket in this lane'
+                : `Run ${agentForTicket(ticket, agents).name} in the background`
+            "
             @click="runTicketAgent(ticket)"
           >
             {{ store.agentRunning[ticket.id] ? 'Running…' : '▶ Run' }}

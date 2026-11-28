@@ -41,7 +41,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 ### 1.4 Find on page (⌘F / Ctrl+F) — `src/components/PageFind.vue`
 
 - ⌘F opens a find bar, focuses it and selects any existing text.
-- The search runs 300 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
+- The search runs 100 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
 - The bar shows a live "N of M" match count.
 - Enter goes to the next match and Shift+Enter to the previous one. There are also ↑ and ↓ buttons, disabled when nothing matches.
 - Escape or × closes the bar, clears the highlights and puts focus back where it was.
@@ -373,6 +373,8 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both ticket modals (not the Lane settings modal) and kept until the app restarts. Not shown in the graph side panel. (`src/components/ExpandToggle.vue`, state in `src/modalWidth.ts`)
 
+**Clone ticket** button (copy icon, rightmost in the header, board and graph view): adds a new ticket in the same lane with the next number, titled `CLONE OF T#<N> <title>`, then closes this modal and opens the clone's. Copies description, labels, assignee, checklist (ticks kept), agent, model, Full auto, external links, GitHub issue link, Next Lane, move rules, version and images (as the clone's own file copies under its attachments folder, via `ticket-images:copy`, so deleting the original keeps them). Starts fresh on branch, worktree, Merge Request, last agent run, passed rules, Ready badge and the GitHub import key; never armed. The original is unchanged. A failed save keeps the original open with the board error; a failed image copy still opens the clone, showing the error there. (`cloneTicketOnBoard` in `src/shared/projectTypes.ts`, `store.cloneTicket`, `copyTicketImages` in `electron/ticketImages.ts`)
+
 **Drag to resize:** the left or right edge of the New ticket, Open ticket (board view), and Lane settings modals (cursor turns to ↔) drags the width anywhere from the default (760px ticket, 560px lane) up to the window width minus the backdrop padding. These three modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`vEdgeResize` in `src/modalWidth.ts`, limits in `.modal.resizable` in `src/styles.css`)
 
 **Ticket fields** closed-eye button (left of Expand, same closed-eye icon as the fields button in the Lane settings modal (3.9); this modal only): a checkbox per field (Status, Assignee, Description, Labels, Branch, Worktree, Version, Merge Request, External Links, Images, Checklist, Agent, Model, Full auto, Next Lane, Last agent run). Unchecking hides that field in every ticket on this board; saved per board in `BoardPreferences.hiddenModalFields`, so other boards are unaffected. Display-only: hidden fields keep their values and still reach the agent prompt, and empty fields are never sent either way. Outside click or Escape closes the popover (Escape doesn't close the modal). `src/components/board/TicketModal.vue`, `TICKET_MODAL_FIELDS` in `src/shared/projectTypes.ts`.
@@ -434,6 +436,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
   - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4). The **Run** caption's ⓘ says what the agent gets and how Run differs from Run in.
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
+  - Disabled while another agent (terminal tab, Auto Run, Full auto) is running on the ticket in its current lane (#174), with a tooltip saying so. The live agent's record stays untouched, so the #121 ownership check still sees the same session.
   - Claude Code and Codex runs can write files but can't run shell commands.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
@@ -488,13 +491,14 @@ One section, three captioned groups laid out in wrapping rows that span the moda
     - **Restore app default** button, only while the lane has a saved default: clears default and current, so the lane goes back to the app-generated prompt. No confirm.
     - Migration: opening a pre-#168 database copies each lane's non-blank `orchestrator_prompt_override` into `current_agent_orchestrator_prompt` once (schema version 7), inactive workflow snapshots included. The old column stays in the schema, unread and unwritten.
   - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): additional prompt context. Nothing is ever written to it. At launch main reads it (default `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, a typed path must end in `.md` and sit inside a scan directory) and, when it has text, appends it after the prompt under `Additional context (from <path>):`. It never replaces the box text. Missing, blank, unreadable or refused files are skipped and the launch runs without them (`lane:read-orchestrator-context`). Ticket agents never see it. The field hint and the Orchestrator prompt ⓘ tip both say so.
-  - **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
+  - **Poll (minutes)**, **Agent** and **Model** share one row under the markdown file field, in that order (#179). They wrap when the modal is narrow; a hidden one leaves the others on the row. Display Settings and the lane eye menu still name them "Orchestrator poll/agent/model".
+  - **Poll (minutes)** stepper pill (`−` · minutes · `+`) (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
     - Hovering the stepper shows "The Orchestrator agent will poll running agents every N minute(s)." or, at ∞, "The Orchestrator agent never polls: it waits for messages from the ticket agents."
     - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`; at `∞` it gathers state once, then waits for ticket-agent messages (#114).
     - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
     - `∞`: Auto Run still opens the orchestrator tab; it never polls, sleeps or schedules wake-ups. `−` is disabled. A saved current or default prompt follows it through `{{poll_step}}`; one with a hardcoded sleep loop instead still loops.
     - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
-  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
+  - **Agent** select: "Same as ticket agent" (the default) or any agent. **Model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
 - **Auto Run** section (also holds the two Auto Run hints):
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
@@ -537,6 +541,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
 - The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator poll **Active** checkbox is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
+- A **Machine** row sits under the terminal line. It offers only **Local** (this Mac), the default and today's behavior; nothing is saved for it (#151). `ticketWorktree.ts` takes a `MachineRunner` (`run` git argv, `pathExists`, `readText`, `appendText`) defaulting to `localRunner`, the seam SSH (#167) and VPS (#162) plug into.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
 - Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
   - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).

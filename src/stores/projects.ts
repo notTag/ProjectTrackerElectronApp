@@ -37,6 +37,7 @@ import {
   fullAutoHandoffs,
   addScanDirectory,
   addTicketToBoard,
+  cloneTicketOnBoard,
   createSeedState,
   getBoard,
   getBoardPreferences,
@@ -522,6 +523,18 @@ export const useProjectsStore = defineStore('projects', {
         addTicketToBoard(board, { id: ticketId, laneId, title, description, ...completion })
       )
       return saved ? ticketId : null
+    },
+
+    async cloneTicket(projectPath: string, sourceId: string): Promise<string | null> {
+      const cloneId = crypto.randomUUID()
+      let cloned = false
+      const saved = await this.updateBoard(projectPath, (board) => {
+        const storedSource = storedBoard(this.state, projectPath).tickets.find((ticket) => ticket.id === sourceId)
+        const clonedBoard = cloneTicketOnBoard(board, sourceId, cloneId, storedSource?.laneId)
+        cloned = clonedBoard !== board
+        return clonedBoard
+      })
+      return saved && cloned ? cloneId : null
     },
 
     // Every single-ticket edit funnels through here — modal fields and checklist
@@ -1241,6 +1254,14 @@ export const useProjectsStore = defineStore('projects', {
     // prompt actually produced the output. Run always starts a fresh session.
     async runTicketAgent(projectPath: string, ticket: Ticket, agentId: string, prompt: string) {
       if (this.agentRunning[ticket.id]) return
+      const board = this.board(projectPath)
+      const currentTicket = board.tickets.find((entry) => entry.id === ticket.id) ?? ticket
+      const { skipped } = splitRunnable([currentTicket], currentTicket.laneId)
+      if (skipped.length > 0) {
+        const laneName = board.lanes.find((lane) => lane.id === currentTicket.laneId)?.name ?? currentTicket.laneId
+        this.notice = skippedRunsNotice(skipped, laneName)
+        return
+      }
       this.agentRunning[ticket.id] = true
       this.error = null
       this.notice = `Agent running on #${ticket.number}…`
@@ -1249,7 +1270,7 @@ export const useProjectsStore = defineStore('projects', {
       const runningRecord: TicketAgentRun = {
         at: startedAt,
         startedAt,
-        laneId: ticket.laneId,
+        laneId: currentTicket.laneId,
         output: '',
         status: 'running',
         mode: 'headless',
