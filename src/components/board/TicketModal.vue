@@ -286,6 +286,12 @@ const openTicketNextLaneId = computed(() =>
 
 // '' = inherit. A stale override naming the ticket's own lane shows as inherit
 // too, matching how effectiveNextLaneId resolves it.
+const showsWhoRunsIt = computed(
+  () => !hidesModalField('agent') || !hidesModalField('model') || !hidesModalField('fullAuto')
+)
+const showsMoveRules = computed(() => Boolean(openTicketNextLaneId.value || props.ticket.moveRules))
+const showsWhenItsDone = computed(() => !hidesModalField('nextLane') || showsMoveRules.value)
+
 const openTicketOverrideId = computed(() => {
   const ticket = props.ticket
   if (!ticket.moveToLaneId || ticket.moveToLaneId === ticket.laneId) return ''
@@ -520,6 +526,9 @@ defineExpose({
 
       <section v-if="!hidesModalField('externalLinks')" class="ticket-checklist ticket-links">
         <p class="eyebrow">External Links</p>
+        <a v-if="ticket.externalUrl" class="ticket-external" :href="ticket.externalUrl" target="_blank">
+          View on GitHub ({{ ticket.externalId?.replace('github:', '#') }})
+        </a>
         <ul v-if="ticket.externalLinks?.length">
           <li v-for="(link, index) in ticket.externalLinks" :key="index">
             <a v-if="isWebUrl(link)" :href="link" :title="link" target="_blank" rel="noreferrer">{{ link }}</a>
@@ -588,59 +597,106 @@ defineExpose({
         />
       </section>
 
+      <a
+        v-if="ticket.externalUrl && hidesModalField('externalLinks')"
+        class="ticket-external"
+        :href="ticket.externalUrl"
+        target="_blank"
+      >
+        View on GitHub ({{ ticket.externalId?.replace('github:', '#') }})
+      </a>
+
       <section class="ticket-agent">
         <p class="eyebrow">Agent completion</p>
-        <label v-if="!hidesModalField('agent')">
-          Agent
-          <select
-            :value="agentForTicket(ticket, agents).id"
-            @change="editTicket(ticket, { agentId: ($event.target as HTMLSelectElement).value, model: undefined })"
-          >
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-          </select>
-        </label>
-        <label v-if="!hidesModalField('model')">
-          Model
-          <ModelField
-            :model-value="ticket.model ?? ''"
-            :agent="findAgent(agents, ticket.agentId)"
-            placeholder="CLI default"
-            @update:model-value="editTicket(ticket, { model: $event || undefined })"
+
+        <p v-if="showsWhoRunsIt" class="field-group-caption">Who runs it</p>
+        <div v-if="showsWhoRunsIt" class="field-row">
+          <label v-if="!hidesModalField('agent')">
+            Agent
+            <select
+              :value="agentForTicket(ticket, agents).id"
+              @change="editTicket(ticket, { agentId: ($event.target as HTMLSelectElement).value, model: undefined })"
+            >
+              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </label>
+          <label v-if="!hidesModalField('model')">
+            Model
+            <ModelField
+              :model-value="ticket.model ?? ''"
+              :agent="findAgent(agents, ticket.agentId)"
+              placeholder="CLI default"
+              @update:model-value="editTicket(ticket, { model: $event || undefined })"
+            />
+          </label>
+          <label v-if="!hidesModalField('fullAuto')" class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(ticket.fullAuto)"
+              aria-labelledby="ticket-full-auto-label"
+              @change="editTicket(ticket, { fullAuto: ($event.target as HTMLInputElement).checked })"
+            />
+            <span id="ticket-full-auto-label">Full auto</span>
+            <InfoTip
+              text="Same as a lane's Full auto, but for this ticket in every lane it enters: when an agent moves this ticket on, the next lane's agent starts on it."
+            />
+          </label>
+        </div>
+
+        <p v-if="showsWhenItsDone" class="field-group-caption">When it's done</p>
+        <div v-if="!hidesModalField('nextLane')" class="field-row">
+          <label>
+            <span>
+              Next Lane
+              <InfoTip
+                text="Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane."
+              />
+            </span>
+            <select
+              :value="openTicketOverrideId"
+              @change="setMoveToLane(ticket, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">{{ openTicketLaneDefaultLabel }}</option>
+              <option v-for="lane in nextLaneOptionsFor(ticket.laneId)" :key="lane.id" :value="lane.id">
+                {{ lane.name }}
+              </option>
+            </select>
+          </label>
+          <label v-if="openTicketNextLaneId" class="checkbox-label">
+            <input
+              type="checkbox"
+              :checked="Boolean(ticket.moveOnComplete)"
+              @change="editTicket(ticket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
+            />
+            Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
+          </label>
+        </div>
+        <label v-if="showsMoveRules">
+          Move rules
+          <textarea
+            :value="ticket.moveRules ?? ''"
+            placeholder="One rule per line, e.g. PR merged; no open questions"
+            @change="editTicket(ticket, { moveRules: ($event.target as HTMLTextAreaElement).value })"
           />
         </label>
-        <label v-if="!hidesModalField('fullAuto')" class="checkbox-label">
+        <label v-if="moveRulesList(ticket).length" class="checkbox-label">
           <input
             type="checkbox"
-            :checked="Boolean(ticket.fullAuto)"
-            aria-labelledby="ticket-full-auto-label"
-            @change="editTicket(ticket, { fullAuto: ($event.target as HTMLInputElement).checked })"
+            :checked="ticket.moveRulesPassedLaneId === ticket.laneId"
+            @change="
+              editTicket(ticket, {
+                moveRulesPassedLaneId: ($event.target as HTMLInputElement).checked ? ticket.laneId : undefined
+              })
+            "
           />
-          <span id="ticket-full-auto-label">Full auto</span>
-          <InfoTip text="Same as a lane's Full auto, but for this ticket in every lane it enters." />
+          Move rules pass
         </label>
-        <span v-if="!hidesModalField('fullAuto')" class="field-hint">
-          In every lane: when an agent moves this ticket on, the next lane's agent starts on it.
-        </span>
-        <label v-if="!hidesModalField('nextLane')">
-          Next Lane
-          <select
-            :value="openTicketOverrideId"
-            @change="setMoveToLane(ticket, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ openTicketLaneDefaultLabel }}</option>
-            <option v-for="lane in nextLaneOptionsFor(ticket.laneId)" :key="lane.id" :value="lane.id">
-              {{ lane.name }}
-            </option>
-          </select>
-          <span class="field-hint">
-            Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane.
-          </span>
-        </label>
-        <p class="agent-hint">
-          The agent gets this ticket, its lane's prompt, markdown file and output location.
-          Run works in the background and saves its output below — it can write files but not run
-          shell commands. Run in a terminal to watch and approve each step; editors get the command on
-          the clipboard to paste:
+
+        <p class="field-group-caption">
+          Run
+          <InfoTip
+            text="The agent gets this ticket, its lane's prompt, markdown file and output location. Run works in the background and saves its output below — it can write files but not run shell commands. Run in a terminal to watch and approve each step; editors get the command on the clipboard to paste."
+          />
         </p>
         <pre class="agent-command">{{ ticketCommand(ticket) }}</pre>
         <div class="agent-actions">
@@ -668,49 +724,14 @@ defineExpose({
             ⌁ Run in {{ openInStore.selectedTarget.label }}
           </button>
         </div>
+        <div v-if="ticket.agentRun && !hidesModalField('lastAgentRun')" class="ticket-agent-run">
+          <p class="eyebrow">
+            Last agent run · {{ laneName(ticket.agentRun.laneId) }} · {{ formatDateTime(ticket.agentRun.at) }}
+          </p>
+          <pre v-if="ticket.agentRun.output.trim()">{{ ticket.agentRun.output }}</pre>
+          <p v-else class="field-hint">No output</p>
+        </div>
       </section>
-
-      <section v-if="ticket.agentRun && !hidesModalField('lastAgentRun')" class="ticket-agent-run">
-        <p class="eyebrow">
-          Last agent run · {{ laneName(ticket.agentRun.laneId) }} · {{ formatDateTime(ticket.agentRun.at) }}
-        </p>
-        <pre>{{ ticket.agentRun.output }}</pre>
-      </section>
-
-      <a v-if="ticket.externalUrl" class="ticket-external" :href="ticket.externalUrl" target="_blank">
-        View on GitHub ({{ ticket.externalId?.replace('github:', '#') }})
-      </a>
-
-      <label v-if="openTicketNextLaneId && !hidesModalField('nextLane')" class="checkbox-label">
-        <input
-          type="checkbox"
-          :checked="Boolean(ticket.moveOnComplete)"
-          @change="editTicket(ticket, { moveOnComplete: ($event.target as HTMLInputElement).checked })"
-        />
-        Move to Next Lane: {{ laneName(openTicketNextLaneId) }}
-      </label>
-
-      <label v-if="openTicketNextLaneId || ticket.moveRules">
-        Move rules
-        <textarea
-          :value="ticket.moveRules ?? ''"
-          placeholder="One rule per line, e.g. PR merged; no open questions"
-          @change="editTicket(ticket, { moveRules: ($event.target as HTMLTextAreaElement).value })"
-        />
-      </label>
-
-      <label v-if="moveRulesList(ticket).length" class="checkbox-label">
-        <input
-          type="checkbox"
-          :checked="ticket.moveRulesPassedLaneId === ticket.laneId"
-          @change="
-            editTicket(ticket, {
-              moveRulesPassedLaneId: ($event.target as HTMLInputElement).checked ? ticket.laneId : undefined
-            })
-          "
-        />
-        Move rules pass
-      </label>
 
       <div class="modal-actions">
         <button
