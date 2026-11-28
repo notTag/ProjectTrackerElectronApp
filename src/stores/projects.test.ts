@@ -33,7 +33,8 @@ const api = vi.hoisted(() => ({
   fetchTicketPullRequest: vi.fn(),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
   terminalTabsAlive: vi.fn(),
-  saveLaneMarkdown: vi.fn()
+  saveLaneMarkdown: vi.fn(),
+  readLaneOrchestratorContext: vi.fn()
 }))
 
 const offlineError = new Error(
@@ -751,18 +752,34 @@ describe('per-entity writes', () => {
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
   })
 
-  it('writes the orchestrator markdown, then stores only the new path', async () => {
+  it('writes the agent markdown, then stores only the new path', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
-    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentOrchestratorPrompt.md'
+    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
     api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', 'Flag', '')
+    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', 'Write', '')
 
-    expect(api.saveLaneMarkdown).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', '', 'Flag red PRs.', 'Flag')
-    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', { orchestratorFilePath: savedPath })
+    expect(api.saveLaneMarkdown).toHaveBeenCalledWith(PROJECT_PATH, 'PRD', '', 'Write a PRD.', 'Write')
+    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', { agentFilePath: savedPath })
     expect(saved).toEqual({ filePath: savedPath, laneUpdated: true })
+  })
+
+  it("reads the lane's orchestrator context file, and launches without it when the read fails", async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const prd = { ...store.board(PROJECT_PATH).lanes[1], orchestratorFilePath: 'docs/orchestrator.md' }
+    const additionalContext = { filePath: '/code/app/docs/orchestrator.md', content: 'Ping me on Slack.' }
+    api.readLaneOrchestratorContext.mockResolvedValueOnce(additionalContext)
+
+    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toEqual(additionalContext)
+    expect(api.readLaneOrchestratorContext).toHaveBeenCalledWith(PROJECT_PATH, 'PRD', 'docs/orchestrator.md')
+
+    api.readLaneOrchestratorContext.mockResolvedValueOnce(null)
+    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toBeUndefined()
+    api.readLaneOrchestratorContext.mockRejectedValueOnce(new Error('Invalid read request.'))
+    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toBeUndefined()
   })
 
   it('skips the lane update when the path is already stored', async () => {
@@ -772,7 +789,7 @@ describe('per-entity writes', () => {
     api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
     const prd = { ...store.board(PROJECT_PATH).lanes[1], agentFilePath: savedPath }
 
-    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'agent', 'Write a PRD.', 'Write', savedPath)
+    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', 'Write', savedPath)
 
     expect(api.updateLane).not.toHaveBeenCalled()
     expect(saved.laneUpdated).toBe(true)
@@ -784,7 +801,7 @@ describe('per-entity writes', () => {
     api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
     const prd = store.board(PROJECT_PATH).lanes[1]
 
-    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'orchestrator', 'Flag red PRs.', '', 'x.txt')).rejects.toThrow()
+    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', '', 'x.txt')).rejects.toThrow()
 
     expect(api.updateLane).not.toHaveBeenCalled()
   })

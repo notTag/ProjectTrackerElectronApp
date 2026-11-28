@@ -1,14 +1,14 @@
 // Renders the #118 scaling CSV into a one-page PDF report (chart + table).
 // Re-renders from the CSV alone, no rerun needed:
 //
-//   ./node_modules/.bin/electron scripts/scale-report.mjs <csv> <pdf>
+//   ./node_modules/.bin/electron scripts/scale-report.mjs [--baseline <t118 csv>] <csv> <pdf>
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { STOP_FILE, THRESHOLD_SECONDS, formatSeconds, median } from './scale-test.mjs'
+import { THRESHOLD_SECONDS, formatSeconds, median } from './scale-test.mjs'
 
 export const parseCsv = (text) => {
   const [header, ...lines] = text.trim().split('\n')
@@ -55,27 +55,32 @@ const describeStop = (checkpoints, stopRecord) => {
   return { text, last, elapsedMinutes: stopRecord.elapsedMinutes }
 }
 
+// <tag>-scaling-raw.csv sits beside <tag>-scaling-stop.json.
 const readStopRecord = (csvPath) => {
-  const stopPath = path.join(path.dirname(csvPath), STOP_FILE)
+  if (!csvPath.endsWith('-scaling-raw.csv')) return null
+  const stopName = path.basename(csvPath).replace('-scaling-raw.csv', '-scaling-stop.json')
+  const stopPath = path.join(path.dirname(csvPath), stopName)
   if (!fs.existsSync(stopPath)) return null
   return JSON.parse(fs.readFileSync(stopPath, 'utf8'))
 }
 const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`)
 
 // Log x axis: checkpoints step 10 then 100, so a linear axis would crush 10–100 into one pixel column.
-const renderChart = (checkpoints) => {
+// Each line: { key, cssVar, label, checkpoints, dashed }. Dashed = the #118 baseline.
+const renderChart = (lines, { yTitle, showThreshold }) => {
   const width = 720
-  const height = 340
+  const height = 300
   const margin = { top: 16, right: 24, bottom: 44, left: 52 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
-  const counts = checkpoints.map((checkpoint) => checkpoint.ticketCount)
+  const counts = lines.flatMap((line) => line.checkpoints.map((checkpoint) => checkpoint.ticketCount))
   const minLog = Math.log10(Math.min(...counts))
   const maxLog = Math.log10(Math.max(...counts, Math.min(...counts) * 10))
-  const finiteTimes = checkpoints
-    .flatMap((checkpoint) => [checkpoint.medianCreation, checkpoint.medianAccess])
+  const finiteTimes = lines
+    .flatMap((line) => line.checkpoints.map((checkpoint) => checkpoint[line.key]))
     .filter(Number.isFinite)
-  const yMax = Math.ceil(Math.max(THRESHOLD_SECONDS + 1, ...finiteTimes) * 1.1)
+  const yFloor = showThreshold ? THRESHOLD_SECONDS + 1 : 1
+  const yMax = Math.ceil(Math.max(yFloor, ...finiteTimes) * 1.1)
   const xForTicketCount = (count) => margin.left + ((Math.log10(count) - minLog) / (maxLog - minLog)) * plotWidth
   const yForSeconds = (seconds) => margin.top + plotHeight - (Math.min(seconds, yMax) / yMax) * plotHeight
 
@@ -85,32 +90,80 @@ const renderChart = (checkpoints) => {
   const yStep = yMax <= 10 ? 1 : Math.ceil(yMax / 10)
   const yTicks = Array.from({ length: Math.floor(yMax / yStep) + 1 }, (_, index) => index * yStep)
 
-  const series = (key, cssVar) => {
+  const series = ({ key, cssVar, checkpoints, dashed }) => {
     const points = checkpoints.map((checkpoint) => [xForTicketCount(checkpoint.ticketCount), yForSeconds(checkpoint[key])])
     const pathData = points.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('')
-    const dots = points
-      .map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="var(${cssVar})" stroke="var(--surface-1)" stroke-width="1"/>`)
-      .join('')
-    return `<path d="${pathData}" fill="none" stroke="var(${cssVar})" stroke-width="2"/>${dots}`
+    const dash = dashed ? ' stroke-dasharray="5 4" stroke-opacity="0.7"' : ''
+    const dots = dashed
+      ? ''
+      : points
+          .map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="var(${cssVar})" stroke="var(--surface-1)" stroke-width="1"/>`)
+          .join('')
+    return `<path d="${pathData}" fill="none" stroke="var(${cssVar})" stroke-width="2"${dash}/>${dots}`
   }
 
-  const last = checkpoints.at(-1)
-  const label = (key, text) =>
-    `<text x="${xForTicketCount(last.ticketCount) - 6}" y="${yForSeconds(last[key]) - 10}" text-anchor="end" class="direct">${text}</text>`
+  const label = ({ key, label: text, checkpoints }) => {
+    const last = checkpoints.at(-1)
+    return `<text x="${xForTicketCount(last.ticketCount) - 6}" y="${yForSeconds(last[key]) - 10}" text-anchor="end" class="direct">${text}</text>`
+  }
 
-  return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Ticket creation and access time vs ticket count">
+  const threshold = showThreshold
+    ? `<line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(THRESHOLD_SECONDS)}" y2="${yForSeconds(THRESHOLD_SECONDS)}" class="threshold"/>
+    <text x="${margin.left + 6}" y="${yForSeconds(THRESHOLD_SECONDS) - 6}" class="direct">${THRESHOLD_SECONDS}s threshold</text>`
+    : ''
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="${escapeHtml(yTitle)} vs ticket count">
     ${yTicks.map((tick) => `<line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(tick)}" y2="${yForSeconds(tick)}" class="grid"/><text x="${margin.left - 8}" y="${yForSeconds(tick) + 4}" text-anchor="end" class="tick">${tick}</text>`).join('')}
     ${xTicks.map((tick) => `<text x="${xForTicketCount(tick)}" y="${height - margin.bottom + 18}" text-anchor="middle" class="tick">${tick.toLocaleString('en-US')}</text>`).join('')}
     <line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(0)}" y2="${yForSeconds(0)}" class="axis"/>
-    <line x1="${margin.left}" x2="${width - margin.right}" y1="${yForSeconds(THRESHOLD_SECONDS)}" y2="${yForSeconds(THRESHOLD_SECONDS)}" class="threshold"/>
-    <text x="${margin.left + 6}" y="${yForSeconds(THRESHOLD_SECONDS) - 6}" class="direct">${THRESHOLD_SECONDS}s threshold</text>
-    ${series('medianCreation', '--series-1')}
-    ${series('medianAccess', '--series-2')}
-    ${label('medianCreation', 'Creation')}
-    ${label('medianAccess', 'Access')}
+    ${threshold}
+    ${lines.map(series).join('')}
+    ${lines.filter((line) => line.label).map(label).join('')}
     <text x="${margin.left + plotWidth / 2}" y="${height - 6}" text-anchor="middle" class="axis-title">Tickets on the board (log scale)</text>
-    <text transform="translate(14 ${margin.top + plotHeight / 2}) rotate(-90)" text-anchor="middle" class="axis-title">Seconds (median of 3)</text>
+    <text transform="translate(14 ${margin.top + plotHeight / 2}) rotate(-90)" text-anchor="middle" class="axis-title">${escapeHtml(yTitle)}</text>
   </svg>`
+}
+
+// Before/after at the checkpoints both runs reached.
+const comparisonRows = (checkpoints, baselineCheckpoints) => {
+  const baselineByCount = new Map(baselineCheckpoints.map((checkpoint) => [checkpoint.ticketCount, checkpoint]))
+  const shared = checkpoints.filter((checkpoint) => baselineByCount.has(checkpoint.ticketCount))
+  const wanted = [100, 1000, 5000, 10000, shared.at(-1)?.ticketCount]
+  const picked = shared.filter((checkpoint) => wanted.includes(checkpoint.ticketCount))
+  return picked
+    .map((after) => {
+      const before = baselineByCount.get(after.ticketCount)
+      const ratio = after.medianCreation / after.medianAccess
+      return `<tr><td>${after.ticketCount.toLocaleString('en-US')}</td>
+        <td>${formatSeconds(before.medianCreation)} → ${formatSeconds(after.medianCreation)}</td>
+        <td>${formatSeconds(before.medianAccess)} → ${formatSeconds(after.medianAccess)}</td>
+        <td>${before.fillSeconds.toFixed(1)} → ${after.fillSeconds.toFixed(1)}</td>
+        <td>${Number.isFinite(ratio) ? ratio.toFixed(2) : '—'}×</td></tr>`
+    })
+    .join('')
+}
+
+// #134's targets, checked at the last checkpoint both runs reached.
+const renderTargets = (checkpoints, baselineCheckpoints) => {
+  const baselineCounts = new Set(baselineCheckpoints.map((checkpoint) => checkpoint.ticketCount))
+  const shared = checkpoints.filter((checkpoint) => baselineCounts.has(checkpoint.ticketCount))
+  const first = checkpoints[0]
+  const last = shared.at(-1)
+  if (!first || !last) return ''
+  const before = baselineCheckpoints.find((checkpoint) => checkpoint.ticketCount === last.ticketCount)
+  const count = last.ticketCount.toLocaleString('en-US')
+  const accessGrowth = last.medianAccess / first.medianAccess
+  const ratio = last.medianCreation / last.medianAccess
+  const floorRatio = first.medianCreation / first.medianAccess
+  const creationAboveFloor = formatSeconds(last.medianCreation - first.medianCreation)
+  const speedupVsBaseline = (before.medianCreation / last.medianCreation).toFixed(0)
+  const verdict = (met) => (met ? 'met' : 'missed')
+  return `<h2>Targets (#134)</h2>
+    <ul>
+      <li>Access ~flat vs board size: <strong>${verdict(accessGrowth < 1.5)}</strong>. ${formatSeconds(first.medianAccess)}s at ${first.ticketCount} tickets, ${formatSeconds(last.medianAccess)}s at ${count} (×${accessGrowth.toFixed(2)}).</li>
+      <li>Creation ≤ ~1.5× access: <strong>${verdict(ratio <= 1.5)}</strong>, ${ratio.toFixed(2)}× at ${count}. Even at ${first.ticketCount} tickets it is ${floorRatio.toFixed(2)}×: at these speeds both times sit on whole animation frames (16.7 ms), and a create takes more of them than an open (draft modal, Save enabled, card, +2) against an open's (modal, +2). What is left above that floor (not profiled; most likely the per-create passes over every ticket: the store's diff, completion-move and full-auto checks, and the lane map recompute) is about ${creationAboveFloor}s at ${count}; it is ${speedupVsBaseline}× faster than #118 but still grows with the board.</li>
+      <li>Fresh-board draw well under #118's ${before.fillSeconds.toFixed(1)}s at ${count}: <strong>${verdict(last.fillSeconds < before.fillSeconds / 2)}</strong>, ${last.fillSeconds.toFixed(1)}s.</li>
+    </ul>`
 }
 
 const machineInfo = () => {
@@ -125,8 +178,37 @@ const machineInfo = () => {
   ]
 }
 
-export const renderReportHtml = (rows, stopRecord) => {
+export const renderReportHtml = (rows, stopRecord, baselineRows = null) => {
   const checkpoints = summarizeCheckpoints(rows)
+  const baselineCheckpoints = baselineRows ? summarizeCheckpoints(baselineRows) : []
+  const hasBaseline = baselineCheckpoints.length > 0
+  const timingLines = [
+    ...(hasBaseline
+      ? [
+          { key: 'medianCreation', cssVar: '--series-1', checkpoints: baselineCheckpoints, dashed: true },
+          { key: 'medianAccess', cssVar: '--series-2', checkpoints: baselineCheckpoints, dashed: true }
+        ]
+      : []),
+    { key: 'medianCreation', cssVar: '--series-1', label: 'Creation', checkpoints },
+    { key: 'medianAccess', cssVar: '--series-2', label: 'Access', checkpoints }
+  ]
+  const fillLines = [
+    { key: 'fillSeconds', cssVar: '--series-3', label: 'Before (#118)', checkpoints: baselineCheckpoints, dashed: true },
+    { key: 'fillSeconds', cssVar: '--series-3', label: 'After', checkpoints }
+  ]
+  const title = hasBaseline ? 'Ticket #134 — board render scaling, before (#118) vs after' : 'Ticket #118 — single-board scaling report'
+  const lede = hasBaseline
+    ? 'Same harness and method as #118, rerun after the #134 render fixes (lane map, TicketCard, in-place ticket writes, virtualized lanes). Solid = after, dashed = #118.'
+    : 'Ticket Creation Time and Ticket Access Time as one board grows, measured through the real UI on an isolated copy of the database.'
+  const baselineLegend = hasBaseline ? '<span class="dashed">#118 (before)</span>' : `<span class="dashed">${THRESHOLD_SECONDS}s threshold</span>`
+  const comparison = hasBaseline
+    ? `<h2>Before → after (medians)</h2>
+    <table><thead><tr><th>Tickets</th><th>Creation (s)</th><th>Access (s)</th><th>Fill + reload (s)</th><th>Creation ÷ access, after</th></tr></thead>
+    <tbody>${comparisonRows(checkpoints, baselineCheckpoints)}</tbody></table>
+    ${renderTargets(checkpoints, baselineCheckpoints)}
+    <h2>Fill + reload (fresh board draw)</h2>
+    ${renderChart(fillLines, { yTitle: 'Seconds', showThreshold: false })}`
+    : ''
   const stop = describeStop(checkpoints, stopRecord)
   const elapsedText = stop.elapsedMinutes === null ? '' : ` Run took ${stop.elapsedMinutes.toFixed(1)} min.`
   const tableRows = checkpoints
@@ -140,8 +222,8 @@ export const renderReportHtml = (rows, stopRecord) => {
     })
     .join('')
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Ticket #118 scaling report</title><style>
-    .viz-root { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a7974; --grid:#e6e5e1; --series-1:#2a78d6; --series-2:#eb6834; }
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
+    .viz-root { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7a7974; --grid:#e6e5e1; --series-1:#2a78d6; --series-2:#eb6834; --series-3:#3a9a5b; }
     body { margin:0; font:12px/1.45 -apple-system, "Helvetica Neue", sans-serif; color:var(--text-primary); background:var(--surface-1); }
     main { padding:28px 36px; }
     h1 { font-size:20px; margin:0 0 4px; } h2 { font-size:14px; margin:20px 0 6px; }
@@ -160,19 +242,20 @@ export const renderReportHtml = (rows, stopRecord) => {
     dl { display:grid; grid-template-columns:max-content 1fr; gap:2px 12px; margin:0; } dt { color:var(--text-secondary); }
     ul { margin:0; padding-left:18px; }
   </style></head><body class="viz-root"><main>
-    <h1>Ticket #118 — single-board scaling report</h1>
-    <p class="lede">Ticket Creation Time and Ticket Access Time as one board grows, measured through the real UI on an isolated copy of the database.</p>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="lede">${escapeHtml(lede)}</p>
     <p class="stop"><strong>Stopped at ${stop.last.ticketCount.toLocaleString('en-US')} tickets:</strong> ${escapeHtml(stop.text)}.
       Last checkpoint medians: creation ${formatSeconds(stop.last.medianCreation)}s, access ${formatSeconds(stop.last.medianAccess)}s.${elapsedText}</p>
-    <div class="legend"><span style="--swatch:var(--series-1)">Ticket Creation Time</span><span style="--swatch:var(--series-2)">Ticket Access Time</span><span class="dashed">${THRESHOLD_SECONDS}s threshold</span></div>
-    ${renderChart(checkpoints)}
+    <div class="legend"><span style="--swatch:var(--series-1)">Ticket Creation Time</span><span style="--swatch:var(--series-2)">Ticket Access Time</span>${baselineLegend}</div>
+    ${renderChart(timingLines, { yTitle: 'Seconds (median of 3)', showThreshold: true })}
+    ${comparison}
 
     <h2>Method</h2>
     <ul>
       <li>Live DB copied with <code>sqlite3 .backup</code>; copy checked with <code>PRAGMA integrity_check</code> = ok and ticket count = live. App launched with <code>PROJECT_TRACKER_USER_DATA</code> pointing at the copy; live DB only read.</li>
       <li>Throwaway git-init'd project added via the dashboard Scan button (scan dirs in the copy re-pointed at a scratch folder).</li>
-      <li>Fill tickets created over IPC (<code>window.projectTracker.createTicket</code>), round-robin across the board's lanes, ~500-char description each; page reloaded after every fill and timing starts once every card is rendered.</li>
-      <li>Ticket Creation Time: click “+ Ticket” → type title → click Save → new card rendered (+2 animation frames). Ticket Access Time: click that card → ticket modal rendered with its #number (+2 frames). Timed in the renderer with <code>performance.now()</code>, driven over Chrome DevTools Protocol.</li>
+      <li>Fill tickets created over IPC (<code>window.projectTracker.createTicket</code>), round-robin across the board's lanes, ~500-char description each; page reloaded after every fill and timing starts once the board shows every ticket (since #134: lane counts add up, as long lanes mount only the cards in view).</li>
+      <li>Ticket Creation Time (since #134 each lane is first scrolled to its bottom, untimed, where the new card lands): click “+ Ticket” → type title → click Save → new card rendered (+2 animation frames). Ticket Access Time: click that card → ticket modal rendered with its #number (+2 frames). Timed in the renderer with <code>performance.now()</code>, driven over Chrome DevTools Protocol.</li>
       <li>Checkpoints 10…100 step 10, then step 100. 3 create+access samples each; the chart plots the median, the table lists every sample (first = the single timed sample). Stop rule: median creation &gt; ${THRESHOLD_SECONDS}s, or 20,000 tickets / 60 min safety cap. Sample timeout 30s.</li>
     </ul>
 
@@ -191,11 +274,12 @@ export const renderReportHtml = (rows, stopRecord) => {
   </main></body></html>`
 }
 
-const writePdf = async (csvPath, pdfPath) => {
+const writePdf = async (csvPath, pdfPath, baselineCsvPath) => {
   const { app, BrowserWindow } = await import('electron')
   await app.whenReady()
   const rows = parseCsv(fs.readFileSync(csvPath, 'utf8'))
-  const html = renderReportHtml(rows, readStopRecord(csvPath))
+  const baselineRows = baselineCsvPath ? parseCsv(fs.readFileSync(baselineCsvPath, 'utf8')) : null
+  const html = renderReportHtml(rows, readStopRecord(csvPath), baselineRows)
   const window = new BrowserWindow({ show: false, width: 900, height: 1200 })
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   const pdf = await window.webContents.printToPDF({ printBackground: true, pageSize: 'Letter' })
@@ -205,7 +289,9 @@ const writePdf = async (csvPath, pdfPath) => {
 
 if (process.versions.electron) {
   const [csvPath, pdfPath] = process.argv.slice(-2).map((arg) => path.resolve(arg))
-  writePdf(csvPath, pdfPath).catch((error) => {
+  const baselineIndex = process.argv.indexOf('--baseline')
+  const baselineCsvPath = baselineIndex > 0 ? path.resolve(process.argv[baselineIndex + 1]) : null
+  writePdf(csvPath, pdfPath, baselineCsvPath).catch((error) => {
     console.error(error)
     process.exit(1)
   })
