@@ -30,6 +30,7 @@ export const agentSearchPath = (homeDirectory: string) =>
 
 export interface AgentRunResult {
   succeeded: boolean
+  blocked: boolean
   output: string
 }
 
@@ -42,6 +43,15 @@ interface AgentAttempt extends AgentRunResult {
 }
 
 const lastLine = (text: string): string => text.trim().split('\n').pop() ?? ''
+
+export const RUN_STATUS_INSTRUCTION =
+  'When you stop, end your reply with one final line: "RUN STATUS: done" if this task is complete, ' +
+  'or "RUN STATUS: blocked — <reason>" if you could not finish it.'
+const BLOCKED_MARKER_PATTERN = /^\W*RUN STATUS:\s*blocked/i
+
+const reportsBlocked = (stdout: string): boolean => BLOCKED_MARKER_PATTERN.test(lastLine(stdout))
+
+const withRunStatusInstruction = (prompt: string): string => `${prompt}\n\n${RUN_STATUS_INSTRUCTION}`
 
 // execFile with an argv array, no shell: the prompt — which can carry text from
 // a GitHub issue — reaches the agent as one literal argument, never as code.
@@ -63,14 +73,17 @@ const runAgentProcess = (
     const child = execFile(agent.command, args, options, (error, stdout, stderr) => {
       const printed = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n')
       const failureReport = [stderr.trim(), lastLine(stdout)].filter(Boolean).join('\n')
-      if (!error) return resolve({ succeeded: true, output: stdout.trim(), failureReport })
+      if (!error) {
+        const blocked = reportsBlocked(stdout)
+        return resolve({ succeeded: !blocked, blocked, output: stdout.trim(), failureReport })
+      }
 
       const commandMissing = error.code === 'ENOENT'
       const failureReason = commandMissing
         ? `${agent.name} CLI (\`${agent.command}\`) was not found. Install it or add it to your PATH.`
         : error.message
       const output = [printed, failureReason].filter(Boolean).join('\n\n')
-      resolve({ succeeded: false, output, failureReport, error })
+      resolve({ succeeded: false, blocked: false, output, failureReport, error })
     })
     // An open stdin pipe reads as "input is coming" to CLIs that accept a piped
     // prompt, and they wait on it forever. There is no input; say so.
@@ -123,15 +136,18 @@ export const runAgentHeadlessWithRetry = async (
   const sessionWords = agentSessionWords(agent, sessionId)
   const resumeWords = agentResumeWords(agent, sessionId)
   const canRetry = resumeWords.length > 0
-  const firstArgs = [...agent.headlessArgs, ...modelWords, ...sessionWords, prompt]
-  const resumeArgs = [...agent.headlessArgs, ...modelWords, ...resumeWords, CONTINUE_PROMPT]
+  const firstPrompt = withRunStatusInstruction(prompt)
+  const resumePrompt = withRunStatusInstruction(CONTINUE_PROMPT)
+  const firstArgs = [...agent.headlessArgs, ...modelWords, ...sessionWords, firstPrompt]
+  const resumeArgs = [...agent.headlessArgs, ...modelWords, ...resumeWords, resumePrompt]
 
   let attempt = await runAgentProcess(agent, firstArgs, projectPath, homeDirectory)
   // Every attempt's output is kept: the one that dropped often did the real work.
   const outputs = [attempt.output]
   let attempts = 1
   const retriesLeft = () => attempts <= RETRY_DELAYS_MS.length
-  while (canRetry && !attempt.succeeded && retriesLeft() && isTransientFailure(attempt.failureReport, attempt.error)) {
+  const droppedMidRun = () => !attempt.succeeded && !attempt.blocked && isTransientFailure(attempt.failureReport, attempt.error)
+  while (canRetry && retriesLeft() && droppedMidRun()) {
     const delayMs = RETRY_DELAYS_MS[attempts - 1]
     onRetry?.({ attempt: attempts, of: RETRY_DELAYS_MS.length, delayMs })
     await sleep(delayMs)
@@ -140,5 +156,5 @@ export const runAgentHeadlessWithRetry = async (
     attempts += 1
   }
   const output = outputs.filter(Boolean).join(`\n\n--- retry ---\n\n`)
-  return { succeeded: attempt.succeeded, output, attempts }
+  return { succeeded: attempt.succeeded, blocked: attempt.blocked, output, attempts }
 }

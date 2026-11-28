@@ -34,6 +34,7 @@ const AGENT_BADGES: Record<AgentRunBadge, { className: string; label: string; gl
   running: { className: 'agent-status-running', label: 'Agent running' },
   succeeded: { className: 'agent-status-done', label: 'Agent succeeded', glyph: '✓' },
   failed: { className: 'agent-status-failed', label: 'Agent failed', glyph: '✕' },
+  blocked: { className: 'agent-status-blocked', label: 'Blocked', glyph: '!' },
   interrupted: { className: 'agent-status-interrupted', label: 'Interrupted', glyph: '⏸' }
 }
 

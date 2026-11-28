@@ -1546,7 +1546,8 @@ button.workflow-label:focus-visible {
   text-shadow: 0 0 6px var(--agent-status-red);
 }
 
-.agent-status-interrupted {
+.agent-status-interrupted,
+.agent-status-blocked {
   color: var(--agent-status-amber);
   font-weight: 700;
   text-shadow: 0 0 6px var(--agent-status-amber);

@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 
 import { describe, expect, it } from 'vitest'
 
-import { CONTINUE_PROMPT, isTransientFailure, runAgentHeadlessWithRetry } from './agentRun.js'
+import { CONTINUE_PROMPT, RUN_STATUS_INSTRUCTION, isTransientFailure, runAgentHeadlessWithRetry } from './agentRun.js'
 
 const echoLastArgument = {
   id: 'echo',
@@ -15,13 +15,13 @@ describe('runAgentHeadlessWithRetry argv and output', () => {
   it('passes the prompt as one literal argument, never through a shell', async () => {
     const prompt = `don't $(touch pwned) \`id\` "quoted"\nsecond line`
     const result = await runAgentHeadlessWithRetry(echoLastArgument, prompt, tmpdir(), tmpdir())
-    expect(result).toEqual({ succeeded: true, output: prompt, attempts: 1 })
+    expect(result).toEqual({ succeeded: true, blocked: false, output: `${prompt}\n\n${RUN_STATUS_INSTRUCTION}`, attempts: 1 })
   })
 
   it('puts the model flag before the prompt, which stays last', async () => {
     const echoArgs = { ...echoLastArgument, headlessArgs: ['-e', 'console.log(process.argv.slice(1).join(" "))', '--'], modelArgs: ['--model'] }
     const result = await runAgentHeadlessWithRetry(echoArgs, 'prompt', tmpdir(), tmpdir(), { model: 'opus' })
-    expect(result).toEqual({ succeeded: true, output: '--model opus prompt', attempts: 1 })
+    expect(result).toEqual({ succeeded: true, blocked: false, output: `--model opus prompt\n\n${RUN_STATUS_INSTRUCTION}`, attempts: 1 })
   })
 
   it('keeps what a failing agent printed alongside why it failed', async () => {
@@ -35,6 +35,66 @@ describe('runAgentHeadlessWithRetry argv and output', () => {
     const missing = { ...echoLastArgument, name: 'Ghost', command: 'definitely-not-an-agent-cli' }
     const result = await runAgentHeadlessWithRetry(missing, 'prompt', tmpdir(), tmpdir())
     expect(result.output).toContain('Ghost CLI (`definitely-not-an-agent-cli`) was not found')
+  })
+})
+
+describe('runAgentHeadlessWithRetry run status marker', () => {
+  const SESSION_ID = '3b241101-e2bb-4255-8caf-4136c566a962'
+  const agentPrinting = (lines: string[]) => ({
+    id: 'marker',
+    name: 'Marker',
+    command: process.execPath,
+    headlessArgs: ['-e', `console.log(${JSON.stringify(lines.join('\n'))})`, '--'],
+    sessionArgs: ['--session-id', '{sessionId}'],
+    resumeArgs: ['--resume', '{sessionId}']
+  })
+  const run = (lines: string[]) =>
+    runAgentHeadlessWithRetry(agentPrinting(lines), 'do it', tmpdir(), tmpdir(), {
+      sessionId: SESSION_ID,
+      sleep: async () => undefined
+    })
+
+  it('records an exit-0 run whose last line says blocked as blocked, not succeeded', async () => {
+    const result = await run(['tried gh', 'RUN STATUS: blocked — need gh permission'])
+    expect(result).toMatchObject({ succeeded: false, blocked: true, attempts: 1 })
+  })
+
+  it('reads the marker through markdown emphasis and any case', async () => {
+    const result = await run(['**run status: Blocked** — no sqlite3'])
+    expect(result.blocked).toBe(true)
+  })
+
+  it('never retries a blocked run, even when its reason mentions the network', async () => {
+    const result = await run(['RUN STATUS: blocked — network sandbox denied'])
+    expect(result).toMatchObject({ blocked: true, attempts: 1 })
+  })
+
+  it('keeps a done marker or no marker as succeeded', async () => {
+    expect(await run(['work', 'RUN STATUS: done'])).toMatchObject({ succeeded: true, blocked: false })
+    expect(await run(['work finished'])).toMatchObject({ succeeded: true, blocked: false })
+  })
+
+  it('ignores a blocked marker that is not the last line', async () => {
+    const result = await run(['RUN STATUS: blocked — earlier', 'fixed it', 'RUN STATUS: done'])
+    expect(result).toMatchObject({ succeeded: true, blocked: false })
+  })
+
+  it('does not read the echoed instruction as a blocked marker', async () => {
+    const echo = { ...agentPrinting([]), headlessArgs: ['-e', 'console.log(process.argv.at(-1))', '--'] }
+    const result = await runAgentHeadlessWithRetry(echo, 'do it', tmpdir(), tmpdir())
+    expect(result).toMatchObject({ succeeded: true, blocked: false })
+  })
+
+  it('appends the run status instruction to the resume prompt too', async () => {
+    const flaky = {
+      ...agentPrinting([]),
+      headlessArgs: ['-e', 'console.log(process.argv.slice(1).join(" ")); console.error("API Error: 529 overloaded"); process.exit(1)', '--']
+    }
+    const result = await runAgentHeadlessWithRetry(flaky, 'do it', tmpdir(), tmpdir(), {
+      sessionId: SESSION_ID,
+      sleep: async () => undefined
+    })
+    expect(result.output).toContain(`--resume ${SESSION_ID} ${CONTINUE_PROMPT}\n\n${RUN_STATUS_INSTRUCTION}`)
   })
 })
 
@@ -109,7 +169,7 @@ describe('runAgentHeadlessWithRetry', () => {
       sessionId: SESSION_ID,
       sleep: async () => undefined
     })
-    expect(result).toMatchObject({ succeeded: true, attempts: 1, output: `--session-id ${SESSION_ID} do it` })
+    expect(result).toMatchObject({ succeeded: true, attempts: 1, output: `--session-id ${SESSION_ID} do it\n\n${RUN_STATUS_INSTRUCTION}` })
   })
 
   it('stops as soon as a resumed attempt succeeds', async () => {

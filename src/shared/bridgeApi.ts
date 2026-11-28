@@ -132,7 +132,7 @@ export interface ProjectTrackerBridge {
     prompt: string,
     model?: string,
     sessionId?: string
-  ): Promise<{ succeeded: boolean; output: string; attempts?: number }>
+  ): Promise<{ succeeded: boolean; blocked?: boolean; output: string; attempts?: number }>
   onAgentRetry(callback: (notice: AgentRetryEvent) => void): () => void
   appStartedAt(): Promise<string>
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>

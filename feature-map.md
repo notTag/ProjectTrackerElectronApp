@@ -316,7 +316,8 @@ From left to right:
   - **⌂ worktree** folder name (full path on hover)
   - **v1.4.0** semantic version
   - **PR #N ↗** link, with a dot for the PR's state (open, draft, merged, closed). Clicking it opens the PR without opening the ticket
-- **Agent run badge**: running, ✓ succeeded, failed, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
+- **Blocked headless runs**: every headless prompt asks the agent to end with `RUN STATUS: done` or `RUN STATUS: blocked — <reason>`. A run that exits 0 with the blocked line last is recorded `blocked`: no retry, no Next Lane move, amber ! badge (`RUN_STATUS_INSTRUCTION` in `electron/agentRun.ts`).
+- **Agent run badge**: running, ✓ succeeded, failed, ! blocked, or ⏸ interrupted, for the last run in the ticket's current lane. A finished result clears once you open the ticket; a running one stays (`agentRunBadge` in `projectTypes.ts`).
 - **auto** badge after the title when full auto is on, then a green **ready → <Next lane>** badge when the ticket is ready to move but nothing moved it (`isReadyToMove` in `projectTypes.ts`). Always shown, no Display toggle.
   - With move rules: shows while the rules are confirmed in this lane and every checklist item is done. An agent's `sqlite3` confirm shows after the poll refresh.
   - Without rules: shows when the ticket completed (3.8 Next Lane) in this lane while unarmed. Unticking an item clears it.
@@ -438,7 +439,7 @@ In graph view this opens as a side panel instead of a centered modal.
   - It keeps showing as running if you leave the board and come back.
   - Each run starts a fresh Claude Code session under an id the app picks, saved on the ticket before the agent starts.
   - A network drop, timeout, overload, rate limit or 5xx retries up to 2× (after 30 s, then 2 min), resuming the same session. A notice says "retrying in…". A missing CLI or the 30-minute timeout never retries.
-- **⏯ Resume** (next to ▶ Run, Claude Code only): shown when the last run in this lane was interrupted or failed. Opens a terminal tab in the directory the session started in, running `claude --resume <id>` with a "you were interrupted, check git status and continue" prompt. ▶ Run still starts over clean.
+- **⏯ Resume** (next to ▶ Run, Claude Code only): shown when the last run in this lane was interrupted, failed, or blocked. Opens a terminal tab in the directory the session started in, running `claude --resume <id>` with a "you were interrupted, check git status and continue" prompt. ▶ Run still starts over clean.
 - **Interrupted** badge (amber ⏸) on the card: a run still marked running whose app process died (headless, after an app restart) or whose terminal tab is gone (checked at launch and every 60 s; Terminal, iTerm2 and Ghostty by tab title, Warp by age only, after 45 min). Auto Run and full-auto tabs are tracked the same way. An interrupted full-auto ticket doesn't hand off; a notice says "Full auto paused on #N: agent interrupted".
 - **⌁ Run in <Open In app>**:
   - Terminals open a new window in the project folder and run the command there, so you can watch each step (and approve it, if the agent asks).
