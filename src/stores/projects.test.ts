@@ -368,6 +368,17 @@ describe('Move to on completion', () => {
     expect(store.error).toBeNull()
   })
 
+  it('records a blocked ▶ Run as blocked and leaves the ticket in its lane', async () => {
+    const { store, ticket } = armedStore()
+    api.runTicketAgent.mockResolvedValue({ output: 'RUN STATUS: blocked — need gh', succeeded: false, blocked: true })
+
+    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
+
+    expect(storedTicket(store)).toMatchObject({ laneId: 'prd', moveOnComplete: true })
+    expect(storedTicket(store).agentRun).toMatchObject({ status: 'blocked', succeeded: false })
+    expect(store.error).toBe("Agent on #7 is blocked — see the ticket's last run.")
+  })
+
   const liveTerminalRun = (laneId: string) => ({
     at: '2026-11-27T07:00:00.000Z',
     startedAt: '2026-11-27T07:00:00.000Z',

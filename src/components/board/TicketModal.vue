@@ -748,6 +748,7 @@ defineExpose({
         <div v-if="ticket.agentRun && !hidesModalField('lastAgentRun')" class="ticket-agent-run">
           <p class="eyebrow">
             Last agent run · {{ laneName(ticket.agentRun.laneId) }} · {{ formatDateTime(ticket.agentRun.at) }}
+            <template v-if="ticket.agentRun.status === 'blocked'"> · <span class="agent-status-blocked">Blocked</span></template>
           </p>
           <pre v-if="ticket.agentRun.output.trim()">{{ ticket.agentRun.output }}</pre>
           <p

@@ -41,6 +41,7 @@ import {
   orchestratorPromptContext,
   completionMoves,
   findAgent,
+  finishedRunStatus,
   fullAutoHandoffs,
   addScanDirectory,
   addTicketToBoard,
@@ -1330,6 +1331,7 @@ export const useProjectsStore = defineStore('projects', {
           .catch((error: unknown) => ({
             output: error instanceof Error ? error.message : String(error),
             succeeded: false,
+            blocked: false,
             attempts: 1,
             neverStarted: true
           }))
@@ -1341,12 +1343,16 @@ export const useProjectsStore = defineStore('projects', {
           at: new Date().toISOString(),
           output: result.output,
           succeeded: result.succeeded,
-          status: result.succeeded ? 'succeeded' : 'failed',
+          status: finishedRunStatus(result),
           attempts: result.attempts ?? 1
         }
         const storedTicket = () => this.board(projectPath).tickets.find((entry) => entry.id === ticket.id)
         const laneBeforeSave = storedTicket()?.laneId
         await this.updateTicket(projectPath, ticket.id, { agentRun }, result.succeeded)
+        if (result.blocked) {
+          this.error = `Agent on #${ticket.number} is blocked — see the ticket's last run.`
+          return
+        }
         if (!result.succeeded) {
           this.error = `Agent run on #${ticket.number} failed — see the ticket's last run.`
           return

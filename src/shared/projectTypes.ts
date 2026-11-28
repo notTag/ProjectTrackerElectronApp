@@ -269,7 +269,7 @@ export interface ChecklistItem {
   done: boolean
 }
 
-export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'interrupted'
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'blocked' | 'interrupted'
 
 // Captures what a swim lane's agent produced for a ticket. Only the most recent
 // run is kept: the board is a working surface, not an audit log.
@@ -302,7 +302,12 @@ export interface TicketAgentRun {
   tabTitle?: string
 }
 
-export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'interrupted'
+export const finishedRunStatus = ({ succeeded, blocked }: { succeeded: boolean; blocked?: boolean }): AgentRunStatus => {
+  if (blocked) return 'blocked'
+  return succeeded ? 'succeeded' : 'failed'
+}
+
+export type AgentRunBadge = 'running' | 'succeeded' | 'failed' | 'blocked' | 'interrupted'
 
 // Lane-scoped: each lane has its own prompt, so a run finished in an earlier
 // lane says nothing about the work in this one. A running record shows even
@@ -314,6 +319,7 @@ export const agentRunBadge = (ticket: Ticket, running: boolean): AgentRunBadge |
   if (lastRun.status === 'running') return 'running'
   if (lastRun.seenAt !== undefined) return null
   if (lastRun.status === 'interrupted') return 'interrupted'
+  if (lastRun.status === 'blocked') return 'blocked'
   if (lastRun.succeeded === undefined) return null
   return lastRun.succeeded ? 'succeeded' : 'failed'
 }
@@ -957,7 +963,8 @@ export const agentResumeCommand = (agent: Agent, run: Pick<TicketAgentRun, 'sess
 export const canResume = (ticket: Ticket, agent: Agent): boolean => {
   const run = ticket.agentRun
   if (!run || run.laneId !== ticket.laneId) return false
-  const endedUnfinished = run.status === 'interrupted' || run.status === 'failed'
+  const unfinishedStatuses: (AgentRunStatus | undefined)[] = ['interrupted', 'failed', 'blocked']
+  const endedUnfinished = unfinishedStatuses.includes(run.status)
   return endedUnfinished && isUuid(run.sessionId) && agentSupportsResume(agent)
 }
 
