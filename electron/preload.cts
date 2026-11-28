@@ -3,7 +3,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
-  LaneMarkdownKind,
   LaneWritePatch,
   ProjectTrackerState,
   ProjectWritePatch,
@@ -100,14 +99,10 @@ contextBridge.exposeInMainWorld('projectTracker', {
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
-  saveLaneMarkdown: (
-    kind: LaneMarkdownKind,
-    projectPath: string,
-    laneName: string,
-    filePath: string,
-    content: string,
-    previousContent: string
-  ) => invokePlain('lane:save-agent-markdown', { kind, projectPath, laneName, filePath, content, previousContent }),
+  saveLaneMarkdown: (projectPath: string, laneName: string, filePath: string, content: string, previousContent: string) =>
+    invokePlain('lane:save-agent-markdown', { projectPath, laneName, filePath, content, previousContent }),
+  readLaneOrchestratorContext: (projectPath: string, laneName: string, filePath: string) =>
+    invokePlain('lane:read-orchestrator-context', { projectPath, laneName, filePath }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string, since?: string) =>

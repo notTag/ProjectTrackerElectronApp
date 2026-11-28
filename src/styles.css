@@ -174,10 +174,10 @@ body {
 }
 
 /* Match the picker triggers: Add/Dirs get the same 1px border so the whole
-   action cluster reads as one bordered control group. The lane modal's Reset
-   button shares the modal's fill, so it needs the same edge to read as a button. */
+   action cluster reads as one bordered control group. The lane modal's prompt
+   buttons share the modal's fill, so they need the same edge to read as buttons. */
 .titlebar-actions button.secondary,
-button.secondary.lane-prompt-reset {
+.lane-prompt-actions button.secondary {
   border: 1px solid var(--color-border);
 }
 
@@ -240,7 +240,7 @@ button.secondary:not(:disabled):hover,
 /* Bordered secondaries highlight the border on hover (like the triggers),
    so the generic inset-ring wash from button.secondary:hover is dropped. */
 .titlebar-actions button.secondary:not(:disabled):hover,
-button.secondary.lane-prompt-reset:not(:disabled):hover {
+.lane-prompt-actions button.secondary:not(:disabled):hover {
   border-color: var(--color-accent);
   box-shadow: none;
 }
@@ -1844,8 +1844,10 @@ button.workflow-label:focus-visible {
   color: var(--color-destructive);
 }
 
-/* The modal is a column flex, which would stretch the button full width. */
-.lane-prompt-reset {
+/* The modal is a column flex, which would stretch the buttons full width. */
+.lane-prompt-actions {
+  display: flex;
+  gap: 6px;
   align-self: flex-start;
 }
 
