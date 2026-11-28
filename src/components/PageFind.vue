@@ -32,7 +32,8 @@ function search(forward = true, newSession = true) {
   void window.projectTracker?.findInPage?.(query.value, forward, newSession)
 }
 function showResult({ activeMatchOrdinal, matches, finalUpdate }: PageFindResult) {
-  if (!visible.value || !query.value) return
+  const newerQueryPending = searchTimer !== undefined
+  if (!visible.value || !query.value || newerQueryPending) return
   const landedOnOwnInput = finalUpdate && activeMatchOrdinal === OWN_INPUT_MATCH_ORDINAL
   const hasPageMatches = matches > 1
   if (landedOnOwnInput && hasPageMatches) {
