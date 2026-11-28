@@ -424,6 +424,12 @@ export const useProjectsStore = defineStore('projects', {
       const placeAt = (target: LanePlacement) =>
         boardUpdate(projectPath, (board) => placeLaneInBoard(board, laneId, target))
 
+      const boardNeverSaved = !this.state.boards?.[projectPath]
+      if (boardNeverSaved) {
+        await this.persist(() => this.writeBoard(projectPath, placeAt(placement)))
+        return
+      }
+
       this.state = placeAt(placement)(this.state)
       // The move is re-applied to whatever state the queue hands over, so a
       // save that finished in between can't drop it. The undo is anchored on

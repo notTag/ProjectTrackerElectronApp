@@ -313,6 +313,18 @@ describe('placeLane', () => {
     expect(api.reorderLanes).toHaveBeenCalledWith(PROJECT, ['a', 'c', 'b'])
   })
 
+  it('creates the default lanes, stacked, when the board was never saved', async () => {
+    const store = useProjectsStore()
+    store.state = createSeedState()
+    const [first, second] = store.board(PROJECT).lanes
+
+    await store.placeLane(PROJECT, second.id, { kind: 'stack', anchorLaneId: first.id, side: 'below' })
+
+    expect(api.updateLane).not.toHaveBeenCalled()
+    expect(api.createLane).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ id: second.id, stacksBelowPrevious: true }))
+    expect(store.board(PROJECT).lanes[1]).toMatchObject({ id: second.id, stacksBelowPrevious: true })
+  })
+
   it('un-stacks the lane again when the stacking write fails', async () => {
     api.reorderLanes.mockRejectedValue(new Error('disk full'))
     const store = storeWithLanes('a', 'b', 'c')
