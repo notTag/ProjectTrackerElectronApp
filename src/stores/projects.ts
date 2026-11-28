@@ -55,7 +55,8 @@ import {
   isPullRequestSettled,
   keepParkedLaneIds,
   mergeScannedProjects,
-  moveLaneInBoard,
+  lanePlacementIn,
+  placeLaneInBoard,
   removeLaneFromBoard,
   removeScanDirectory,
   ticketBranchName,
@@ -66,6 +67,7 @@ import {
   type CompletionMove,
   type FullAutoHandoff,
   type BoardPreferences,
+  type LanePlacement,
   type ProjectBoard,
   type ProjectPriority,
   type ProjectRecord,
@@ -453,25 +455,27 @@ export const useProjectsStore = defineStore('projects', {
 
     // Optimistic: the lane lands in its new slot on drop rather than after the
     // IPC round trip. A failed write moves it back to where it was.
-    async moveLane(projectPath: string, laneId: string, beforeLaneId: string | null) {
+    async placeLane(projectPath: string, laneId: string, placement: LanePlacement) {
       const boardBeforeMove = getBoard(this.state, projectPath)
-      const movedBoard = moveLaneInBoard(boardBeforeMove, laneId, beforeLaneId)
+      const movedBoard = placeLaneInBoard(boardBeforeMove, laneId, placement)
       if (movedBoard === boardBeforeMove) return
 
-      const originalPosition = boardBeforeMove.lanes.findIndex((lane) => lane.id === laneId)
-      const originalNextLane = boardBeforeMove.lanes[originalPosition + 1]
-      const originalNextLaneId = originalNextLane?.id ?? null
-      const moveBeforeLane = (anchorLaneId: string | null) =>
-        boardUpdate(projectPath, (board) => moveLaneInBoard(board, laneId, anchorLaneId))
+      const originalPlacement = lanePlacementIn(boardBeforeMove.lanes, laneId)
+      const placeAt = (target: LanePlacement) =>
+        boardUpdate(projectPath, (board) => placeLaneInBoard(board, laneId, target))
 
-      this.state = moveBeforeLane(beforeLaneId)(this.state)
+      const boardNeverSaved = !this.state.boards?.[projectPath]
+      if (boardNeverSaved) {
+        await this.persist(() => this.writeBoard(projectPath, placeAt(placement)))
+        return
+      }
+
+      this.state = placeAt(placement)(this.state)
       // The move is re-applied to whatever state the queue hands over, so a
       // save that finished in between can't drop it. The undo is anchored on
       // the old neighbour rather than restoring the old lane array, so any
       // other lane edit that landed meanwhile survives.
-      await this.persist(() =>
-        this.writeBoard(projectPath, moveBeforeLane(beforeLaneId), moveBeforeLane(originalNextLaneId))
-      )
+      await this.persist(() => this.writeBoard(projectPath, placeAt(placement), placeAt(originalPlacement)))
     },
 
     async removeLane(projectPath: string, laneId: string) {

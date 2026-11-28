@@ -262,6 +262,7 @@ export interface SwimLane {
   nextLaneId?: string
   // Where the lane's node sits in the graph view. Absent means its default row slot.
   graphPosition?: { x: number; y: number }
+  stacksBelowPrevious?: boolean
 }
 
 export interface ChecklistItem {
@@ -1795,30 +1796,92 @@ export const updateLaneInBoard = (
   }
 }
 
+export type LanePlacement =
+  | { kind: 'column'; beforeLaneId: string | null }
+  | { kind: 'stack'; anchorLaneId: string; side: 'above' | 'below' }
+
+export const laneColumns = (lanes: SwimLane[]): SwimLane[][] => {
+  const columns: SwimLane[][] = []
+  for (const lane of lanes) {
+    const currentColumn = columns.at(-1)
+    if (currentColumn && lane.stacksBelowPrevious) currentColumn.push(lane)
+    else columns.push([lane])
+  }
+  return columns
+}
+
+const withStackFlag = (lane: SwimLane, stacksBelowPrevious: boolean): SwimLane =>
+  Boolean(lane.stacksBelowPrevious) === stacksBelowPrevious ? lane : { ...lane, stacksBelowPrevious }
+
+const isStackedAt = (lanes: SwimLane[], index: number) => index > 0 && Boolean(lanes[index].stacksBelowPrevious)
+
+const lanesWithout = (lanes: SwimLane[], laneId: string): SwimLane[] => {
+  const index = lanes.findIndex((lane) => lane.id === laneId)
+  const remaining = lanes.filter((lane) => lane.id !== laneId)
+  const leavesAsColumnTop = !isStackedAt(lanes, index)
+  const successor = remaining[index]
+  if (leavesAsColumnTop && successor) remaining[index] = withStackFlag(successor, false)
+  return remaining
+}
+
+const sameSlot = (placed: SwimLane[], original: SwimLane[], index: number) =>
+  placed[index].id === original[index]?.id && isStackedAt(placed, index) === isStackedAt(original, index)
+
+const columnTopIndex = (lanes: SwimLane[], index: number) => {
+  let topIndex = index
+  while (isStackedAt(lanes, topIndex)) topIndex--
+  return topIndex
+}
+
+const insertForPlacement = (lanes: SwimLane[], movingLane: SwimLane, placement: LanePlacement): SwimLane[] | null => {
+  if (placement.kind === 'column') {
+    const anchorIndex = lanes.findIndex((lane) => lane.id === placement.beforeLaneId)
+    let insertAt = anchorIndex === -1 ? lanes.length : columnTopIndex(lanes, anchorIndex)
+    if (placement.beforeLaneId === UNASSIGNED_LANE_ID) insertAt = 0
+    const columnLane = withStackFlag(movingLane, false)
+    const displacedColumnTop = lanes[insertAt] && withStackFlag(lanes[insertAt], false)
+    const lanesAfter = displacedColumnTop ? [displacedColumnTop, ...lanes.slice(insertAt + 1)] : []
+    return [...lanes.slice(0, insertAt), columnLane, ...lanesAfter]
+  }
+  const anchorIndex = lanes.findIndex((lane) => lane.id === placement.anchorLaneId)
+  if (anchorIndex === -1) return null
+  if (placement.side === 'below') {
+    const stackedLane = withStackFlag(movingLane, true)
+    return [...lanes.slice(0, anchorIndex + 1), stackedLane, ...lanes.slice(anchorIndex + 1)]
+  }
+  const takesAnchorSlot = withStackFlag(movingLane, isStackedAt(lanes, anchorIndex))
+  const anchorBelow = withStackFlag(lanes[anchorIndex], true)
+  return [...lanes.slice(0, anchorIndex), takesAnchorSlot, anchorBelow, ...lanes.slice(anchorIndex + 1)]
+}
+
 // Anchored on a lane id rather than an index: the board view only sees its
 // visible lanes, and a hidden lane (e.g. GitHub Issues) would shift any index
 // it handed over. An anchor id lands in the same place whatever is hidden.
 // Returns the original board when nothing would move, so callers can skip the
 // save. No status lives outside `lanes`, so it can neither move nor be passed:
 // dropping before it means "first".
-export const moveLaneInBoard = (
-  board: ProjectBoard,
-  laneId: string,
-  beforeLaneId: string | null
-): ProjectBoard => {
+export const placeLaneInBoard = (board: ProjectBoard, laneId: string, placement: LanePlacement): ProjectBoard => {
   const movingLane = board.lanes.find((lane) => lane.id === laneId)
-  if (!movingLane || beforeLaneId === laneId) return board
+  const anchorIsMovingLane = placement.kind === 'stack' && placement.anchorLaneId === laneId
+  if (!movingLane || anchorIsMovingLane) return board
+  if (placement.kind === 'column' && placement.beforeLaneId === laneId) return board
 
-  const otherLanes = board.lanes.filter((lane) => lane.id !== laneId)
-  const anchorIndex = otherLanes.findIndex((lane) => lane.id === beforeLaneId)
-  const anchorFound = anchorIndex !== -1
-  const dropsAheadOfEveryLane = beforeLaneId === UNASSIGNED_LANE_ID
-  let insertAt = anchorFound ? anchorIndex : otherLanes.length
-  if (dropsAheadOfEveryLane) insertAt = 0
-  const reorderedLanes = [...otherLanes.slice(0, insertAt), movingLane, ...otherLanes.slice(insertAt)]
+  const remaining = lanesWithout(board.lanes, laneId)
+  const placed = insertForPlacement(remaining, movingLane, placement)
+  if (!placed) return board
+  const [firstLane] = placed
+  if (firstLane) placed[0] = withStackFlag(firstLane, false)
 
-  const orderUnchanged = reorderedLanes.every((lane, index) => lane === board.lanes[index])
-  return orderUnchanged ? board : { ...board, lanes: reorderedLanes }
+  const unchanged = placed.every((_, index) => sameSlot(placed, board.lanes, index))
+  return unchanged ? board : { ...board, lanes: placed }
+}
+
+export const lanePlacementIn = (lanes: SwimLane[], laneId: string): LanePlacement => {
+  const index = lanes.findIndex((lane) => lane.id === laneId)
+  const nextLane = lanes[index + 1]
+  if (isStackedAt(lanes, index)) return { kind: 'stack', anchorLaneId: lanes[index - 1].id, side: 'below' }
+  if (nextLane?.stacksBelowPrevious) return { kind: 'stack', anchorLaneId: nextLane.id, side: 'above' }
+  return { kind: 'column', beforeLaneId: nextLane?.id ?? null }
 }
 
 export const createDefaultBoard = (): ProjectBoard => ({
@@ -1943,7 +2006,7 @@ const withoutNextLane = (lane: SwimLane, laneId: string): SwimLane =>
   lane.nextLaneId === laneId ? { ...lane, nextLaneId: undefined } : lane
 
 export const removeLaneFromBoard = (board: ProjectBoard, laneId: string): ProjectBoard => {
-  const lanes = board.lanes.filter((lane) => lane.id !== laneId).map((lane) => withoutNextLane(lane, laneId))
+  const lanes = lanesWithout(board.lanes, laneId).map((lane) => withoutNextLane(lane, laneId))
   const laneBoard: ProjectBoard = {
     ...board,
     lanes,
@@ -2023,9 +2086,8 @@ export const syncGithubIssuesToBoard = (board: ProjectBoard, issues: GithubIssue
   // ponytail: no new issues → no import lane, so a sync-only pull doesn't add an empty lane.
   const importLaneExists = board.lanes.some((lane) => lane.id === GITHUB_IMPORT_LANE_ID)
   const needsImportLane = newIssues.length > 0 && !importLaneExists
-  const lanes = needsImportLane
-    ? [{ id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' }, ...board.lanes]
-    : board.lanes
+  const importLane: SwimLane = { id: GITHUB_IMPORT_LANE_ID, name: GITHUB_IMPORT_LANE_NAME, agentPrompt: '', agentFilePath: '' }
+  const lanes = needsImportLane ? insertForPlacement(board.lanes, importLane, { kind: 'column', beforeLaneId: UNASSIGNED_LANE_ID }) ?? board.lanes : board.lanes
 
   const createdAt = new Date().toISOString()
   const firstNumber = nextTicketNumber(board)
