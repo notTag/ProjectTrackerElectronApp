@@ -72,6 +72,6 @@ watch(
 </script>
 
 <template>
-  <RouterView />
   <PageFind v-if="hasPageFind" />
+  <RouterView />
 </template>

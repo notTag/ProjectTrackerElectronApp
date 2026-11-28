@@ -41,7 +41,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 ### 1.4 Find on page (⌘F / Ctrl+F) — `src/components/PageFind.vue`
 
 - ⌘F opens a find bar, focuses it and selects any existing text.
-- The search runs 300 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
+- The search runs 100 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
 - The bar shows a live "N of M" match count.
 - Enter goes to the next match and Shift+Enter to the previous one. There are also ↑ and ↓ buttons, disabled when nothing matches.
 - Escape or × closes the bar, clears the highlights and puts focus back where it was.
@@ -249,7 +249,7 @@ From left to right:
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists **Metrics** (the Dashboard's panel (2.1) for this project only, inline), **Display** (3.5) and **UI Settings**; the selected one shows on the right. The selection lasts for the app session, never saved |
+| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists, under a **Board Settings** heading, **Display** (3.5) and **Metrics** (the Dashboard's panel (2.1) for this project only, inline), then under a **UI Settings** heading, **UI Settings**; the selected one shows on the right. Headings aren't clickable or focusable. The selection lasts for the app session, never saved |
 
 ### 3.2 Notices and errors
 
@@ -293,7 +293,10 @@ From left to right:
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
-- You can drop a ticket on any lane to move it there.
+- You can drop a ticket on any lane to move it there, at the drop spot. A line between cards shows where it will land.
+- **Lane order**: dragged tickets keep their slot (`lane_position`, valid only in `lane_position_lane_id`), across reload and restart. Every other move (modal lane picker, Next Lane, move rules, GitHub import, agents writing `lane_id`, new tickets) lands at the bottom; unplaced tickets sort by number, so upgraded boards look unchanged (`compareLaneOrder`, `placeTicketsInLane`, `clearStaleLanePositions` in `projectTypes.ts`; trigger `tickets_lane_position_on_move` in `schema.ts`). A reorder within a lane doesn't stamp `updatedAt`.
+  - Filtered lane: the drop lands next to the visible neighbour; hidden tickets keep their order.
+  - Keyboard: focus a card (Tab), Alt+ArrowUp/Down moves it one visible slot; Enter/Space opens it.
 - **Long lanes are virtualized**: a lane over 50 cards mounts only the cards within one screen of its viewport, with spacers for the rest (estimated height, replaced by measured heights). The header count still shows every matching ticket. A card mid-drag stays mounted. Find on page with a query mounts every card so native find sees them (`LaneCardList.vue`, `src/shared/cardWindow.ts`).
 - Tickets are grouped by lane once per change (`groupTicketsByLane` in `projectTypes.ts`); cards, counts, badges and the graph all read that map. Ticket-only writes patch the one row in place, so unchanged cards don't re-render (`TicketCard.vue`).
 
@@ -301,9 +304,9 @@ From left to right:
 
 - Draggable between lanes. Clicking a card opens the Ticket modal (3.8).
 - **Select checkbox** (title "Select (run / move)"): checked cards feed Auto Run's ticket set and bulk drag. Selection is in memory only and clears when you switch project.
-- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`ticketIdsToMove` in `projectTypes.ts`, `moveTickets` in `stores/projects.ts`).
+- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`carriedTicketIds` + `placeTicketsInLane` in `projectTypes.ts`, `dropTickets` in `stores/projects.ts`).
   - Dragging an unchecked card moves only that card.
-  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
+  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Carried tickets land together as a block at the drop spot, in their board order; only those that changed lane get a new `updatedAt`.
   - Moved tickets stay checked.
   - **Stack ghost** (2+ tickets carried): the drag image is the dragged card with up to 2 offset card edges behind it (3 layers max) and an accent count badge with the carried count. The other carried cards fade and shrink in place (`.ticket-carried`) until `dragend`. The count is every checked visible ticket, including ones already in the drop lane (`carriedTicketIds` in `projectTypes.ts`, `startTicketDrag` in `board/BoardLanes.vue`). Reduce Motion drops the fade/shrink transition; the ghost and dimming stay. An unchecked card, or the only checked one, uses the browser's default drag image.
 - The title always shows (a locked, checked **Title** row in Display). These fields show only when switched on in Display:
@@ -333,7 +336,7 @@ From left to right:
 
 #### Settings panel (⚙ Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Display (default, top) / Metrics / UI Settings; Metrics shows its table directly, no toggle button; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, flat list rows like macOS System Settings: hover tints, selected one is an accent bar) picks 👁 Display (default, top) / 📊 Metrics under a Board Settings heading, then 🎨 UI Settings under a UI Settings heading; Metrics shows its table directly, no toggle button, and fits the pane with no sideways scroll (long project names ellipsize, full path on hover) (#176); the content pane on the right fills with the darker overlay color and scrolls. Resizable from the bottom-right corner (min 688×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Position isn't remembered.
 - UI Settings section: each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
@@ -372,6 +375,8 @@ In graph view this opens as a side panel instead of a centered modal.
 **Header:** `#N · Created <date> · Updated <date time>`
 
 **Expand / Collapse** button (top right, here and in the New ticket modal): widens the modal to 85% of the window, click again for normal width. Shared by both ticket modals (not the Lane settings modal) and kept until the app restarts. Not shown in the graph side panel. (`src/components/ExpandToggle.vue`, state in `src/modalWidth.ts`)
+
+**Clone ticket** button (copy icon, rightmost in the header, board and graph view): adds a new ticket in the same lane with the next number, titled `CLONE OF T#<N> <title>`, then closes this modal and opens the clone's. Copies description, labels, assignee, checklist (ticks kept), agent, model, Full auto, external links, GitHub issue link, Next Lane, move rules, version and images (as the clone's own file copies under its attachments folder, via `ticket-images:copy`, so deleting the original keeps them). Starts fresh on branch, worktree, Merge Request, last agent run, passed rules, Ready badge and the GitHub import key; never armed. The original is unchanged. A failed save keeps the original open with the board error; a failed image copy still opens the clone, showing the error there. (`cloneTicketOnBoard` in `src/shared/projectTypes.ts`, `store.cloneTicket`, `copyTicketImages` in `electron/ticketImages.ts`)
 
 **Drag to resize:** the left or right edge of the New ticket, Open ticket (board view), and Lane settings modals (cursor turns to ↔) drags the width anywhere from the default (760px ticket, 560px lane) up to the window width minus the backdrop padding. These three modals close only when the press starts on the backdrop, so a drag released over it doesn't close them. Clicking Expand / Collapse drops the dragged width. Not remembered after the modal closes. (`vEdgeResize` in `src/modalWidth.ts`, limits in `.modal.resizable` in `src/styles.css`)
 
@@ -434,6 +439,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
   - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
 - A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4). The **Run** caption's ⓘ says what the agent gets and how Run differs from Run in.
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
+  - Disabled while another agent (terminal tab, Auto Run, Full auto) is running on the ticket in its current lane (#174), with a tooltip saying so. The live agent's record stays untouched, so the #121 ownership check still sees the same session.
   - Claude Code and Codex runs can write files but can't run shell commands.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
   - A run can last up to 30 minutes and capture up to 10 MB of output.
@@ -489,13 +495,14 @@ One section, three captioned groups laid out in wrapping rows that span the moda
     - **Restore app default** button, only while the lane has a saved default: clears default and current, so the lane goes back to the app-generated prompt. No confirm.
     - Migration: opening a pre-#168 database copies each lane's non-blank `orchestrator_prompt_override` into `current_agent_orchestrator_prompt` once (schema version 7), inactive workflow snapshots included. The old column stays in the schema, unread and unwritten.
   - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): additional prompt context. Nothing is written to it except creating it empty: like the Agent file, an empty field gets `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, created empty if missing (never overwritten), path shown and changeable (#175). `.md` and `.txt` accepted, inside a scan directory. At launch main reads it and, when it has text, appends it after the prompt under `Additional context (from <path>):`. It never replaces the box text. Missing, blank, unreadable or refused files are skipped and the launch runs without them (`lane:read-markdown-context`). A file holding `{{ticket_numbers}}` is an old app-written copy and is skipped. Ticket agents never see it. An ⓘ icon right of the label has the same wording as the Agent file's; the Orchestrator prompt ⓘ tip says so too.
-  - **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
+  - **Poll (minutes)**, **Agent** and **Model** share one row under the markdown file field, in that order (#179). They wrap when the modal is narrow; a hidden one leaves the others on the row. Display Settings and the lane eye menu still name them "Orchestrator poll/agent/model".
+  - **Poll (minutes)** stepper pill (`−` · minutes · `+`) (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
     - Hovering the stepper shows "The Orchestrator agent will poll running agents every N minute(s)." or, at ∞, "The Orchestrator agent never polls: it waits for messages from the ticket agents."
     - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`; at `∞` it gathers state once, then waits for ticket-agent messages (#114).
     - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
     - `∞`: Auto Run still opens the orchestrator tab; it never polls, sleeps or schedules wake-ups. `−` is disabled. A saved current or default prompt follows it through `{{poll_step}}`; one with a hardcoded sleep loop instead still loops.
     - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
-  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
+  - **Agent** select: "Same as ticket agent" (the default) or any agent. **Model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
 - **Auto Run** section (also holds the two Auto Run hints):
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
@@ -533,13 +540,14 @@ One section, three captioned groups laid out in wrapping rows that span the moda
 - Each run takes the lane it launches for, so a full auto handoff opens its tab under the new lane's title. Open tabs are never retitled. The orchestrator matches each ticket by the exact tab title it was given; its ticket lines carry the session id, and a handoff tab is any open tab titled with a predicted handoff title, alone or plus ` · <session id>`, or one seen in `agent_run_json.tabTitle` from its ticket query, or one a ticket agent reports (each agent's prompt states its session id and tab title).
 - Agents with `sessionNameArgs` get a session name: Claude Code runs with `--name '<N>-<Lane>'` (`ticketSessionName`), e.g. `99-PRD`.
 - How each terminal does it:
-  - **Warp**: writes one Tab Config per tab to `~/.warp/tab_configs/project_tracker_ticket_<id>.toml` and opens `warp://tab_config/<stem>`. Tabs land in the focused Warp window; a new window opens only when Warp has none. Each file is deleted after ~60 s, so none linger in Warp's `+` menu. Launches are queued, so two lanes started back to back both get their tabs (#116).
+  - **Warp**: writes one Tab Config per tab to `~/.warp/tab_configs/project_tracker_ticket_<id>.toml` and opens `warp://tab_config/<stem>`. Tabs land in the focused Warp window. When Warp has no window on screen (checked with `CGWindowListCopyWindowInfo` through `osascript -l JavaScript`, owner names only, no permission prompt), the whole batch instead goes as one Launch Configuration, `~/.warp/launch_configurations/project_tracker_launch_<id>.yaml`, opened by name with `warp://launch/<stem>`: one new window with exactly these tabs, no empty default tab (#150). A failed check uses the Tab Config path. Each file is deleted after ~60 s, so none linger in Warp's menus. Launches are queued, so two lanes started back to back both get their tabs (#116).
   - **Terminal**: AppleScript `do script`. Extra tabs are opened with ⌘T through System Events, which needs Accessibility permission. The script stops with an error if no tab appears.
   - **iTerm2**: AppleScript `write text`.
   - **Ghostty**: Ghostty 1.3+ scripting (`initial input`), for one ticket or several.
 - The button asks first. The dialog starts on the lane's settings and changes them for this run only: agent, model, terminal, and the orchestrator agent and model. The model picker sits inline in the question ("Run N separate <agent> agents with <model> for N tickets?"); the orchestrator agent and model sit in their own **Orchestrator** section below it, hidden when the lane's orchestrator poll **Active** checkbox is off. The orchestrator Agent and Model fields sit side by side and wrap on a narrow window.
+- A **Machine** row sits under the terminal line. It offers only **Local** (this Mac), the default and today's behavior; nothing is saved for it (#151). `ticketWorktree.ts` takes a `MachineRunner` (`run` git argv, `pathExists`, `readText`, `appendText`) defaulting to `localRunner`, the seam SSH (#167) and VPS (#162) plug into.
 - With no saved lane model, the model picker starts on the agent's `defaultModel` — Claude Code: `claude-opus-5-5` (agents without one start on "CLI default"). A saved lane model wins. Switching the agent in the dialog resets the model to the new agent's default.
-- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets — unless the lane's orchestrator poll **Active** checkbox is off.
+- Plus one orchestrator tab, `AUTORUN-ORCHESTRATOR-<LANE>`, that watches the run's tickets. It always opens; with poll **Active** off (`∞`) it just runs without a poll loop (#114). Full auto handoffs open the destination lane's orchestrator the same way, with the lane's orchestrator agent and model, for the handed-off tickets (#150).
   - It closes a ticket's tab in this lane only after the ticket query shows the ticket has left the lane, never on a "done" message alone. Handoff tabs (the next lane's agents) close only once the ticket is done. It never closes a title that more than one open tab matches. Lane instructions can't override this (#106).
   - In Warp (no tab scripting) it finds each agent by its `--session-id`/`--resume` UUID with `pgrep -f` and closes the tab with `kill -TERM <pid>`; a session id matching more than one pid is skipped. Handoff session ids come from `agent_run_json.sessionId` (#123).
   - It exits only when nothing needs the user; otherwise it stays running with open questions on screen, since in Warp exiting closes its tab.
@@ -556,10 +564,11 @@ One section, three captioned groups laid out in wrapping rows that span the moda
 - **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
 - **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane that no lane points to is dimmed. Tickets can still be dragged there, so this is only a hint.
 - It uses the same visible lanes as the swimlane view. Hidden or filtered-out lanes are not drawn and can't be connected to.
+- **Resizable side panel**: drag the left edge of the details sidebar or the docked ticket panel (or focus it and press ←/→, 16px a step). Both share one width, clamped to 280px .. window width − 320px and re-clamped when the window shrinks. Kept until the app restarts. (`src/components/GraphPanelResizeHandle.vue`, `graphPanelWidth` in `src/modalWidth.ts`) (#177)
 - **Details sidebar**:
   - Nothing selected: the number of swim lanes, **+ Add swim lane**, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
   - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, then **Agent prompt** and **Orchestrator prompt** sections.
-  - Each prompt section lists the lane's prompt as editable rules (`promptRules` in `projectTypes.ts`): an unindented `- `/`* ` bullet or numbered line (`1.`) starts a rule; other lines, indented sub-bullets included, continue it. Leaving a rule (blur or Enter; Shift+Enter adds a line break) saves the prompt through `store.updateLane`, rewritten as `- rule` lines with numbered rules kept as-is (`rulesToPrompt`). **+ Add rule** and **×** add and delete rules; a rule cleared to empty is deleted. An empty prompt shows "No rules yet". When the lane has an agent markdown file the Agent section shows "Also follows: <file name>". The markdown file itself is not written; that stays on the Swimlane settings button.
+  - Each prompt section lists the lane's prompt as editable rules (`promptRules` in `projectTypes.ts`): an unindented `- `/`* ` bullet or numbered line (`1.`) starts a rule; other lines, indented sub-bullets included, continue it. Leaving a rule (blur or Enter; Shift+Enter adds a line break) saves the prompt through `store.updateLane`, rewritten as `- rule` lines with numbered rules kept as-is (`rulesToPrompt`). **+ Add rule** and **×** add and delete rules. The **☰** handle left of each rule reorders it: drag it onto another rule in the same section, or focus it and press ArrowUp / ArrowDown (focus follows the rule). The new order saves at once (`moveRule` in `projectTypes.ts`); numbered rules keep their numbers, and a drop on the other section does nothing. A rule cleared to empty is deleted. An empty prompt shows "No rules yet". When the lane has an agent markdown file the Agent section shows "Additional context: <file name>". The markdown file itself is not written; that stays on the Swimlane settings button.
 
 ---
 

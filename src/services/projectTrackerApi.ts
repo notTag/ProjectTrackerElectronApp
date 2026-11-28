@@ -133,6 +133,10 @@ export const projectTrackerApi = {
     return bridge().removeTicketImage(ticketId, imagePath)
   },
 
+  copyTicketImages(ticketId: string, imagePaths: string[]) {
+    return bridge().copyTicketImages(ticketId, toPlainJson(imagePaths))
+  },
+
   openTicketImage(imagePath: string) {
     return bridge().openTicketImage(imagePath)
   },

@@ -24,7 +24,9 @@ import { openProjectIn } from './openIn.js'
 import { scanProjectDirectories } from './scanner/projectScanner.js'
 import type { StateRepository } from './storage/stateRepository.js'
 import {
+  WARP_LAUNCH_CONFIG_PREFIX,
   WARP_TAB_CONFIG_PREFIX,
+  WARP_WINDOW_COUNT_ARGS,
   ghosttyOsascriptArgs,
   itermOsascriptArgs,
   orchestratorTab,
@@ -32,10 +34,17 @@ import {
   tabTitlesOsascriptArgs,
   terminalOsascriptArgs,
   usableTabTitle,
+  warpLaunchConfigYaml,
   warpTabConfigToml
 } from './terminalLaunch.js'
 import { ensureTicketWorktree, freshMainRef, repositoryRootOf } from './ticketWorktree.js'
-import { removeTicketImage, removeTicketImages, resolveAttachmentPath, saveTicketImageBytes } from './ticketImages.js'
+import {
+  copyTicketImages,
+  removeTicketImage,
+  removeTicketImages,
+  resolveAttachmentPath,
+  saveTicketImageBytes
+} from './ticketImages.js'
 import type { IpcChannel } from '../src/shared/bridgeApi.js'
 import { toPlainJson } from '../src/shared/plainJson.js'
 import {
@@ -124,8 +133,7 @@ const openUri = (uri: string) =>
     execFile('open', [uri], { timeout: LAUNCH_TIMEOUT_MS }, (error) => (error ? reject(error) : resolve()))
   })
 
-// Warp reads a Tab Config within seconds of its URI, even on a cold start.
-const WARP_TAB_CONFIG_LIFETIME_MS = 60_000
+const WARP_CONFIG_LIFETIME_MS = 60_000
 
 const run = (bin: string, args: string[]) =>
   new Promise<string>((resolve, reject) => {
@@ -265,7 +273,8 @@ const TICKET_PATCH_FIELDS: Record<keyof TicketWritePatch, true> = {
   worktreePath: true, pullRequestUrl: true, pullRequestState: true, pullRequestMergedAt: true,
   assigneeId: true, checklist: true, agentId: true, model: true, agentRun: true, externalId: true,
   externalUrl: true, fullAuto: true, externalLinks: true, moveToLaneId: true, moveOnComplete: true, version: true,
-  images: true, moveRules: true, moveRulesPassedLaneId: true, readyLaneId: true
+  images: true, moveRules: true, moveRulesPassedLaneId: true, readyLaneId: true,
+  lanePosition: true, lanePositionLaneId: true
 }
 const LANE_PATCH_FIELDS: Record<keyof LaneWritePatch, true> = {
   name: true, agentPrompt: true, agentFilePath: true, outputTarget: true, orchestratorPrompt: true,
@@ -352,39 +361,61 @@ const isProjectPatch = (value: unknown): value is ProjectWritePatch => {
 let warpLaunchQueue: Promise<unknown> = Promise.resolve()
 
 export const createIpcHandlers = (dependencies: HandlerDependencies): Record<IpcChannel, IpcHandler> => {
-  // One Tab Config file per tab, each opened by its own warp://tab_config URI:
-  // Warp adds the tab to its focused window (a new window only when none is
-  // open). A launch configuration would always open a new window. Each file
-  // gets a unique stem so back-to-back launches never overwrite one another
-  // before Warp reads them, and is deleted a minute later: it's a hand-off, not
-  // a config the user keeps, and it shows in Warp's + menu while present. The
-  // sweep catches files whose timer never fired because the app quit.
-  //
   // This executes the command rather than pasting it. What makes that safe is the
   // single-quote wrapping applied in ticketShellCommand: ticket text — which can
   // arrive from a GitHub issue — lands as one literal argument to the agent, never
   // as shell code.
+  const sweptWarpConfigDirectory = (directoryName: string, prefix: string, extension: string) => {
+    const configDirectory = path.join(dependencies.homeDirectory, '.warp', directoryName)
+    mkdirSync(configDirectory, { recursive: true })
+    const staleBefore = Date.now() - WARP_CONFIG_LIFETIME_MS
+    for (const fileName of readdirSync(configDirectory)) {
+      if (!fileName.startsWith(prefix) || !fileName.endsWith(extension)) continue
+      const filePath = path.join(configDirectory, fileName)
+      const fileStats = statSync(filePath, { throwIfNoEntry: false })
+      if (fileStats && fileStats.mtimeMs < staleBefore) rmSync(filePath, { force: true })
+    }
+    return configDirectory
+  }
+
+  const removeAfterWarpReadsIt = (configPath: string) =>
+    setTimeout(() => rmSync(configPath, { force: true }), WARP_CONFIG_LIFETIME_MS).unref()
+
+  const uniqueStem = (prefix: string) => prefix + randomUUID().replaceAll('-', '_')
+
+  const warpHasWindow = async () => {
+    try {
+      const windowCount = await run('osascript', WARP_WINDOW_COUNT_ARGS)
+      return Number(windowCount) !== 0
+    } catch {
+      return true
+    }
+  }
+
+  const openWarpTabConfigs = async (projectPath: string, tabs: TerminalTab[]) => {
+    const configDirectory = sweptWarpConfigDirectory('tab_configs', WARP_TAB_CONFIG_PREFIX, '.toml')
+    for (const tab of tabs) {
+      const stem = uniqueStem(WARP_TAB_CONFIG_PREFIX)
+      const configPath = path.join(configDirectory, `${stem}.toml`)
+      writeFileSync(configPath, warpTabConfigToml(projectPath, tab), 'utf8')
+      await openUri(`warp://tab_config/${stem}`)
+      removeAfterWarpReadsIt(configPath)
+    }
+  }
+
+  const openWarpLaunchConfig = async (projectPath: string, tabs: TerminalTab[]) => {
+    const configDirectory = sweptWarpConfigDirectory('launch_configurations', WARP_LAUNCH_CONFIG_PREFIX, '.yaml')
+    const stem = uniqueStem(WARP_LAUNCH_CONFIG_PREFIX)
+    const configPath = path.join(configDirectory, `${stem}.yaml`)
+    writeFileSync(configPath, warpLaunchConfigYaml(stem, projectPath, tabs), 'utf8')
+    await openUri(`warp://launch/${stem}`)
+    removeAfterWarpReadsIt(configPath)
+  }
+
   const openWarpWithCommands = (projectPath: string, tabs: TerminalTab[]) => {
     const launch = warpLaunchQueue.then(async () => {
-      const configDirectory = path.join(dependencies.homeDirectory, '.warp', 'tab_configs')
-      mkdirSync(configDirectory, { recursive: true })
-      const staleBefore = Date.now() - WARP_TAB_CONFIG_LIFETIME_MS
-      for (const fileName of readdirSync(configDirectory)) {
-        if (!fileName.startsWith(WARP_TAB_CONFIG_PREFIX) || !fileName.endsWith('.toml')) continue
-        const filePath = path.join(configDirectory, fileName)
-        const fileStats = statSync(filePath, { throwIfNoEntry: false })
-        if (fileStats && fileStats.mtimeMs < staleBefore) rmSync(filePath, { force: true })
-      }
-      for (const tab of tabs) {
-        const uniqueId = randomUUID().replaceAll('-', '_')
-        const stem = WARP_TAB_CONFIG_PREFIX + uniqueId
-        const configPath = path.join(configDirectory, `${stem}.toml`)
-        writeFileSync(configPath, warpTabConfigToml(projectPath, tab), 'utf8')
-        await openUri(`warp://tab_config/${stem}`)
-        // Started once `open` returns, so a slow hand-off can't delete the file
-        // before Warp reads it. A failed open leaves it for the next sweep.
-        setTimeout(() => rmSync(configPath, { force: true }), WARP_TAB_CONFIG_LIFETIME_MS).unref()
-      }
+      const openWarpTabs = (await warpHasWindow()) ? openWarpTabConfigs : openWarpLaunchConfig
+      await openWarpTabs(projectPath, tabs)
     })
     warpLaunchQueue = launch.catch(() => undefined)
     return launch
@@ -392,9 +423,9 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
 
   // Only the terminals can run a ticket's command; the editors in the allowlist
   // have no shell to run it in and keep the clipboard hand-off. Warp adds its
-  // tabs to the focused Warp window; Ghostty to the window the app last opened
-  // while it is still open; Terminal and iTerm2 open one new window per launch
-  // with a tab per command.
+  // tabs to the focused Warp window, or opens one when none is; Ghostty to the
+  // window the app last opened while it is still open; Terminal and iTerm2 open
+  // one new window per launch with a tab per command.
   const COMMAND_RUNNERS: Record<string, (projectPath: string, tabs: TerminalTab[]) => Promise<unknown>> = {
     warp: openWarpWithCommands,
     terminal: openTerminalWithCommands,
@@ -470,6 +501,12 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { ticketId, imagePath } = (payload ?? {}) as { ticketId?: unknown; imagePath?: unknown }
       if (typeof ticketId !== 'string' || typeof imagePath !== 'string') throw new Error('Invalid ticket image payload.')
       removeTicketImage(attachmentsRoot, ticketId, imagePath)
+    },
+
+    'ticket-images:copy': (payload) => {
+      const { ticketId, imagePaths } = (payload ?? {}) as { ticketId?: unknown; imagePaths?: unknown }
+      if (typeof ticketId !== 'string' || !isStringArray(imagePaths)) throw new Error('Invalid ticket image payload.')
+      return copyTicketImages(attachmentsRoot, ticketId, imagePaths)
     },
 
     'ticket-images:open': async (payload) => {

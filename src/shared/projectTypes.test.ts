@@ -42,8 +42,10 @@ import {
   laneFolderName,
   promptRules,
   rulesToPrompt,
+  moveRule,
   addScanDirectory,
   addTicketToBoard,
+  cloneTicketOnBoard,
   mergeScannedProjects,
   removeScanDirectory,
   type ProjectRecord,
@@ -60,7 +62,10 @@ import {
   updateLaneInBoard,
   UNASSIGNED_LANE_ID,
   addChecklistItem,
-  ticketIdsToMove,
+  compareLaneOrder,
+  groupTicketsByLane,
+  placeTicketsInLane,
+  clearStaleLanePositions,
   carriedTicketIds,
   ticketsToRun,
   splitRunnable,
@@ -417,6 +422,107 @@ describe('pulling issues onto a board with every lane deleted', () => {
     expect(board.lanes.map((lane) => lane.id)).toEqual([GITHUB_IMPORT_LANE_ID])
     expect(board.tickets.at(-1)?.laneId).toBe(GITHUB_IMPORT_LANE_ID)
     expect(getBoard({ ...createSeedState(), boards: { '/p': board } }, '/p').tickets).toHaveLength(3)
+  })
+})
+
+describe('cloning a ticket', () => {
+  const original: Ticket = {
+    id: 'b',
+    number: 2,
+    laneId: 'prd',
+    title: ' Build it ',
+    description: 'Spec',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    labels: ['feature'],
+    assigneeId: 'u1',
+    checklist: [{ text: 'Step', done: true }],
+    agentId: 'claude',
+    model: 'opus',
+    fullAuto: true,
+    externalLinks: ['https://example.com/doc'],
+    externalId: 'github:9',
+    externalUrl: 'https://github.com/o/r/issues/9',
+    moveToLaneId: 'idea',
+    moveOnComplete: true,
+    moveRules: 'tests pass',
+    moveRulesPassedLaneId: 'prd',
+    readyLaneId: 'prd',
+    version: '1.2.0',
+    branchName: 't2-build',
+    worktreePath: '/wt/t2',
+    pullRequestUrl: 'https://github.com/o/r/pull/3',
+    pullRequestState: 'open',
+    pullRequestMergedAt: '2026-01-03T00:00:00.000Z',
+    agentRun: { at: '2026-01-02T00:00:00.000Z', laneId: 'prd', output: 'done' },
+    images: ['/attachments/b/x.png']
+  }
+  const boardWithOriginal = (): ProjectBoard => ({ ...boardWithTickets(), tickets: [boardWithTickets().tickets[0], original] })
+  const cloneOf = (board: ProjectBoard) => board.tickets.find((ticket) => ticket.id === 'clone')
+
+  it('adds the clone with the next number, same lane and a CLONE OF title', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone).toMatchObject({ number: 3, laneId: 'prd', title: 'CLONE OF T#2 Build it' })
+    expect(clone?.createdAt).not.toBe(original.createdAt)
+  })
+
+  it('copies metadata but not branch, worktree, PR, run, import key, images or arming', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone).toMatchObject({
+      description: 'Spec',
+      labels: ['feature'],
+      assigneeId: 'u1',
+      checklist: [{ text: 'Step', done: true }],
+      agentId: 'claude',
+      model: 'opus',
+      fullAuto: true,
+      externalLinks: ['https://example.com/doc'],
+      externalUrl: original.externalUrl,
+      moveToLaneId: 'idea',
+      moveRules: 'tests pass',
+      version: '1.2.0',
+      moveOnComplete: false
+    })
+    const resetFields = [
+      'updatedAt',
+      'branchName',
+      'worktreePath',
+      'pullRequestUrl',
+      'pullRequestState',
+      'pullRequestMergedAt',
+      'agentRun',
+      'externalId',
+      'images',
+      'moveRulesPassedLaneId',
+      'readyLaneId'
+    ] as const
+    for (const field of resetFields) expect(clone?.[field]).toBeUndefined()
+  })
+
+  it('deep copies the checklist so ticking one ticket leaves the other alone', () => {
+    const clone = cloneOf(cloneTicketOnBoard(boardWithOriginal(), 'b', 'clone'))
+    expect(clone?.checklist?.[0]).not.toBe(original.checklist?.[0])
+    expect(clone?.labels).not.toBe(original.labels)
+  })
+
+  it('leaves the original untouched and ignores an unknown source', () => {
+    const board = boardWithOriginal()
+    expect(cloneTicketOnBoard(board, 'b', 'clone').tickets[1]).toBe(original)
+    expect(cloneTicketOnBoard(board, 'missing', 'clone')).toBe(board)
+  })
+
+  it('keeps a parked source lane instead of the No status fallback', () => {
+    const parkedOriginal = { ...original, laneId: UNASSIGNED_LANE_ID }
+    const board = { ...boardWithTickets(), tickets: [parkedOriginal] }
+    const clone = cloneOf(cloneTicketOnBoard(board, 'b', 'clone', 'other-workflow-lane'))
+    expect(clone?.laneId).toBe('other-workflow-lane')
+  })
+
+  it('leaves absent list fields absent', () => {
+    const bare = { id: 'c', number: 9, laneId: 'prd', title: 'Bare', description: '', createdAt: original.createdAt }
+    const clone = cloneOf(cloneTicketOnBoard({ ...boardWithTickets(), tickets: [bare] }, 'c', 'clone'))
+    expect(Object.keys(clone ?? {})).not.toContain('labels')
+    expect(Object.keys(clone ?? {})).not.toContain('checklist')
   })
 })
 
@@ -1137,34 +1243,77 @@ describe('splitRunnable', () => {
   })
 })
 
-describe('ticketIdsToMove', () => {
-  const tickets = [
-    { id: 'a', laneId: 'idea' },
-    { id: 'b', laneId: 'prd' },
-    { id: 'c', laneId: 'idea' },
-    { id: 'd', laneId: 'dev' }
-  ] as Ticket[]
+describe('lane order', () => {
+  const ticket = (id: string, number: number, laneId: string, placement: Partial<Ticket> = {}) =>
+    ({ id, number, laneId, ...placement }) as Ticket
+  const idsOf = (tickets: Ticket[]) => tickets.map((entry) => entry.id)
+  const laneIds = (tickets: Ticket[], laneId: string) =>
+    idsOf(tickets.filter((entry) => entry.laneId === laneId).sort(compareLaneOrder))
+  const placed = (lanePosition: number, lanePositionLaneId: string) => ({ lanePosition, lanePositionLaneId })
 
-  it('moves only the dragged card when it is unchecked', () => {
-    expect(ticketIdsToMove('a', new Set(['b', 'c']), tickets, 'dev')).toEqual(['a'])
+  it('sorts placed tickets by slot ahead of unplaced ones by number', () => {
+    const tickets = [ticket('a', 1, 'dev'), ticket('b', 2, 'dev', placed(2, 'dev')), ticket('c', 3, 'dev', placed(1, 'dev'))]
+    expect(idsOf([...tickets].sort(compareLaneOrder))).toEqual(['c', 'b', 'a'])
   })
 
-  it('moves every checked visible ticket when the dragged card is checked', () => {
-    expect(ticketIdsToMove('a', new Set(['a', 'b', 'c']), tickets, 'dev')).toEqual(['a', 'b', 'c'])
+  it('treats a slot from another lane as unplaced', () => {
+    const tickets = [ticket('a', 2, 'dev', placed(1, 'idea')), ticket('b', 1, 'dev')]
+    expect(idsOf([...tickets].sort(compareLaneOrder))).toEqual(['b', 'a'])
   })
 
-  it('skips a checked ticket that is not visible', () => {
-    const visibleTickets = tickets.filter((ticket) => ticket.id !== 'b')
-    expect(ticketIdsToMove('a', new Set(['a', 'b']), visibleTickets, 'dev')).toEqual(['a'])
+  it('groups each lane in lane order', () => {
+    const tickets = [ticket('a', 1, 'dev'), ticket('b', 2, 'dev', placed(1, 'dev'))]
+    expect(idsOf(groupTicketsByLane(tickets, () => true).get('dev') ?? [])).toEqual(['b', 'a'])
   })
 
-  it('skips checked tickets already in the target lane', () => {
-    expect(ticketIdsToMove('a', new Set(['a', 'b', 'd']), tickets, 'dev')).toEqual(['a', 'b'])
+  const board = () => [ticket('a', 1, 'dev'), ticket('b', 2, 'dev'), ticket('c', 3, 'dev'), ticket('d', 4, 'idea'), ticket('e', 5, 'prd')]
+
+  it('inserts a ticket at an index within its own lane, numbering the lane 1..n', () => {
+    const tickets = placeTicketsInLane(board(), ['c'], 'dev', { beforeTicketId: 'a', afterTicketId: null })
+    expect(laneIds(tickets, 'dev')).toEqual(['c', 'a', 'b'])
+    const positions = tickets.filter((entry) => entry.laneId === 'dev').map((entry) => [entry.id, entry.lanePosition])
+    expect(Object.fromEntries(positions)).toEqual({ a: 2, b: 3, c: 1 })
   })
 
-  it('moves nothing when every carried ticket is already there', () => {
-    expect(ticketIdsToMove('a', new Set(['a', 'c']), tickets, 'idea')).toEqual([])
-    expect(ticketIdsToMove('d', new Set(), tickets, 'dev')).toEqual([])
+  it('lands a ticket from another lane at the anchor', () => {
+    const tickets = placeTicketsInLane(board(), ['d'], 'dev', { beforeTicketId: null, afterTicketId: 'a' })
+    expect(laneIds(tickets, 'dev')).toEqual(['a', 'd', 'b', 'c'])
+    expect(tickets.find((entry) => entry.id === 'd')).toMatchObject({ laneId: 'dev', lanePositionLaneId: 'dev' })
+  })
+
+  it('keeps a block from two lanes together in its carried order', () => {
+    const tickets = placeTicketsInLane(board(), ['d', 'e', 'a'], 'dev', { beforeTicketId: 'c', afterTicketId: null })
+    expect(laneIds(tickets, 'dev')).toEqual(['b', 'd', 'e', 'a', 'c'])
+  })
+
+  it('places relative to the visible neighbour, keeping hidden tickets in order', () => {
+    const beforeVisible = placeTicketsInLane(board(), ['d'], 'dev', { beforeTicketId: 'c', afterTicketId: null })
+    expect(laneIds(beforeVisible, 'dev')).toEqual(['a', 'b', 'd', 'c'])
+    const afterVisible = placeTicketsInLane(board(), ['d'], 'dev', { beforeTicketId: null, afterTicketId: 'a' })
+    expect(laneIds(afterVisible, 'dev')).toEqual(['a', 'd', 'b', 'c'])
+  })
+
+  it('goes to the bottom of a visibly empty lane, or when the anchor is gone', () => {
+    const emptyLane = placeTicketsInLane(board(), ['a'], 'done', { beforeTicketId: null, afterTicketId: null })
+    expect(emptyLane.find((entry) => entry.id === 'a')).toMatchObject({ laneId: 'done', lanePosition: 1 })
+    const goneAnchor = placeTicketsInLane(board(), ['d'], 'dev', { beforeTicketId: 'missing', afterTicketId: null })
+    expect(laneIds(goneAnchor, 'dev')).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('returns the same ticket objects for a drop that changes nothing', () => {
+    const once = placeTicketsInLane(board(), ['a'], 'dev', { beforeTicketId: 'b', afterTicketId: null })
+    const twice = placeTicketsInLane(once, ['a'], 'dev', { beforeTicketId: 'b', afterTicketId: null })
+    expect(twice.every((entry, index) => entry === once[index])).toBe(true)
+  })
+
+  it('clears only slots left behind in another lane', () => {
+    const stale = ticket('a', 1, 'dev', placed(3, 'idea'))
+    const current = ticket('b', 2, 'dev', placed(1, 'dev'))
+    const cleared = clearStaleLanePositions({ lanes: [], tickets: [stale, current] })
+    expect(cleared.tickets[0]).toEqual({ id: 'a', number: 1, laneId: 'dev' })
+    expect(cleared.tickets[1]).toBe(current)
+    const untouched = { lanes: [], tickets: [current] }
+    expect(clearStaleLanePositions(untouched)).toBe(untouched)
   })
 })
 
@@ -2403,6 +2552,31 @@ describe('promptRules / rulesToPrompt', () => {
   it('maps an empty prompt to no rules and back', () => {
     expect(promptRules('  \n\n')).toEqual([])
     expect(rulesToPrompt([])).toBe('')
+  })
+})
+
+describe('moveRule', () => {
+  const rules = ['a', 'b', 'c', 'd']
+
+  it('moves the first rule to last', () => {
+    expect(moveRule(rules, 0, 3)).toEqual(['b', 'c', 'd', 'a'])
+  })
+
+  it('moves the last rule to first', () => {
+    expect(moveRule(rules, 3, 0)).toEqual(['d', 'a', 'b', 'c'])
+  })
+
+  it('moves a middle rule', () => {
+    expect(moveRule(rules, 1, 2)).toEqual(['a', 'c', 'b', 'd'])
+  })
+
+  it('returns an unchanged copy for the same or an out-of-range index', () => {
+    expect(moveRule(rules, 2, 2)).toEqual(rules)
+    expect(moveRule(rules, 0, -1)).toEqual(rules)
+    expect(moveRule(rules, 4, 0)).toEqual(rules)
+    expect(moveRule(rules, 2, 2)).not.toBe(rules)
+    expect(moveRule(rules, 4, 0)).not.toBe(rules)
+    expect(rules).toEqual(['a', 'b', 'c', 'd'])
   })
 })
 

@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   version TEXT,
   agent_id TEXT,
   model TEXT NOT NULL DEFAULT '',
+  lane_position INTEGER,
+  lane_position_lane_id TEXT,
   UNIQUE (project_path, number)
 );
 
@@ -225,6 +227,8 @@ export const ADDED_COLUMNS = [
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'default_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'tickets', column: 'lane_position', definition: 'INTEGER' },
+  { table: 'tickets', column: 'lane_position_lane_id', definition: 'TEXT' },
   // NULL until the board's first workflow swap or create materializes "Default".
   { table: 'projects', column: 'active_workflow_id', definition: 'TEXT' }
 ]
@@ -254,6 +258,13 @@ AFTER INSERT ON tickets
 WHEN ${isClosingLane('NEW.lane_id')}
 BEGIN
   UPDATE tickets SET closed_at = ${NOW} WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS tickets_lane_position_on_move
+AFTER UPDATE OF lane_id ON tickets
+WHEN NEW.lane_id IS NOT OLD.lane_id AND NEW.lane_position_lane_id IS NOT NEW.lane_id
+BEGIN
+  UPDATE tickets SET lane_position = NULL, lane_position_lane_id = NULL WHERE id = NEW.id;
 END;
 
 -- Flagging a lane later counts what already sits in it, dated like the

@@ -419,71 +419,73 @@ defineExpose({
             </span>
           </label>
 
-          <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
-               clicking a wrapping caption would fire − and switch the lane off. -->
-          <div v-if="showsLaneField('orchestratorPoll', lane.id)" class="orchestrator-poll-row">
-            <label
-              id="orchestrator-poll-caption"
-              :for="orchestratorPollActive(lane) ? 'orchestrator-poll-minutes' : undefined"
-            >Orchestrator poll (minutes)</label>
-            <div
-              class="poll-stepper"
-              role="group"
-              aria-labelledby="orchestrator-poll-caption"
-              :title="orchestratorPollTooltip(lane)"
-            >
-              <button
-                type="button"
-                aria-label="Decrease orchestrator poll"
-                :aria-disabled="!orchestratorPollActive(lane)"
-                @click="stepOrchestratorPoll(lane.id, -1)"
-              >−</button>
-              <span class="poll-stepper-value">
-                <input
-                  v-if="orchestratorPollActive(lane)"
-                  id="orchestrator-poll-minutes"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :value="orchestratorPollMinutes(lane)"
-                  @change="editOrchestratorPollMinutes(lane, $event.target as HTMLInputElement)"
-                />
-                <span v-else role="img" aria-label="Orchestrator never polls">∞</span>
-              </span>
-              <span class="poll-stepper-status" aria-live="polite">{{
-                orchestratorPollActive(lane) ? plural(orchestratorPollMinutes(lane), 'minute') : 'Never polls'
-              }}</span>
-              <button
-                type="button"
-                aria-label="Increase orchestrator poll"
-                @click="stepOrchestratorPoll(lane.id, 1)"
-              >+</button>
+          <div class="field-row">
+            <!-- Caption uses for=, not a wrapping label: a <button> is labelable, so
+                 clicking a wrapping caption would fire − and switch the lane off. -->
+            <div v-if="showsLaneField('orchestratorPoll', lane.id)" class="orchestrator-poll-row">
+              <label
+                id="orchestrator-poll-caption"
+                :for="orchestratorPollActive(lane) ? 'orchestrator-poll-minutes' : undefined"
+              >Poll (minutes)</label>
+              <div
+                class="poll-stepper"
+                role="group"
+                aria-labelledby="orchestrator-poll-caption"
+                :title="orchestratorPollTooltip(lane)"
+              >
+                <button
+                  type="button"
+                  aria-label="Decrease orchestrator poll"
+                  :aria-disabled="!orchestratorPollActive(lane)"
+                  @click="stepOrchestratorPoll(lane.id, -1)"
+                >−</button>
+                <span class="poll-stepper-value">
+                  <input
+                    v-if="orchestratorPollActive(lane)"
+                    id="orchestrator-poll-minutes"
+                    type="number"
+                    min="1"
+                    step="1"
+                    :value="orchestratorPollMinutes(lane)"
+                    @change="editOrchestratorPollMinutes(lane, $event.target as HTMLInputElement)"
+                  />
+                  <span v-else role="img" aria-label="Orchestrator never polls">∞</span>
+                </span>
+                <span class="poll-stepper-status" aria-live="polite">{{
+                  orchestratorPollActive(lane) ? plural(orchestratorPollMinutes(lane), 'minute') : 'Never polls'
+                }}</span>
+                <button
+                  type="button"
+                  aria-label="Increase orchestrator poll"
+                  @click="stepOrchestratorPoll(lane.id, 1)"
+                >+</button>
+              </div>
             </div>
+            <label v-if="showsLaneField('orchestratorAgent', lane.id)">
+              Agent
+              <select
+                :value="lane.orchestratorAgentId ?? ''"
+                @change="
+                  editLane(lane, {
+                    orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
+                    orchestratorModel: undefined
+                  })
+                "
+              >
+                <option value="">Same as ticket agent</option>
+                <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+              </select>
+            </label>
+            <label v-if="showsLaneField('orchestratorModel', lane.id)">
+              Model
+              <ModelField
+                :model-value="lane.orchestratorModel ?? ''"
+                :agent="findAgent(agents, lane.orchestratorAgentId ?? lane.autoRunAgentId)"
+                :placeholder="lane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
+                @update:model-value="editLane(lane, { orchestratorModel: $event || undefined })"
+              />
+            </label>
           </div>
-          <label v-if="showsLaneField('orchestratorAgent', lane.id)">
-            Orchestrator agent
-            <select
-              :value="lane.orchestratorAgentId ?? ''"
-              @change="
-                editLane(lane, {
-                  orchestratorAgentId: ($event.target as HTMLSelectElement).value || undefined,
-                  orchestratorModel: undefined
-                })
-              "
-            >
-              <option value="">Same as ticket agent</option>
-              <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
-            </select>
-          </label>
-          <label v-if="showsLaneField('orchestratorModel', lane.id)">
-            Orchestrator model
-            <ModelField
-              :model-value="lane.orchestratorModel ?? ''"
-              :agent="findAgent(agents, lane.orchestratorAgentId ?? lane.autoRunAgentId)"
-              :placeholder="lane.orchestratorAgentId ? 'CLI default' : 'Same as ticket model'"
-              @update:model-value="editLane(lane, { orchestratorModel: $event || undefined })"
-            />
-          </label>
         </div>
       </details>
 
