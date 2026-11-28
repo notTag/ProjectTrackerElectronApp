@@ -47,7 +47,7 @@ const stateWithBoard = (): ProjectTrackerState => {
       [projectPath]: {
         lanes: [
           { id: 'idea', name: 'Idea', agentPrompt: 'Sketch it.', agentFilePath: '' },
-          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', orchestratorPromptOverride: 'Watch {{tickets}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
+          { id: 'prd', name: 'PRD', agentPrompt: '', agentFilePath: '/tmp/prd.md', outputTarget: 'docs/prd/', orchestratorPrompt: 'Poll every 2 minutes.', orchestratorFilePath: 'docs/orch.md', currentAgentOrchestratorPrompt: 'Watch {{tickets}}', defaultAgentOrchestratorPrompt: 'Track {{ticket_numbers}}', autoRunAgentId: 'codex', autoRunTerminalId: 'iterm2', autoRunWorktrees: false, fullAuto: true, agentSetsVersion: true, autoRunModel: 'opus', orchestratorAgentId: 'codex', orchestratorModel: 'gpt-5-mini', orchestratorPollMinutes: 5, orchestratorPollActive: false }
         ],
         unassignedLane: {
           id: UNASSIGNED_LANE_ID,
@@ -127,8 +127,10 @@ describe('StateRepository', () => {
     expect(board?.lanes[0].orchestratorPrompt).toBe('')
     expect(board?.lanes[1].orchestratorFilePath).toBe('docs/orch.md')
     expect(board?.lanes[0].orchestratorFilePath).toBe('')
-    expect(board?.lanes[1].orchestratorPromptOverride).toBe('Watch {{tickets}}')
-    expect(board?.lanes[0].orchestratorPromptOverride).toBe('')
+    expect(board?.lanes[1].currentAgentOrchestratorPrompt).toBe('Watch {{tickets}}')
+    expect(board?.lanes[0].currentAgentOrchestratorPrompt).toBe('')
+    expect(board?.lanes[1].defaultAgentOrchestratorPrompt).toBe('Track {{ticket_numbers}}')
+    expect(board?.lanes[0].defaultAgentOrchestratorPrompt).toBe('')
     expect(board?.lanes[1].autoRunAgentId).toBe('codex')
     expect(board?.lanes[1].autoRunTerminalId).toBe('iterm2')
     expect(board?.lanes[0].autoRunAgentId).toBeUndefined()
@@ -420,7 +422,7 @@ describe('row-level writes', () => {
     const created = repository.createWorkflow(projectPath, 'Hotfix')
     const createdBoard = created.boards?.[projectPath]
     const hotfixId = createdBoard?.activeWorkflowId ?? ''
-    expect(createdBoard?.workflows?.map((workflow) => workflow.name)).toEqual(['Default', 'Hotfix'])
+    expect(createdBoard?.workflows?.map((workflow) => workflow.name)).toEqual(['Development Workflow', 'Hotfix'])
     expect(() => repository.createWorkflow(projectPath, ' hotfix ')).toThrow('already exists')
     repository.updateSwimLane(projectPath, 'prd', { name: 'Spec', agentPrompt: 'Write the spec.' })
     repository.deleteSwimLane(projectPath, 'idea')
@@ -438,6 +440,25 @@ describe('row-level writes', () => {
     database.close()
 
     expect(reopenedBoard(userDataPath, projectPath).activeWorkflowId).toBe('default')
+  })
+
+  it('renames a stored built-in "Default" workflow on open unless the new name is taken', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, projectPath } = seededRepository(userDataPath)
+    const created = repository.createWorkflow(projectPath, 'Hotfix')
+    const hotfixId = created.boards?.[projectPath]?.activeWorkflowId ?? ''
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const renameWorkflow = (workflowId: string, name: string) =>
+      database.prepare('UPDATE workflows SET name = ? WHERE project_path = ? AND id = ?').run(name, projectPath, workflowId)
+    const workflowNames = () => reopenedBoard(userDataPath, projectPath).workflows?.map((workflow) => workflow.name)
+
+    renameWorkflow('default', 'Default')
+    expect(workflowNames()).toEqual(['Development Workflow', 'Hotfix'])
+
+    renameWorkflow('default', 'Default')
+    renameWorkflow(hotfixId, 'Development Workflow')
+    expect(workflowNames()).toEqual(['Default', 'Development Workflow'])
+    database.close()
   })
 
   it('un-closes tickets when a swap lands them in a lane that no longer closes', () => {
@@ -570,6 +591,177 @@ const ticketRowsExcept = (rows: DumpedRows, ticketId: string) => rows.filter((ro
 const laneRowsOf = (rows: DumpedRows, projectPath: string) => rows.filter((row) => row.project_path === projectPath)
 const laneRowsExcept = (rows: DumpedRows, projectPath: string, laneId: string) =>
   rows.filter((row) => !(row.project_path === projectPath && row.id === laneId))
+
+describe('swimlane store (#146)', () => {
+  const twoBoardRepository = (userDataPath: string) => {
+    const state = stateWithBoard()
+    const sourceProject = state.snapshot.projects[0]
+    const otherProject = { ...sourceProject, path: `${sourceProject.path}-other`, name: 'Other' }
+    const otherBoard = { lanes: [{ id: 'idea', name: 'Idea', agentPrompt: '', agentFilePath: '' }], tickets: [] }
+    new StateRepository(userDataPath).saveState({
+      ...state,
+      snapshot: { ...state.snapshot, projects: [sourceProject, otherProject] },
+      boards: { ...state.boards, [otherProject.path]: otherBoard }
+    })
+    return { repository: new StateRepository(userDataPath), sourcePath: sourceProject.path, otherPath: otherProject.path }
+  }
+  const markdown = { agent: '# Agent', orchestrator: '# Orchestrator' }
+
+  it('creates the lane_store table on an existing database', () => {
+    const userDataPath = freshUserDataPath()
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    legacy.exec(SCHEMA_SQL.replace(/CREATE TABLE IF NOT EXISTS lane_store \([^;]*\);/, ''))
+    expect(legacy.prepare("SELECT name FROM sqlite_master WHERE name = 'lane_store'").all()).toEqual([])
+    legacy.close()
+
+    expect(new StateRepository(userDataPath).listLaneStore()).toEqual([])
+  })
+
+  it('adds origin_project_path to a lane_store table created before it existed', () => {
+    const userDataPath = freshUserDataPath()
+    const legacy = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    legacy.exec(
+      `CREATE TABLE lane_store (id TEXT PRIMARY KEY, lane_id TEXT NOT NULL, name TEXT NOT NULL, lane_json TEXT NOT NULL,
+       agent_markdown TEXT NOT NULL DEFAULT '', orchestrator_markdown TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT)`
+    )
+    legacy.exec(`INSERT INTO lane_store (id, lane_id, name, lane_json, created_at) VALUES ('old', 'prd', 'PRD', '{}', '2026-11-01T00:00:00.000Z')`)
+    legacy.close()
+
+    expect(new StateRepository(userDataPath).listLaneStore()).toEqual([
+      expect.objectContaining({ id: 'old', originProjectPath: '', updatedAt: '2026-11-01T00:00:00.000Z' })
+    ])
+  })
+
+  it('saves a lane once, overwriting its own entry on re-save, and survives a reopen', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+
+    const first = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    repository.updateSwimLane(sourcePath, 'prd', { outputTarget: 'docs/spec/' })
+    const second = repository.saveLaneToStore(sourcePath, 'prd', { agent: '# Agent v2', orchestrator: '' })
+    repository.saveLaneToStore(sourcePath, 'idea', markdown)
+
+    expect(second.id).toBe(first.id)
+    expect(second.updatedAt).toBeDefined()
+    const reopened = new StateRepository(userDataPath)
+    expect(reopened.listLaneStore().map((entry) => [entry.laneId, entry.name])).toEqual([['idea', 'Idea'], ['prd', 'PRD']])
+    const database = new DatabaseSync(path.join(userDataPath, DATABASE_FILE_NAME))
+    const stored = database.prepare('SELECT * FROM lane_store WHERE id = ?').get(first.id)!
+    database.close()
+    const laneJson = JSON.parse(String(stored.lane_json))
+    expect(laneJson).toMatchObject({ id: 'prd', output_target: 'docs/spec/', auto_run_agent_id: 'codex' })
+    expect(laneJson).not.toHaveProperty('project_path')
+    expect(laneJson).not.toHaveProperty('position')
+    expect(laneJson).not.toHaveProperty('graph_position_json')
+    expect(stored.agent_markdown).toBe('# Agent v2')
+  })
+
+  it('keeps one entry per origin board lane, so the same lane saved from another board does not overwrite it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+
+    const fromSource = repository.saveLaneToStore(sourcePath, 'idea', markdown)
+    const fromOther = repository.saveLaneToStore(otherPath, 'idea', { agent: '# Other agent', orchestrator: '' })
+
+    expect(fromOther.id).not.toBe(fromSource.id)
+    expect(fromSource).toMatchObject({ laneId: 'idea', originProjectPath: sourcePath, updatedAt: fromSource.createdAt })
+    expect(fromOther).toMatchObject({ laneId: 'idea', originProjectPath: otherPath })
+    expect(repository.listLaneStore().map((entry) => entry.originProjectPath).sort()).toEqual([otherPath, sourcePath].sort())
+  })
+
+  it('refuses the No status lane and missing lanes', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+    expect(() => repository.saveLaneToStore(sourcePath, UNASSIGNED_LANE_ID, markdown)).toThrow('No status')
+    expect(() => repository.saveLaneToStore(sourcePath, 'ghost', markdown)).toThrow('does not exist')
+  })
+
+  it('adds a stored lane to another board last, with its settings, cleared file paths and next lane', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: 'idea', graphPosition: { x: 4, y: 5 } })
+    repository.createSwimLane(sourcePath, { id: 'qa', name: 'QA', agentPrompt: '', agentFilePath: '', nextLaneId: 'prd' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const qaEntry = repository.saveLaneToStore(sourcePath, 'qa', markdown)
+
+    const added = repository.addLaneFromStore(otherPath, prdEntry.id)
+    repository.addLaneFromStore(otherPath, qaEntry.id)
+
+    expect(added).toEqual({ laneName: 'PRD', agentMarkdown: '# Agent', orchestratorMarkdown: '# Orchestrator' })
+    const lanes = reopenedBoard(userDataPath, otherPath).lanes
+    expect(lanes.map((lane) => lane.id)).toEqual(['idea', 'prd', 'qa'])
+    const prd = lanes.find((lane) => lane.id === 'prd')
+    expect(prd).toMatchObject({
+      name: 'PRD',
+      outputTarget: 'docs/prd/',
+      autoRunAgentId: 'codex',
+      fullAuto: true,
+      orchestratorPollMinutes: 5,
+      agentFilePath: '',
+      orchestratorFilePath: '',
+      nextLaneId: 'idea'
+    })
+    expect(prd?.graphPosition).toBeUndefined()
+    expect(lanes.find((lane) => lane.id === 'qa')?.nextLaneId).toBe('prd')
+  })
+
+  it('clears a next lane the board lacks, and refuses a lane id already there', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: 'ghost' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const ideaEntry = repository.saveLaneToStore(sourcePath, 'idea', markdown)
+
+    repository.addLaneFromStore(otherPath, prdEntry.id)
+    expect(() => repository.addLaneFromStore(otherPath, ideaEntry.id)).toThrow('already in this workflow')
+
+    const prd = reopenedBoard(userDataPath, otherPath).lanes.find((lane) => lane.id === 'prd')
+    expect(prd?.nextLaneId).toBeUndefined()
+  })
+
+  it('keeps a No status next lane even when the board has no row for it', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.updateSwimLane(sourcePath, 'prd', { nextLaneId: UNASSIGNED_LANE_ID })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+
+    repository.addLaneFromStore(otherPath, prdEntry.id)
+
+    const prd = reopenedBoard(userDataPath, otherPath).lanes.find((lane) => lane.id === 'prd')
+    expect(prd?.nextLaneId).toBe(UNASSIGNED_LANE_ID)
+  })
+
+  it('refuses a lane whose prompt folder another board lane already uses', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    repository.createSwimLane(otherPath, { id: 'prd-copy', name: 'PRD', agentPrompt: '', agentFilePath: '' })
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+
+    expect(() => repository.addLaneFromStore(otherPath, prdEntry.id)).toThrow('"PRD" prompt folder')
+    expect(reopenedBoard(userDataPath, otherPath).lanes.map((lane) => lane.id)).toEqual(['idea', 'prd-copy'])
+  })
+
+  it('rolls the lane back when writing its prompts fails', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath, otherPath } = twoBoardRepository(userDataPath)
+    const prdEntry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    const failingWrite = () => {
+      throw new Error('disk full')
+    }
+
+    expect(() => repository.addLaneFromStore(otherPath, prdEntry.id, failingWrite)).toThrow('disk full')
+    expect(reopenedBoard(userDataPath, otherPath).lanes.map((lane) => lane.id)).toEqual(['idea'])
+  })
+
+  it('deletes an entry', () => {
+    const userDataPath = freshUserDataPath()
+    const { repository, sourcePath } = twoBoardRepository(userDataPath)
+    const entry = repository.saveLaneToStore(sourcePath, 'prd', markdown)
+    repository.deleteLaneStoreEntry(entry.id)
+    expect(repository.listLaneStore()).toEqual([])
+    expect(() => repository.addLaneFromStore(sourcePath, entry.id)).toThrow('no longer exists')
+  })
+})
 
 describe('per-entity writes leave unrelated rows alone', () => {
   it('ticket create, update, move and delete touch only that ticket', () => {
@@ -889,7 +1081,8 @@ describe('legacy databases', () => {
     expect(state.boards!['/legacy'].lanes[0].outputTarget).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].orchestratorFilePath).toBe('')
-    expect(state.boards!['/legacy'].lanes[0].orchestratorPromptOverride).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].currentAgentOrchestratorPrompt).toBe('')
+    expect(state.boards!['/legacy'].lanes[0].defaultAgentOrchestratorPrompt).toBe('')
     expect(state.boards!['/legacy'].lanes[0].fullAuto).toBe(false)
     expect(existsSync(path.join(userDataPath, LEGACY_BACKUP_FILE_NAME))).toBe(true)
 
@@ -1190,6 +1383,39 @@ describe('closed_at triggers (#27)', () => {
     // in-pr staying 0 proves the old seed is gone; legacy staying 1 proves updates leave the column alone.
     const flags = cli.prepare('SELECT id, waits_for_pull_request_merge AS flag FROM swim_lanes WHERE waits_for_pull_request_merge = 1').all()
     expect(flags).toEqual([{ id: 'legacy', flag: 1 }])
+    cli.close()
+  })
+
+  it('upgrading an older file copies each orchestrator prompt override into the current prompt once', () => {
+    const { userDataPath, projectPath, cli } = setUp()
+    const snapshotRows = [
+      { id: 'planned', name: 'Planned', orchestrator_prompt_override: 'Snapshot {{tickets}}' },
+      { id: 'blank', name: 'Blank', orchestrator_prompt_override: '   ' }
+    ]
+    cli
+      .prepare(`INSERT INTO workflows (id, project_path, name, position, lanes_json) VALUES ('other', ?, 'Other', 1, ?)`)
+      .run(projectPath, JSON.stringify(snapshotRows))
+    cli.exec(`
+      UPDATE swim_lanes SET orchestrator_prompt_override = 'Watch {{tickets}}' WHERE id = 'in-dev';
+      UPDATE swim_lanes SET orchestrator_prompt_override = '  ' WHERE id = 'idea';
+      UPDATE schema_meta SET version = 6;
+    `)
+    const currentPrompt = (laneId: string) =>
+      cli.prepare('SELECT current_agent_orchestrator_prompt AS prompt FROM swim_lanes WHERE id = ?').get(laneId)?.prompt
+
+    const repository = new StateRepository(userDataPath)
+    expect(currentPrompt('in-dev')).toBe('Watch {{tickets}}')
+    expect(currentPrompt('idea')).toBe('')
+    const inDev = repository.getState().boards![projectPath].lanes.find((entry) => entry.id === 'in-dev')
+    expect(inDev?.currentAgentOrchestratorPrompt).toBe('Watch {{tickets}}')
+    expect(inDev?.defaultAgentOrchestratorPrompt).toBe('')
+    const snapshotJson = cli.prepare("SELECT lanes_json FROM workflows WHERE id = 'other'").get()?.lanes_json
+    const copiedSnapshot = JSON.parse(String(snapshotJson)) as Record<string, unknown>[]
+    expect(copiedSnapshot.map((row) => row.current_agent_orchestrator_prompt)).toEqual(['Snapshot {{tickets}}', undefined])
+
+    repository.updateSwimLane(projectPath, 'in-dev', { currentAgentOrchestratorPrompt: '' })
+    new StateRepository(userDataPath)
+    expect(currentPrompt('in-dev')).toBe('')
     cli.close()
   })
 

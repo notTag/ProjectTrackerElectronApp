@@ -2,8 +2,9 @@ import type {
   AgentRetryEvent,
   AutoRunTicketLaunch,
   GithubIssueLists,
-  LaneMarkdownKind,
+  LaneStoreEntry,
   LaneWritePatch,
+  OrchestratorAdditionalContext,
   ProjectGithubData,
   ProjectMetrics,
   ProjectRecord,
@@ -39,6 +40,10 @@ export const IPC_CHANNELS = [
   'lane:delete',
   'workflow:activate',
   'workflow:create',
+  'lane-store:list',
+  'lane-store:save',
+  'lane-store:delete',
+  'lane-store:add',
   'project:update',
   'projects:scan',
   'projects:scan-cancel',
@@ -53,7 +58,8 @@ export const IPC_CHANNELS = [
   'ticket:fetch-pull-request',
   'project:fetch-github-issues',
   'project:read-readme',
-  'lane:save-agent-markdown'
+  'lane:save-agent-markdown',
+  'lane:read-orchestrator-context'
 ] as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
@@ -91,6 +97,10 @@ export interface ProjectTrackerBridge {
   // Both return a fresh read: the board's lanes are replaced wholesale.
   activateWorkflow(projectPath: string, workflowId: string): Promise<ProjectTrackerState>
   createWorkflow(projectPath: string, name: string): Promise<ProjectTrackerState>
+  listLaneStore(): Promise<LaneStoreEntry[]>
+  saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry>
+  deleteLaneStoreEntry(entryId: string): Promise<void>
+  addLaneFromStore(projectPath: string, entryId: string): Promise<ProjectTrackerState>
   updateProject(path: string, patch: ProjectWritePatch): Promise<ProjectRecord>
   onExternalChange(callback: () => void): () => void
   scanProjectDirectories(scanDirectories: string[], hiddenPaths: string[], thirdPartyPaths: string[]): Promise<ScanResult>
@@ -128,13 +138,17 @@ export interface ProjectTrackerBridge {
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
   saveLaneMarkdown(
-    kind: LaneMarkdownKind,
     projectPath: string,
     laneName: string,
     filePath: string,
     content: string,
     previousContent: string
   ): Promise<{ filePath: string }>
+  readLaneOrchestratorContext(
+    projectPath: string,
+    laneName: string,
+    filePath: string
+  ): Promise<OrchestratorAdditionalContext | null>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>

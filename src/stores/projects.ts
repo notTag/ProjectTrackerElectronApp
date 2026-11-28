@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { toRaw } from 'vue'
 
 import { projectTrackerApi } from '@/services/projectTrackerApi'
 import { resolveAutoRunTerminal } from '@/shared/openInTargets'
@@ -29,6 +30,7 @@ import {
   type TicketAgentRun,
   availableAgents,
   boardWrites,
+  changedFields,
   buildAutoRunLaunch,
   completionMoves,
   findAgent,
@@ -58,11 +60,10 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type ProjectTrackerState,
-  type LaneMarkdownKind,
+  type LaneStoreEntry,
   type ScanProgress,
   type SwimLane,
   type Ticket,
-  LANE_MARKDOWN_FILE_PATH_FIELD,
   UNASSIGNED_LANE_ID
 } from '@/shared/projectTypes'
 
@@ -85,6 +86,7 @@ interface ProjectsStoreState {
   agentRunning: Record<string, boolean>
   // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
   autoRunning: Record<string, boolean>
+  laneStoreEntries: LaneStoreEntry[]
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -260,13 +262,66 @@ const replaceById = <T extends { id: string }>(entries: T[], written: T) => {
   return exists ? entries.map((entry) => (entry.id === written.id ? written : entry)) : [...entries, written]
 }
 
-// The row as stored wins over the local copy: a created ticket takes the
-// repository's number here.
-const withWrittenEntity = (board: ProjectBoard, write: BoardWrite, written: Ticket | SwimLane): ProjectBoard => {
-  if (write.kind.startsWith('ticket:')) return { ...board, tickets: replaceById(board.tickets, written as Ticket) }
-  const lane = written as SwimLane
+const withWrittenLane = (board: ProjectBoard, lane: SwimLane): ProjectBoard => {
   if (lane.id === UNASSIGNED_LANE_ID) return { ...board, unassignedLane: lane }
   return { ...board, lanes: replaceById(board.lanes, lane) }
+}
+
+const patchTicketInPlace = (board: ProjectBoard, written: Ticket) => {
+  const row = board.tickets.find((ticket) => ticket.id === written.id)
+  if (!row) {
+    board.tickets.push(written)
+    return
+  }
+  const changed = changedFields(written, row)
+  Object.assign(row, changed)
+}
+
+const onlyTicketsDiffer = (current: ProjectTrackerState, next: ProjectTrackerState, projectPath: string) => {
+  const currentBoard = current.boards?.[projectPath]
+  const nextBoard = next.boards?.[projectPath]
+  if (!currentBoard || !nextBoard) return false
+  const keysOfEither = (first: object, second: object) => new Set([...Object.keys(first), ...Object.keys(second)])
+  const sameOtherState = [...keysOfEither(current, next)].every(
+    (key) => key === 'boards' || next[key as keyof ProjectTrackerState] === current[key as keyof ProjectTrackerState]
+  )
+  const sameOtherBoards = [...keysOfEither(current.boards!, next.boards!)].every(
+    (path) => path === projectPath || next.boards?.[path] === current.boards?.[path]
+  )
+  const sameBoardFields = [...keysOfEither(currentBoard, nextBoard)].every(
+    (key) => key === 'tickets' || nextBoard[key as keyof ProjectBoard] === currentBoard[key as keyof ProjectBoard]
+  )
+  return sameOtherState && sameOtherBoards && sameBoardFields
+}
+
+const applyTicketWritesInPlace = (
+  current: ProjectTrackerState,
+  next: ProjectTrackerState,
+  projectPath: string,
+  writes: BoardWrite[]
+) => {
+  const ticketWritesOnly = writes.every((write) => write.kind.startsWith('ticket:'))
+  if (!ticketWritesOnly || !onlyTicketsDiffer(toRaw(current), next, projectPath)) return false
+  const board = current.boards![projectPath]
+  const rowById = new Map(board.tickets.map((ticket) => [ticket.id, ticket]))
+  for (const write of writes) {
+    switch (write.kind) {
+      case 'ticket:create':
+        board.tickets.push(write.ticket)
+        break
+      case 'ticket:update': {
+        const updatedRow = rowById.get(write.id)
+        if (updatedRow) Object.assign(updatedRow, write.patch)
+        break
+      }
+      case 'ticket:delete': {
+        const index = board.tickets.findIndex((ticket) => ticket.id === write.id)
+        if (index >= 0) board.tickets.splice(index, 1)
+        break
+      }
+    }
+  }
+  return true
 }
 
 export const useProjectsStore = defineStore('projects', {
@@ -283,7 +338,8 @@ export const useProjectsStore = defineStore('projects', {
     readmes: {},
     githubLoading: {},
     agentRunning: {},
-    autoRunning: {}
+    autoRunning: {},
+    laneStoreEntries: []
   }),
 
   getters: {
@@ -338,19 +394,21 @@ export const useProjectsStore = defineStore('projects', {
 
     // File first, DB second: a failed write throws before the lane is touched.
     // Only a new path is stored; the prompt text is stored on blur.
-    async saveLaneMarkdown(
-      projectPath: string,
-      lane: SwimLane,
-      kind: LaneMarkdownKind,
-      prompt: string,
-      previousPrompt: string,
-      filePath: string
-    ) {
-      const saved = await projectTrackerApi.saveLaneMarkdown(kind, projectPath, lane.name, filePath, prompt, previousPrompt)
-      const filePathField = LANE_MARKDOWN_FILE_PATH_FIELD[kind]
-      const pathIsStored = lane[filePathField] === saved.filePath
-      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { [filePathField]: saved.filePath }))
+    async saveLaneMarkdown(projectPath: string, lane: SwimLane, prompt: string, previousPrompt: string, filePath: string) {
+      const saved = await projectTrackerApi.saveLaneMarkdown(projectPath, lane.name, filePath, prompt, previousPrompt)
+      const pathIsStored = lane.agentFilePath === saved.filePath
+      const laneUpdated = pathIsStored || (await this.updateLane(projectPath, lane.id, { agentFilePath: saved.filePath }))
       return { filePath: saved.filePath, laneUpdated }
+    },
+
+    async readLaneOrchestratorContext(projectPath: string, lane: SwimLane) {
+      try {
+        const filePath = lane.orchestratorFilePath ?? ''
+        const additionalContext = await projectTrackerApi.readLaneOrchestratorContext(projectPath, lane.name, filePath)
+        return additionalContext ?? undefined
+      } catch {
+        return undefined
+      }
     },
 
     // Optimistic: the lane lands in its new slot on drop rather than after the
@@ -398,6 +456,35 @@ export const useProjectsStore = defineStore('projects', {
 
     async createWorkflow(projectPath: string, name: string) {
       return this.writeWorkflow(projectPath, () => projectTrackerApi.createWorkflow(projectPath, name))
+    },
+
+    async saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry> {
+      await this.writeBoard(projectPath, boardUpdate(projectPath, (board) => board))
+      const queueSettled = saveQueue.catch(() => undefined)
+      const saved = queueSettled.then(() => projectTrackerApi.saveLaneToStore(projectPath, laneId))
+      saveQueue = saved.then(
+        () => undefined,
+        () => undefined
+      )
+      const entry = await saved
+      await this.loadLaneStore()
+      return entry
+    },
+
+    async loadLaneStore() {
+      this.laneStoreEntries = await projectTrackerApi.listLaneStore()
+    },
+
+    async deleteLaneStoreEntry(entryId: string) {
+      return this.persist(async () => {
+        await projectTrackerApi.deleteLaneStoreEntry(entryId)
+        this.laneStoreEntries = this.laneStoreEntries.filter((entry) => entry.id !== entryId)
+        return []
+      })
+    },
+
+    async addLaneFromStore(projectPath: string, entryId: string) {
+      return this.writeWorkflow(projectPath, () => projectTrackerApi.addLaneFromStore(projectPath, entryId))
     },
 
     // The identity board write first stores a never-saved board's default
@@ -729,7 +816,12 @@ export const useProjectsStore = defineStore('projects', {
       for (const write of writes) {
         const written = await sendBoardWrite(projectPath, write)
         if (!written) continue
-        const board = withWrittenEntity(storedBoard(this.state, projectPath), write, written)
+        if (write.kind.startsWith('ticket:')) {
+          const stored = this.state.boards?.[projectPath]
+          if (stored) patchTicketInPlace(stored, written as Ticket)
+          continue
+        }
+        const board = withWrittenLane(storedBoard(this.state, projectPath), written as SwimLane)
         this.state = { ...this.state, boards: { ...this.state.boards, [projectPath]: board } }
       }
     },
@@ -761,18 +853,21 @@ export const useProjectsStore = defineStore('projects', {
       saveQueue = saveQueue
         .catch(() => undefined)
         .then(async () => {
-          const persistedState = undo ? undo(this.state) : this.state
-          const candidate = update(this.state)
-          const ownMoves = withCompletionMoves(this.state, candidate, alsoCompletedIds)
+          const rawState = toRaw(this.state)
+          const persistedState = undo ? undo(rawState) : rawState
+          const candidate = update(rawState)
+          const ownMoves = withCompletionMoves(rawState, candidate, alsoCompletedIds)
           const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
-          this.state = ownMoves.state
+          const handoffsBeforePatch = handoffsBetween(candidate, ownMoves.state)
+          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, ownMoves.state, projectPath, writes)
+          if (!appliedInPlace) this.state = ownMoves.state
           try {
             await this.dispatchBoardWrites(projectPath, writes)
           } catch (error) {
             await this.reloadAfterFailedWrite(undo)
             throw error
           }
-          handoffs = handoffsBetween(candidate, this.state)
+          handoffs = handoffsBeforePatch
           this.notice = completionMovesNotice(ownMoves.moved) ?? this.notice
         })
       await saveQueue
