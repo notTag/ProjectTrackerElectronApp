@@ -1257,7 +1257,7 @@ export const useProjectsStore = defineStore('projects', {
       const runningRecord: TicketAgentRun = {
         at: startedAt,
         startedAt,
-        laneId: ticket.laneId,
+        laneId: currentTicket.laneId,
         output: '',
         status: 'running',
         mode: 'headless',

@@ -708,7 +708,7 @@ defineExpose({
           <button
             :disabled="store.agentRunning[ticket.id] || hasLiveAgentInLane(ticket)"
             :title="
-              hasLiveAgentInLane(ticket)
+              !store.agentRunning[ticket.id] && hasLiveAgentInLane(ticket)
                 ? 'An agent is already running on this ticket in this lane'
                 : `Run ${agentForTicket(ticket, agents).name} in the background`
             "

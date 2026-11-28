@@ -365,11 +365,12 @@ describe('Move to on completion', () => {
     agentId: 'claude'
   })
 
-  it('keeps a live terminal agent in this lane and never starts ▶ Run', async () => {
+  it('keeps a live terminal agent in this lane and never starts ▶ Run, even from a stale modal copy', async () => {
     const { store, ticket } = armedStore()
+    const staleModalTicket = { ...ticket }
     ticket.agentRun = liveTerminalRun('prd')
 
-    await store.runTicketAgent(PROJECT_PATH, ticket, 'claude', 'prompt')
+    await store.runTicketAgent(PROJECT_PATH, staleModalTicket, 'claude', 'prompt')
 
     expect(api.runTicketAgent).not.toHaveBeenCalled()
     expect(api.updateTicket).not.toHaveBeenCalled()
