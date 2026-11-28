@@ -32,6 +32,9 @@ import {
   boardWrites,
   changedFields,
   buildAutoRunLaunch,
+  buildOrchestratorLaunch,
+  orchestratorAgentChoice,
+  orchestratorPromptContext,
   completionMoves,
   findAgent,
   fullAutoHandoffs,
@@ -808,7 +811,26 @@ export const useProjectsStore = defineStore('projects', {
           const launches = laneHandoffs.map(({ ticket }) =>
             buildAutoRunLaunch(ticket, toLane, agent, this.promptContextFor(ticket, projectPath), useWorktrees, toLane.autoRunModel)
           )
-          const launch = this.autoRunLane(projectPath, toLane.id, terminal.id, terminal.label, launches, useWorktrees)
+          const generatedContext = orchestratorPromptContext(this.board(projectPath), projectPath, terminal)
+          const orchestratorChoice = orchestratorAgentChoice(toLane, { agent, model: toLane.autoRunModel }, agents)
+          const orchestrator = this.readLaneOrchestratorContext(projectPath, toLane).then((additionalContext) =>
+            buildOrchestratorLaunch(
+              toLane,
+              launches,
+              orchestratorChoice.agent,
+              { ...generatedContext, additionalContext },
+              orchestratorChoice.model
+            )
+          )
+          const launch = this.autoRunLane(
+            projectPath,
+            toLane.id,
+            terminal.id,
+            terminal.label,
+            launches,
+            useWorktrees,
+            orchestrator
+          )
           void launch.then((launched) => {
             if (launched) this.notice = joinNotices(`Full auto: ${ticketNumbers} → ${toLane.name}`, skippedNotice)
           })
@@ -1136,7 +1158,7 @@ export const useProjectsStore = defineStore('projects', {
       terminalLabel: string,
       launches: AutoRunLaunchEntry[],
       useWorktrees: boolean,
-      orchestrator?: TerminalTab
+      orchestrator?: TerminalTab | Promise<TerminalTab>
     ): Promise<boolean> {
       const runKey = autoRunKey(path, laneId)
       if (this.autoRunning[runKey]) return false
@@ -1166,16 +1188,17 @@ export const useProjectsStore = defineStore('projects', {
       try {
         if (runByTicketId.size > 0) await this.updateBoard(path, agentRunsUpdate(runByTicketId))
         const ticketLaunches = launches.map((entry) => entry.launch)
+        const orchestratorLaunch = await orchestrator
         const { worktreePaths } = await projectTrackerApi.autoRunLane(
           path,
           targetId,
           ticketLaunches,
           useWorktrees,
-          orchestrator
+          orchestratorLaunch
         )
         const tabWord = launches.length === 1 ? 'tab' : 'tabs'
         const worktreeNote = useWorktrees ? ', one worktree each' : ''
-        const orchestratorNote = orchestrator ? ' plus an orchestrator tab' : ''
+        const orchestratorNote = orchestratorLaunch ? ' plus an orchestrator tab' : ''
         this.notice = `Auto Run opened ${launches.length} ${tabWord}${orchestratorNote} in ${terminalLabel}${worktreeNote}.`
         if (worktreePaths.length === 0) return true
         const updatedAt = new Date().toISOString()
