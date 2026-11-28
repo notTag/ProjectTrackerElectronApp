@@ -2232,7 +2232,7 @@ span.ticket-image-thumb {
 .graph-back { margin-bottom: 12px; }
 .graph-details { width: 340px; flex-shrink: 0; padding: 20px; border-left: 1px solid var(--color-text-muted); overflow: auto; max-height: calc(100vh - 210px); }
 .graph-details h2 { overflow-wrap: anywhere; }
-.graph-rule { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.graph-rule { display: flex; gap: 6px; align-items: flex-start; padding-top: 6px; }
 .graph-rule textarea { flex: 1; min-height: 0; resize: none; field-sizing: content; }
 .graph-rule-delete { padding: 2px 8px; }
 .graph-rule-handle { padding: 2px 6px; cursor: grab; }

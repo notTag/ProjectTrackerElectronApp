@@ -294,13 +294,16 @@ type RuleSlot = { field: PromptField; index: number }
 const draggingRule = ref<RuleSlot | null>(null)
 const ruleDropTarget = ref<RuleSlot | null>(null)
 const ruleHandleToFocus = ref<RuleSlot | null>(null)
-const vFocusWhen = { mounted: (element: HTMLElement, binding: { value: boolean }) => binding.value && element.focus() }
+const vFocusWhen = {
+  mounted(element: HTMLElement, binding: { value: boolean }) {
+    if (binding.value) element.focus()
+  }
+}
 const isSlot = (slot: RuleSlot | null, field: PromptField, index: number) => slot?.field === field && slot.index === index
 
 function reorderRule(lane: SwimLane, field: PromptField, fromIndex: number, toIndex: number) {
-  const rules = laneRules(lane, field)
-  if (fromIndex === toIndex || toIndex < 0 || toIndex >= rules.length) return
-  saveRules(lane, field, moveRule(rules, fromIndex, toIndex))
+  if (fromIndex === toIndex) return
+  saveRules(lane, field, moveRule(laneRules(lane, field), fromIndex, toIndex))
 }
 function startRuleDrag(field: PromptField, index: number, event: DragEvent) {
   draggingRule.value = { field, index }
@@ -318,10 +321,12 @@ function dragOverRule(field: PromptField, index: number, event: DragEvent) {
   event.preventDefault()
   ruleDropTarget.value = { field, index }
 }
-function dropRule(lane: SwimLane, field: PromptField, index: number) {
+function dropRule(lane: SwimLane, field: PromptField, index: number, event: DragEvent) {
   const dragged = draggingRule.value
+  if (dragged?.field !== field) return
+  event.preventDefault()
   endRuleDrag()
-  if (dragged?.field === field) reorderRule(lane, field, dragged.index, index)
+  reorderRule(lane, field, dragged.index, index)
 }
 function dropIndicatorClass(field: PromptField, index: number) {
   const dragged = draggingRule.value
@@ -334,7 +339,9 @@ function moveRuleByKey(lane: SwimLane, field: PromptField, index: number, event:
   if (!step) return
   event.preventDefault()
   const targetIndex = index + step
-  if (targetIndex < 0 || targetIndex >= laneRules(lane, field).length) return
+  const rules = laneRules(lane, field)
+  const isSameText = rules[targetIndex] === rules[index]
+  if (targetIndex < 0 || targetIndex >= rules.length || isSameText) return
   ruleHandleToFocus.value = { field, index: targetIndex }
   reorderRule(lane, field, index, targetIndex)
 }
@@ -421,7 +428,8 @@ function selectLane(id: string | null) {
             class="graph-rule"
             :class="dropIndicatorClass(section.field, index)"
             @dragover="dragOverRule(section.field, index, $event)"
-            @drop.prevent="dropRule(selectedLane, section.field, index)"
+            @dragleave="ruleDropTarget = null"
+            @drop="dropRule(selectedLane, section.field, index, $event)"
           >
             <button
               v-focus-when="isSlot(ruleHandleToFocus, section.field, index)"
