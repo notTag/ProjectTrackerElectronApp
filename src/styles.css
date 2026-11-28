@@ -2086,12 +2086,21 @@ span.ticket-image-thumb {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: flex-start;
+  align-items: stretch;
 }
 
-.ticket-agent .agent-hint {
-  margin: 0;
+.ticket-agent > .checkbox-label {
+  align-self: flex-start;
+}
+
+.ticket-agent-run .field-hint {
+  margin: 4px 0 0;
+}
+
+.field-group-caption {
+  margin: 4px 0 0;
   font-size: 0.78rem;
+  font-weight: 600;
   color: var(--color-text-muted);
 }
 
@@ -2110,25 +2119,31 @@ span.ticket-image-thumb {
   word-break: break-word;
 }
 
-.auto-run-pickers {
+.field-row {
   align-self: stretch;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-/* Scoped through .lane-modal to outrank `.lane-modal label` by specificity, not file order. */
-.lane-modal .auto-run-pickers label {
+.lane-modal .field-row > label,
+.ticket-modal .field-row > label {
   flex: 1 1 0;
   min-width: 140px;
 }
 
-.auto-run-pickers select {
+.ticket-modal .field-row > .checkbox-label {
+  align-self: flex-end;
+  min-height: 34px;
+}
+
+.field-row select {
   width: 100%;
 }
 
 .ticket-agent .agent-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
