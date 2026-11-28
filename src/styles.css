@@ -2077,6 +2077,10 @@ span.ticket-image-thumb {
   align-items: stretch;
 }
 
+.ticket-agent > .checkbox-label {
+  align-self: flex-start;
+}
+
 .ticket-agent-run .field-hint {
   margin: 4px 0 0;
 }
@@ -2110,7 +2114,6 @@ span.ticket-image-thumb {
   gap: 8px;
 }
 
-/* Scoped through the modal to outrank `.lane-modal label` / `.ticket-modal label` by specificity, not file order. */
 .lane-modal .field-row > label,
 .ticket-modal .field-row > label {
   flex: 1 1 0;

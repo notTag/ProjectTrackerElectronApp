@@ -286,17 +286,17 @@ const openTicketNextLaneId = computed(() =>
 
 // '' = inherit. A stale override naming the ticket's own lane shows as inherit
 // too, matching how effectiveNextLaneId resolves it.
-const showsWhoRunsIt = computed(
-  () => !hidesModalField('agent') || !hidesModalField('model') || !hidesModalField('fullAuto')
-)
-const showsMoveRules = computed(() => Boolean(openTicketNextLaneId.value || props.ticket.moveRules))
-const showsWhenItsDone = computed(() => !hidesModalField('nextLane') || showsMoveRules.value)
-
 const openTicketOverrideId = computed(() => {
   const ticket = props.ticket
   if (!ticket.moveToLaneId || ticket.moveToLaneId === ticket.laneId) return ''
   return ticket.moveToLaneId
 })
+
+const showsWhoRunsIt = computed(
+  () => !hidesModalField('agent') || !hidesModalField('model') || !hidesModalField('fullAuto')
+)
+const showsMoveRules = computed(() => Boolean(openTicketNextLaneId.value || props.ticket.moveRules))
+const showsWhenItsDone = computed(() => !hidesModalField('nextLane') || showsMoveRules.value)
 
 const openTicketLaneDefaultLabel = computed(() => {
   const laneDefaultId = laneNextLaneId(props.ticket.laneId)
@@ -526,7 +526,7 @@ defineExpose({
 
       <section v-if="!hidesModalField('externalLinks')" class="ticket-checklist ticket-links">
         <p class="eyebrow">External Links</p>
-        <a v-if="ticket.externalUrl" class="ticket-external" :href="ticket.externalUrl" target="_blank">
+        <a v-if="ticket.externalUrl" class="ticket-external" :href="ticket.externalUrl" target="_blank" rel="noreferrer">
           View on GitHub ({{ ticket.externalId?.replace('github:', '#') }})
         </a>
         <ul v-if="ticket.externalLinks?.length">
@@ -602,6 +602,7 @@ defineExpose({
         class="ticket-external"
         :href="ticket.externalUrl"
         target="_blank"
+        rel="noreferrer"
       >
         View on GitHub ({{ ticket.externalId?.replace('github:', '#') }})
       </a>
@@ -645,14 +646,15 @@ defineExpose({
 
         <p v-if="showsWhenItsDone" class="field-group-caption">When it's done</p>
         <div v-if="!hidesModalField('nextLane')" class="field-row">
-          <label>
+          <label for="ticket-next-lane-select">
             <span>
-              Next Lane
-              <InfoTip
+              <span id="ticket-next-lane-label">Next Lane</span> <InfoTip
                 text="Where this ticket goes when its checklist is done or ▶ Run succeeds. Defaults to the lane's Next Lane."
               />
             </span>
             <select
+              id="ticket-next-lane-select"
+              aria-labelledby="ticket-next-lane-label"
               :value="openTicketOverrideId"
               @change="setMoveToLane(ticket, ($event.target as HTMLSelectElement).value)"
             >
@@ -729,7 +731,12 @@ defineExpose({
             Last agent run · {{ laneName(ticket.agentRun.laneId) }} · {{ formatDateTime(ticket.agentRun.at) }}
           </p>
           <pre v-if="ticket.agentRun.output.trim()">{{ ticket.agentRun.output }}</pre>
-          <p v-else class="field-hint">No output</p>
+          <p
+            v-else-if="ticket.agentRun.status !== 'running' && ticket.agentRun.mode !== 'terminal'"
+            class="field-hint"
+          >
+            No output
+          </p>
         </div>
       </section>
 
