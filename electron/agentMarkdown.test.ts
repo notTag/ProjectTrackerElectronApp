@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { LaneMarkdownKind } from '../src/shared/projectTypes.js'
-import { readOrchestratorContext, resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import { ensureDefaultLaneMarkdown, readLaneMarkdownContext, resolveAgentMarkdownPath } from './agentMarkdown.js'
 
 const createdProjectPaths: string[] = []
 
@@ -48,24 +48,11 @@ describe('resolveAgentMarkdownPath', () => {
     }
   })
 
-  it('moves a pre-#81 agent-context/ path into the lane folder', () => {
-    const legacyPath = '/code/app/agent-context/ProjectTracker-electron-app-In-Review-AgentContext.md'
-    const resolved = resolveAgentMarkdownPath(target('/code/app', legacyPath))
-    expect(resolved).toBe('/code/app/SwimlaneAgentPrompt/In-Review/AgentPrompt.md')
-  })
-
-  it("follows a lane rename instead of keeping the old name's folder", () => {
+  it('keeps a stored path as typed after a lane rename, so its text is not left behind', () => {
     for (const kind of ['agent', 'orchestrator'] as const) {
       const fileName = kind === 'agent' ? 'AgentPrompt.md' : 'AgentOrchestratorPrompt.md'
       const oldNamePath = `/code/app/SwimlaneAgentPrompt/QA/${fileName}`
-      const resolved = resolveAgentMarkdownPath(target('/code/app', oldNamePath, kind))
-      expect(resolved).toBe(`/code/app/SwimlaneAgentPrompt/In-Review/${fileName}`)
-    }
-  })
-
-  it('keeps a path the user chose, even inside the prompt folders', () => {
-    for (const chosenPath of ['/code/app/agent-context/notes.md', '/code/app/SwimlaneAgentPrompt/QA/extra.md']) {
-      expect(resolveAgentMarkdownPath(target('/code/app', chosenPath))).toBe(chosenPath)
+      expect(resolveAgentMarkdownPath(target('/code/app', oldNamePath, kind))).toBe(oldNamePath)
     }
   })
 
@@ -73,8 +60,14 @@ describe('resolveAgentMarkdownPath', () => {
     expect(resolveAgentMarkdownPath(target('/code/app', 'docs/guide.md'))).toBe('/code/app/docs/guide.md')
   })
 
-  it('rejects an explicit path that is not markdown', () => {
-    expect(() => resolveAgentMarkdownPath(target('/code/app', '/Users/me/.zshrc'))).toThrow('must end in .md')
+  it('accepts a .txt file', () => {
+    expect(resolveAgentMarkdownPath(target('/code/app', 'docs/guide.txt'))).toBe('/code/app/docs/guide.txt')
+  })
+
+  it('rejects an explicit path that is not .md or .txt', () => {
+    for (const refusedPath of ['/Users/me/.zshrc', 'scripts/run.sh']) {
+      expect(() => resolveAgentMarkdownPath(target('/code/app', refusedPath))).toThrow('must end in .md or .txt')
+    }
   })
 
   describe('orchestrator kind', () => {
@@ -89,88 +82,51 @@ describe('resolveAgentMarkdownPath', () => {
       expect(resolved).toBe('/code/app/docs/orchestrator.md')
     })
 
-    it('rejects a non-markdown path, naming its own field', () => {
-      const notMarkdown = target('/code/app', 'notes.txt', 'orchestrator')
-      expect(() => resolveAgentMarkdownPath(notMarkdown)).toThrow('Agent Orchestrator markdown file must end in .md.')
+    it('rejects a path that is not .md or .txt, naming its own field', () => {
+      const notMarkdown = target('/code/app', 'notes.rtf', 'orchestrator')
+      expect(() => resolveAgentMarkdownPath(notMarkdown)).toThrow('Agent Orchestrator markdown file must end in .md or .txt.')
     })
   })
 })
 
-const save = (markdownTarget: ReturnType<typeof target>, content: string, previousContent = '') =>
-  saveAgentMarkdown(resolveAgentMarkdownPath(markdownTarget), content, previousContent)
-
-describe('saveAgentMarkdown', () => {
-  it('creates the lane folder recursively and writes the prompt', () => {
+describe('ensureDefaultLaneMarkdown', () => {
+  it('creates an empty default file and returns its path', () => {
     const projectPath = freshProjectPath()
-    const saved = save(target(projectPath), '# Guide\n')
-    expect(readFileSync(saved.filePath, 'utf8')).toBe('# Guide\n')
+    const filePath = ensureDefaultLaneMarkdown({ kind: 'agent', projectPath, laneName: 'In Review' })
+    expect(filePath).toBe(path.join(projectPath, 'SwimlaneAgentPrompt', 'In-Review', 'AgentPrompt.md'))
+    expect(readFileSync(filePath, 'utf8')).toBe('')
   })
 
-  it('creates missing parents for an explicit path', () => {
+  it('never overwrites an existing file', () => {
     const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'nested', 'deeper', 'guide.md')
-    save(target(projectPath, explicitPath), 'first')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('first')
-  })
-
-  it('replaces a blank file', () => {
-    const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'guide.md')
-    writeFileSync(explicitPath, '  \n')
-    save(target(projectPath, explicitPath), 'prompt')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('prompt')
-  })
-
-  it('replaces its own last save, so autosaves mirror the box instead of stacking', () => {
-    const projectPath = freshProjectPath()
-    save(target(projectPath), 'Flag')
-    const saved = save(target(projectPath), 'Flag red PRs.', 'Flag')
-    expect(readFileSync(saved.filePath, 'utf8')).toBe('Flag red PRs.')
-  })
-
-  it('mirrors a cleared prompt as a blank file', () => {
-    const projectPath = freshProjectPath()
-    save(target(projectPath), 'prompt')
-    const saved = save(target(projectPath), '', 'prompt')
-    expect(readFileSync(saved.filePath, 'utf8')).toBe('')
-  })
-
-  it('refuses to overwrite content it did not write, e.g. a hand-written guide or an editor edit', () => {
-    const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'guide.md')
-    writeFileSync(explicitPath, '# Hand-written')
-    expect(() => save(target(projectPath, explicitPath), 'prompt', 'older prompt')).toThrow('has other content')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written')
-  })
-
-  it('takes over a hand-edited file once the box holds the same text', () => {
-    const projectPath = freshProjectPath()
-    const explicitPath = path.join(projectPath, 'guide.md')
-    writeFileSync(explicitPath, '# Hand-written\n')
-    save(target(projectPath, explicitPath), '# Hand-written', 'older prompt')
-    save(target(projectPath, explicitPath), '# Hand-written, then more', '# Hand-written')
-    expect(readFileSync(explicitPath, 'utf8')).toBe('# Hand-written, then more')
+    const laneFolder = { kind: 'orchestrator' as const, projectPath, laneName: 'In Review' }
+    const filePath = ensureDefaultLaneMarkdown(laneFolder)
+    writeFileSync(filePath, 'Ping me on Slack.')
+    expect(ensureDefaultLaneMarkdown(laneFolder)).toBe(filePath)
+    expect(readFileSync(filePath, 'utf8')).toBe('Ping me on Slack.')
   })
 })
 
-describe('readOrchestratorContext', () => {
+describe('readLaneMarkdownContext', () => {
   it('reads the file as it is', () => {
     const projectPath = freshProjectPath()
-    const contextPath = path.join(projectPath, 'context.md')
+    const contextPath = path.join(projectPath, 'context.txt')
     writeFileSync(contextPath, 'Ping me on Slack.\n')
-    expect(readOrchestratorContext(contextPath)).toBe('Ping me on Slack.\n')
+    for (const kind of ['agent', 'orchestrator'] as const) {
+      expect(readLaneMarkdownContext(kind, contextPath)).toBe('Ping me on Slack.\n')
+    }
   })
 
   it('reads a missing file or a directory as no context', () => {
     const projectPath = freshProjectPath()
-    expect(readOrchestratorContext(path.join(projectPath, 'missing.md'))).toBe('')
-    expect(readOrchestratorContext(projectPath)).toBe('')
+    expect(readLaneMarkdownContext('agent', path.join(projectPath, 'missing.md'))).toBe('')
+    expect(readLaneMarkdownContext('agent', projectPath)).toBe('')
   })
 
-  it('skips a prompt copy written by the app before #168', () => {
+  it('skips an orchestrator prompt copy written by the app before #168', () => {
     const projectPath = freshProjectPath()
     const contextPath = path.join(projectPath, 'AgentOrchestratorPrompt.md')
     writeFileSync(contextPath, 'You are the Auto Run orchestrator.\nTickets: {{ticket_numbers}}\n')
-    expect(readOrchestratorContext(contextPath)).toBe('')
+    expect(readLaneMarkdownContext('orchestrator', contextPath)).toBe('')
   })
 })

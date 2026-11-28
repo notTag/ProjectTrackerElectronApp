@@ -653,6 +653,7 @@ export interface TicketPromptContext {
   // This launch's session and tab, so the agent can name itself to the orchestrator (#124).
   sessionId?: string
   tabTitle?: string
+  agentFileContext?: LaneMarkdownContext
 }
 
 const sessionIdentityInstruction = (context: TicketPromptContext): string => {
@@ -760,10 +761,9 @@ const moveRulesInstruction = (ticket: Ticket, context: TicketPromptContext): str
 // output location closes it out as the last thing the agent reads.
 export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: TicketPromptContext = {}): string => {
   const lanePrompt = lane.agentPrompt.trim()
-  const laneFilePath = lane.agentFilePath.trim()
-  // The file autosaves a copy of the prompt, so it is only pointed at when there
-  // is no typed prompt (a hand-written guide); otherwise the agent reads it twice.
-  const laneFileReference = laneFilePath && !lanePrompt ? `Follow the guidance in ${laneFilePath}.` : ''
+  const agentFileContext = context.agentFileContext
+  const isOldAgentCopy = agentFileContext !== undefined && isAppWrittenAgentCopy(agentFileContext.content, lane)
+  const laneFileContext = isOldAgentCopy ? '' : additionalContextBlock(agentFileContext)
   const ticketMetadata = ticketMetadataLines(ticket, lane, context)
   const ticketDescription = ticket.description.trim()
   const outputTarget = lane.outputTarget?.trim() ?? ''
@@ -774,7 +774,7 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
   const sessionIdentity = sessionIdentityInstruction(context)
   const sections = [
     lanePrompt,
-    laneFileReference,
+    laneFileContext,
     ticketMetadata,
     sessionIdentity,
     ticketDescription,
@@ -791,6 +791,16 @@ export const ticketAgentPrompt = (ticket: Ticket, lane: SwimLane, context: Ticke
 export const SWIMLANE_PROMPT_DIRECTORY = 'SwimlaneAgentPrompt'
 export const AGENT_PROMPT_FILE_NAME = 'AgentPrompt.md'
 export const ORCHESTRATOR_PROMPT_FILE_NAME = 'AgentOrchestratorPrompt.md'
+
+export const CONTEXT_FILE_EXTENSIONS = ['.md', '.txt']
+
+export const isContextFilePath = (filePath: string): boolean => {
+  const trimmedPath = filePath.trim().toLowerCase()
+  const fileName = trimmedPath.split('/').pop() ?? ''
+  const extensionStart = fileName.lastIndexOf('.')
+  const extension = extensionStart > 0 ? fileName.slice(extensionStart) : ''
+  return trimmedPath === '' || CONTEXT_FILE_EXTENSIONS.includes(extension)
+}
 
 // Path separators become word breaks ("In Review/QA" reads as "In-Review-QA");
 // the other characters filesystems reject are dropped. Leading dots go so a
@@ -1131,8 +1141,18 @@ export const steppedOrchestratorPoll = (lane: SwimLane, step: -1 | 1): Partial<S
   return { orchestratorPollMinutes: steppedMinutes }
 }
 
-export const laneHasAgentWork = (lane: SwimLane): boolean =>
+export const laneHasAgentWork = (lane: SwimLane, agentFileHasText = false): boolean =>
+  Boolean(lane.agentPrompt.trim()) || agentFileHasText
+
+export const laneMayHaveAgentWork = (lane: SwimLane): boolean =>
   Boolean(lane.agentPrompt.trim() || lane.agentFilePath.trim())
+
+export const isAppWrittenAgentCopy = (content: string, lane: Pick<SwimLane, 'agentPrompt'>): boolean => {
+  const trimmedContent = content.trim()
+  return trimmedContent !== '' && trimmedContent === lane.agentPrompt.trim()
+}
+
+export const isAppWrittenOrchestratorCopy = (content: string): boolean => content.includes('{{ticket_numbers}}')
 
 const ORCHESTRATOR_TAB_TITLE_PREFIX = 'AUTORUN-ORCHESTRATOR-'
 // main drops titles over 200 UTF-16 units; 100 code points stays under that
@@ -1193,10 +1213,11 @@ export interface OrchestratorPromptContext {
   lanes: SwimLane[]
   terminalId: string
   terminalLabel: string
-  additionalContext?: OrchestratorAdditionalContext
+  additionalContext?: LaneMarkdownContext
+  lanesWithAgentFileText?: string[]
 }
 
-export interface OrchestratorAdditionalContext {
+export interface LaneMarkdownContext {
   filePath: string
   content: string
 }
@@ -1389,6 +1410,8 @@ const orchestratorPromptParts = (
     if (watchesSessions) return isUuid(sessionId) ? ` — session ${sessionId}` : WARP_NO_SESSION_NOTE
     return sessionId ? ` — session ${tabSessionSuffix(sessionId)}` : ''
   }
+  const agentFileLaneIds = new Set(context.lanesWithAgentFileText ?? [])
+  const boardLaneHasAgentWork = (boardLane: SwimLane) => laneHasAgentWork(boardLane, agentFileLaneIds.has(boardLane.id))
   const ticketLines = entries.map(({ ticket, launch, sessionId }) => {
     const tabTitle = launch.title ?? `#${launch.number}`
     const line = `- #${launch.number} ${ticket.title}${sessionPartFor(sessionId)} — tab "${tabTitle}" — branch ${launch.branchName}`
@@ -1396,7 +1419,7 @@ const orchestratorPromptParts = (
     if (!handsOff) return line
     // ponytail: every agent lane, not the exact handoff path; closing an absent tab is a no-op.
     const handoffTitles = context.lanes
-      .filter(laneHasAgentWork)
+      .filter(boardLaneHasAgentWork)
       .map((boardLane) => ticketTabTitle(ticket, boardLane))
       // A handoff's session id is picked at handoff, so only the part before " · <id>" is predictable (#124).
       .filter((title) => title !== tabTitle && !tabTitle.startsWith(`${title} · `))
@@ -1405,7 +1428,7 @@ const orchestratorPromptParts = (
     return `${line} — handoff tabs ${quotedHandoffTitles}`
   })
   const laneLines = context.lanes.map(
-    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${laneHasAgentWork(boardLane) ? 'yes' : 'no'}`
+    (boardLane) => `- ${boardLane.id} — ${boardLane.name} — agent work: ${boardLaneHasAgentWork(boardLane) ? 'yes' : 'no'}`
   )
   const ticketNumbers = entries.map(({ launch }) => launch.number).join(', ')
   return {
@@ -1440,11 +1463,16 @@ export const APP_ORCHESTRATOR_PROMPT_PATCH = {
   currentAgentOrchestratorPrompt: ''
 } as const satisfies Partial<SwimLane>
 
-const withAdditionalContext = (prompt: string, additionalContext: OrchestratorAdditionalContext | undefined): string => {
+const additionalContextBlock = (additionalContext: LaneMarkdownContext | undefined): string => {
   const content = additionalContext?.content.trim()
-  if (!additionalContext || !content) return prompt
+  if (!additionalContext || !content) return ''
   const header = `Additional context (from ${additionalContext.filePath}):`
-  return [prompt, [header, content].join('\n')].join('\n\n')
+  return [header, content].join('\n')
+}
+
+const withAdditionalContext = (prompt: string, additionalContext: LaneMarkdownContext | undefined): string => {
+  const contextBlock = additionalContextBlock(additionalContext)
+  return [prompt, contextBlock].filter(Boolean).join('\n\n')
 }
 
 export const orchestratorPromptMissingTokens = (text: string): string[] =>
@@ -1533,7 +1561,7 @@ export const fullAutoHandoffs = (previousBoard: ProjectBoard, nextBoard: Project
     const fromLane = boardLaneById(previousBoard, previousLaneId)
     const toLane = boardLaneById(nextBoard, ticket.laneId)
     if (!fromLane || !toLane) continue
-    if (!isFullAuto(ticket, fromLane) || !laneHasAgentWork(toLane)) continue
+    if (!isFullAuto(ticket, fromLane) || !laneMayHaveAgentWork(toLane)) continue
     handoffs.push({ ticket, fromLane, toLane })
   }
   return handoffs

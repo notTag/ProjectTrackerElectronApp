@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   GITHUB_UNREACHABLE_MESSAGE,
+  laneHasAgentWork,
+  isContextFilePath,
   githubErrorMessage,
   isGithubUnreachableError,
   normalizeSemanticVersion,
@@ -985,15 +987,36 @@ describe('ticketShellCommand', () => {
     expect(withSavedOpencode.filter((agent) => agent.id === 'opencode')).toEqual([savedOpencode])
   })
 
-  it('names the lane markdown file when the lane has one', () => {
+  it('never names the lane file path on its own: the file is read, not referenced', () => {
     const command = ticketShellCommand(ticket({ description: '' }), lane({ agentFilePath: 'docs/dev.md' }))
-    expect(command).toContain('Follow the guidance in docs/dev.md.')
+    expect(command).not.toContain('docs/dev.md')
   })
 
-  it('sends a typed prompt once, without also pointing at its autosaved file', () => {
-    const command = ticketShellCommand(ticket(), lane({ agentPrompt: 'Write a PRD.', agentFilePath: 'docs/dev.md' }))
-    expect(command).toContain('Write a PRD.')
-    expect(command).not.toContain('docs/dev.md')
+  it('adds the lane file text after the box text, never in place of it', () => {
+    const agentFileContext = { filePath: '/code/app/docs/dev.md', content: 'Run the linter.\n' }
+    const prompt = ticketAgentPrompt(ticket(), lane({ agentPrompt: 'Write a PRD.' }), { agentFileContext })
+    expect(prompt.startsWith('Write a PRD.\n\nAdditional context (from /code/app/docs/dev.md):\nRun the linter.\n\nTicket #7')).toBe(true)
+  })
+
+  it('gives only the file text as context when the box is empty', () => {
+    const agentFileContext = { filePath: 'docs/dev.txt', content: 'Run the linter.' }
+    const prompt = ticketAgentPrompt(ticket(), lane(), { agentFileContext })
+    expect(prompt.startsWith('Additional context (from docs/dev.txt):\nRun the linter.\n\nTicket #7')).toBe(true)
+  })
+
+  it('skips a blank file and an old app-written copy of the box text', () => {
+    const withoutFile = ticketAgentPrompt(ticket(), lane({ agentPrompt: 'Write a PRD.' }))
+    for (const content of ['  \n', 'Write a PRD.\n']) {
+      const agentFileContext = { filePath: 'docs/dev.md', content }
+      const prompt = ticketAgentPrompt(ticket(), lane({ agentPrompt: 'Write a PRD.' }), { agentFileContext })
+      expect(prompt).toBe(withoutFile)
+    }
+  })
+
+  it('counts lane agent work from the prompt or the file text, not the path alone', () => {
+    expect(laneHasAgentWork(lane({ agentFilePath: 'docs/dev.md' }))).toBe(false)
+    expect(laneHasAgentWork(lane({ agentFilePath: 'docs/dev.md' }), true)).toBe(true)
+    expect(laneHasAgentWork(lane({ agentPrompt: 'Write a PRD.' }))).toBe(true)
   })
 
   it("escapes a description's own single quotes so the shell string stays closed", () => {
@@ -2594,5 +2617,15 @@ describe('graph positions', () => {
   it('places a new node one column right of the rightmost node', () => {
     expect(graphPositionRightOf([{ x: 50, y: 70 }, { x: 900, y: 400 }, { x: 270, y: 70 }])).toEqual({ x: 1120, y: 70 })
     expect(graphPositionRightOf([])).toEqual({ x: 50, y: 70 })
+  })
+})
+
+describe('isContextFilePath', () => {
+  it('accepts .md and .txt files and an empty field, nothing else', () => {
+    expect(isContextFilePath('')).toBe(true)
+    expect(isContextFilePath('docs/Guide.MD')).toBe(true)
+    expect(isContextFilePath('notes.txt')).toBe(true)
+    expect(isContextFilePath('docs/.md')).toBe(false)
+    expect(isContextFilePath('~/.zshrc')).toBe(false)
   })
 })

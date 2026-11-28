@@ -13,7 +13,7 @@ import BoardTitlebar from '@/components/board/BoardTitlebar.vue'
 import WorkflowsModal from '@/components/WorkflowsModal.vue'
 import ConfirmDeleteModal from '@/components/board/ConfirmDeleteModal.vue'
 import DisplaySettings from '@/components/board/DisplaySettings.vue'
-import LaneSettingsModal, { createLaneMarkdownSaveState } from '@/components/board/LaneSettingsModal.vue'
+import LaneSettingsModal from '@/components/board/LaneSettingsModal.vue'
 import NewTicketModal, { type TicketDraft, type TicketDraftSave } from '@/components/board/NewTicketModal.vue'
 import TicketModal from '@/components/board/TicketModal.vue'
 import { useBoardContext } from '@/components/board/boardContext'
@@ -98,9 +98,6 @@ const laneDraftGraphPosition = ref<GraphPosition>()
 watch(laneDraftName, (name) => {
   if (name === null) laneDraftGraphPosition.value = undefined
 })
-
-// Survives the lane settings modal closing, so an in-flight save keeps its order.
-const laneMarkdownSaveState = createLaneMarkdownSaveState()
 
 const openTicket = computed(() => board.value.tickets.find((ticket) => ticket.id === openTicketId.value) ?? null)
 const openLane = computed(() => laneColumns.value.find((lane) => lane.id === openLaneId.value) ?? null)
@@ -398,19 +395,24 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
   const useWorktrees = autoRunUsesWorktrees(lane)
   const { runnable, skipped } = autoRunSplit(lane)
   const skippedNotice = skippedRunsNotice(skipped, lane.name)
-  const launches = runnable.map((ticket) =>
-    buildAutoRunLaunch(ticket, lane, agent, promptContext(ticket), useWorktrees, model)
-  )
-  if (launches.length === 0) {
+  if (runnable.length === 0) {
     if (skippedNotice) store.notice = skippedNotice
     return
   }
   // Launched tickets are unchecked so the next Auto Run doesn't relaunch them.
-  for (const { ticket } of launches) selectedTicketIds.value.delete(ticket.id)
+  for (const ticket of runnable) selectedTicketIds.value.delete(ticket.id)
   const boardPath = projectPath.value
   const generatedContext = orchestratorContextFor(terminal)
-  const additionalContext = await store.readLaneOrchestratorContext(boardPath, lane)
-  const orchestratorContext = { ...generatedContext, additionalContext }
+  const [agentFileContext, additionalContext, lanesWithAgentFileText] = await Promise.all([
+    store.readLaneMarkdownContext(boardPath, lane, 'agent'),
+    store.readLaneMarkdownContext(boardPath, lane, 'orchestrator'),
+    store.lanesWithAgentFileText(boardPath, generatedContext.lanes)
+  ])
+  const launches = runnable.map((ticket) => {
+    const ticketPromptContext = { ...promptContext(ticket), agentFileContext }
+    return buildAutoRunLaunch(ticket, lane, agent, ticketPromptContext, useWorktrees, model)
+  })
+  const orchestratorContext = { ...generatedContext, additionalContext, lanesWithAgentFileText }
   const orchestratorSettings = {
     orchestratorAgentId: picks.orchestratorAgentId || undefined,
     orchestratorModel: picks.orchestratorModel
@@ -562,7 +564,6 @@ const confirmAutoRunLane = async (picks: AutoRunPicks) => {
     v-if="openLane"
     ref="laneSettingsComponent"
     :lane="openLane"
-    :save-state="laneMarkdownSaveState"
     @close="openLaneId = null"
     @delete="lanePendingDeletionId = $event.id"
   />

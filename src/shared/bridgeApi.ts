@@ -4,7 +4,8 @@ import type {
   GithubIssueLists,
   LaneStoreEntry,
   LaneWritePatch,
-  OrchestratorAdditionalContext,
+  LaneMarkdownContext,
+  LaneMarkdownKind,
   ProjectGithubData,
   ProjectMetrics,
   ProjectRecord,
@@ -59,8 +60,8 @@ export const IPC_CHANNELS = [
   'ticket:fetch-pull-request',
   'project:fetch-github-issues',
   'project:read-readme',
-  'lane:save-agent-markdown',
-  'lane:read-orchestrator-context'
+  'lane:read-markdown-context',
+  'lane:ensure-markdown-files'
 ] as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
@@ -139,18 +140,13 @@ export interface ProjectTrackerBridge {
   appStartedAt(): Promise<string>
   terminalTabsAlive(targetId: string, titles: string[]): Promise<TabLiveness[]>
   readProjectReadme(path: string): Promise<{ content: string | null; fileName: string | null }>
-  saveLaneMarkdown(
-    projectPath: string,
-    laneName: string,
-    filePath: string,
-    content: string,
-    previousContent: string
-  ): Promise<{ filePath: string }>
-  readLaneOrchestratorContext(
+  readLaneMarkdownContext(
+    kind: LaneMarkdownKind,
     projectPath: string,
     laneName: string,
     filePath: string
-  ): Promise<OrchestratorAdditionalContext | null>
+  ): Promise<LaneMarkdownContext | null>
+  ensureLaneMarkdownFiles(projectPath: string, laneId: string): Promise<SwimLane>
   fetchProjectGithub(githubUrl: string): Promise<ProjectGithubData>
   fetchProjectGithubIssues(githubUrl: string, since?: string): Promise<GithubIssueLists>
   getMetrics(projectPaths: string[]): Promise<ProjectMetrics[]>

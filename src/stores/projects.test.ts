@@ -34,8 +34,8 @@ const api = vi.hoisted(() => ({
   fetchTicketPullRequest: vi.fn(),
   appStartedAt: vi.fn(async () => '2026-01-02T12:00:00.000Z'),
   terminalTabsAlive: vi.fn(),
-  saveLaneMarkdown: vi.fn(),
-  readLaneOrchestratorContext: vi.fn()
+  readLaneMarkdownContext: vi.fn(),
+  ensureLaneMarkdownFiles: vi.fn()
 }))
 
 const offlineError = new Error(
@@ -182,7 +182,9 @@ describe('full auto handoff', () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('prd')
     api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
-    api.readLaneOrchestratorContext.mockResolvedValueOnce({ filePath: '/code/orchestrator.md', content: 'Ping me on Slack.' })
+    api.readLaneMarkdownContext.mockImplementation(async (kind: string) =>
+      kind === 'orchestrator' ? { filePath: '/code/orchestrator.md', content: 'Ping me on Slack.' } : null
+    )
 
     await store.refresh()
     await flushLaunches()
@@ -207,6 +209,43 @@ describe('full auto handoff', () => {
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
     const [, , launches] = api.autoRunLane.mock.calls[0]
     expect(launches[0].command).toContain('Add the thing')
+  })
+
+  it('hands off to a lane whose instructions live only in its file, with the file text as context', async () => {
+    const fileOnlyDev = (laneId: string) => {
+      const state = stateWithTicketIn(laneId)
+      const devLane = state.boards![PROJECT_PATH].lanes[2]
+      Object.assign(devLane, { agentPrompt: '', agentFilePath: 'docs/dev.txt' })
+      return state
+    }
+    const store = useProjectsStore()
+    store.state = fileOnlyDev('prd')
+    api.refreshProjectState.mockResolvedValue(fileOnlyDev('dev'))
+    api.readLaneMarkdownContext.mockResolvedValue({ filePath: '/code/app/docs/dev.txt', content: 'Build it from the file.' })
+
+    await store.refresh()
+    await flushLaunches()
+
+    expect(api.readLaneMarkdownContext).toHaveBeenCalledWith('agent', PROJECT_PATH, 'In Development', 'docs/dev.txt')
+    const [, , launches] = api.autoRunLane.mock.calls[0]
+    expect(launches[0].command).toContain('Additional context (from /code/app/docs/dev.txt):\nBuild it from the file.')
+  })
+
+  it('skips a handoff to a lane with only a path whose file is blank', async () => {
+    const pathOnlyDev = (laneId: string) => {
+      const state = stateWithTicketIn(laneId)
+      Object.assign(state.boards![PROJECT_PATH].lanes[2], { agentPrompt: '', agentFilePath: 'docs/dev.md' })
+      return state
+    }
+    const store = useProjectsStore()
+    store.state = pathOnlyDev('prd')
+    api.refreshProjectState.mockResolvedValue(pathOnlyDev('dev'))
+    api.readLaneMarkdownContext.mockResolvedValue(null)
+
+    await store.refresh()
+    await flushLaunches()
+
+    expect(api.autoRunLane).not.toHaveBeenCalled()
   })
 
   it('launches nothing for a move made in this window', async () => {
@@ -243,6 +282,7 @@ describe('full auto handoff', () => {
     api.refreshProjectState.mockResolvedValue(stateWithTicketIn('dev'))
 
     await store.refresh()
+    await flushLaunches()
     expect(api.autoRunLane).toHaveBeenCalledTimes(1)
     expect(store.notice).toBe('Full auto queued #7: In Development Auto Run already running')
 
@@ -854,58 +894,63 @@ describe('per-entity writes', () => {
     expect(store.state.snapshot.projects[0].notes).toBe('hello')
   })
 
-  it('writes the agent markdown, then stores only the new path', async () => {
+  it("reads each kind's lane file, and launches without it when the read fails", async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
-    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
-    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
-    const prd = store.board(PROJECT_PATH).lanes[1]
-
-    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', 'Write', '')
-
-    expect(api.saveLaneMarkdown).toHaveBeenCalledWith(PROJECT_PATH, 'PRD', '', 'Write a PRD.', 'Write')
-    expect(api.updateLane).toHaveBeenCalledWith(PROJECT_PATH, 'prd', { agentFilePath: savedPath })
-    expect(saved).toEqual({ filePath: savedPath, laneUpdated: true })
-  })
-
-  it("reads the lane's orchestrator context file, and launches without it when the read fails", async () => {
-    const store = useProjectsStore()
-    store.state = stateWithTicketIn('idea')
-    const prd = { ...store.board(PROJECT_PATH).lanes[1], orchestratorFilePath: 'docs/orchestrator.md' }
+    const prd = { ...store.board(PROJECT_PATH).lanes[1], agentFilePath: 'docs/agent.txt', orchestratorFilePath: 'docs/orchestrator.md' }
     const additionalContext = { filePath: '/code/app/docs/orchestrator.md', content: 'Ping me on Slack.' }
-    api.readLaneOrchestratorContext.mockResolvedValueOnce(additionalContext)
+    api.readLaneMarkdownContext.mockResolvedValueOnce(additionalContext)
 
-    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toEqual(additionalContext)
-    expect(api.readLaneOrchestratorContext).toHaveBeenCalledWith(PROJECT_PATH, 'PRD', 'docs/orchestrator.md')
+    await expect(store.readLaneMarkdownContext(PROJECT_PATH, prd, 'orchestrator')).resolves.toEqual(additionalContext)
+    expect(api.readLaneMarkdownContext).toHaveBeenCalledWith('orchestrator', PROJECT_PATH, 'PRD', 'docs/orchestrator.md')
 
-    api.readLaneOrchestratorContext.mockResolvedValueOnce(null)
-    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toBeUndefined()
-    api.readLaneOrchestratorContext.mockRejectedValueOnce(new Error('Invalid read request.'))
-    await expect(store.readLaneOrchestratorContext(PROJECT_PATH, prd)).resolves.toBeUndefined()
+    api.readLaneMarkdownContext.mockResolvedValueOnce(null)
+    await expect(store.readLaneMarkdownContext(PROJECT_PATH, prd, 'agent')).resolves.toBeUndefined()
+    expect(api.readLaneMarkdownContext).toHaveBeenLastCalledWith('agent', PROJECT_PATH, 'PRD', 'docs/agent.txt')
+    api.readLaneMarkdownContext.mockRejectedValueOnce(new Error('Invalid read request.'))
+    await expect(store.readLaneMarkdownContext(PROJECT_PATH, prd, 'agent')).resolves.toBeUndefined()
   })
 
-  it('skips the lane update when the path is already stored', async () => {
+  it('stores the default file paths main filled in for a lane', async () => {
     const store = useProjectsStore()
     store.state = stateWithTicketIn('idea')
-    const savedPath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
-    api.saveLaneMarkdown.mockResolvedValueOnce({ filePath: savedPath })
-    const prd = { ...store.board(PROJECT_PATH).lanes[1], agentFilePath: savedPath }
-
-    const saved = await store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', 'Write', savedPath)
-
-    expect(api.updateLane).not.toHaveBeenCalled()
-    expect(saved.laneUpdated).toBe(true)
-  })
-
-  it('leaves the lane untouched when the markdown write fails', async () => {
-    const store = useProjectsStore()
-    store.state = stateWithTicketIn('idea')
-    api.saveLaneMarkdown.mockRejectedValueOnce(new Error('must end in .md'))
     const prd = store.board(PROJECT_PATH).lanes[1]
+    const agentFilePath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
+    api.ensureLaneMarkdownFiles.mockResolvedValueOnce({ ...prd, agentFilePath })
 
-    await expect(store.saveLaneMarkdown(PROJECT_PATH, prd, 'Write a PRD.', '', 'x.txt')).rejects.toThrow()
+    await store.ensureLaneMarkdownFiles(PROJECT_PATH, prd.id)
 
-    expect(api.updateLane).not.toHaveBeenCalled()
+    expect(api.ensureLaneMarkdownFiles).toHaveBeenCalledWith(PROJECT_PATH, 'prd')
+    expect(store.board(PROJECT_PATH).lanes[1].agentFilePath).toBe(agentFilePath)
+  })
+
+  it('keeps a lane edit made while the default file paths were being filled in', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const prd = store.board(PROJECT_PATH).lanes[1]
+    const agentFilePath = '/code/app/SwimlaneAgentPrompt/PRD/AgentPrompt.md'
+    let respond: (lane: typeof prd) => void = () => {}
+    api.ensureLaneMarkdownFiles.mockReturnValueOnce(new Promise((resolve) => (respond = resolve)))
+
+    const ensuring = store.ensureLaneMarkdownFiles(PROJECT_PATH, prd.id)
+    store.state.boards![PROJECT_PATH].lanes[1] = { ...prd, agentPrompt: 'Typed meanwhile' }
+    respond({ ...prd, agentFilePath })
+    await ensuring
+
+    const lane = store.board(PROJECT_PATH).lanes[1]
+    expect(lane.agentFilePath).toBe(agentFilePath)
+    expect(lane.agentPrompt).toBe('Typed meanwhile')
+  })
+
+  it('skips filling in default file paths when the lane already has both', async () => {
+    const store = useProjectsStore()
+    store.state = stateWithTicketIn('idea')
+    const lanes = store.state.boards![PROJECT_PATH].lanes
+    lanes[1] = { ...lanes[1], agentFilePath: 'a.md', orchestratorFilePath: 'b.md' }
+
+    await store.ensureLaneMarkdownFiles(PROJECT_PATH, lanes[1].id)
+
+    expect(api.ensureLaneMarkdownFiles).not.toHaveBeenCalled()
   })
 
   it('a created ticket takes the number the repository returns', async () => {

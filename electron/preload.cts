@@ -101,10 +101,10 @@ contextBridge.exposeInMainWorld('projectTracker', {
   appStartedAt: () => invokePlain('app:started-at'),
   terminalTabsAlive: (targetId: string, titles: string[]) => invokePlain('terminal:tabs-alive', { targetId, titles }),
   readProjectReadme: (projectPath: string) => invokePlain('project:read-readme', projectPath),
-  saveLaneMarkdown: (projectPath: string, laneName: string, filePath: string, content: string, previousContent: string) =>
-    invokePlain('lane:save-agent-markdown', { projectPath, laneName, filePath, content, previousContent }),
-  readLaneOrchestratorContext: (projectPath: string, laneName: string, filePath: string) =>
-    invokePlain('lane:read-orchestrator-context', { projectPath, laneName, filePath }),
+  readLaneMarkdownContext: (kind: string, projectPath: string, laneName: string, filePath: string) =>
+    invokePlain('lane:read-markdown-context', { kind, projectPath, laneName, filePath }),
+  ensureLaneMarkdownFiles: (projectPath: string, laneId: string) =>
+    invokePlain('lane:ensure-markdown-files', { projectPath, laneId }),
   fetchProjectGithub: (githubUrl: string) => invokePlain('project:fetch-github', githubUrl),
   getMetrics: (projectPaths: string[]) => invokePlain('metrics:get', { projectPaths }),
   fetchProjectGithubIssues: (githubUrl: string, since?: string) =>

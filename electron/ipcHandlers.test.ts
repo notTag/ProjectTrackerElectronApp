@@ -104,17 +104,74 @@ describe('lane-store:* handlers (#146)', () => {
     expect(call('lane-store:list')).toEqual([expect.objectContaining({ id: entry.id })])
   })
 
-  it('saves a lane whose prompt file field is not a .md path, without that prompt', () => {
+  it('saves a lane whose prompt file field is not a .md or .txt path, without that prompt', () => {
     const { call, repository, sourcePath } = setUp()
-    repository.updateSwimLane(sourcePath, 'review', { agentFilePath: 'notes/review.txt' })
+    repository.updateSwimLane(sourcePath, 'review', { agentFilePath: 'notes/review.rtf' })
     const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }
     expect(call('lane-store:list')).toEqual([expect.objectContaining({ id: entry.id })])
   })
 
-  it('writes no file for a lane saved without prompt files', () => {
+  it('writes empty files for a lane saved without prompt files', () => {
     const { call, sourcePath, targetPath } = setUp()
     const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }
     call('lane-store:add', { projectPath: targetPath, entryId: entry.id })
-    expect(existsSync(path.join(targetPath, 'SwimlaneAgentPrompt'))).toBe(false)
+    expect(readFileSync(laneFile(targetPath, 'AgentPrompt.md'), 'utf8')).toBe('')
+    expect(readFileSync(laneFile(targetPath, 'AgentOrchestratorPrompt.md'), 'utf8')).toBe('')
+  })
+
+  it('does not carry an old app-written copy of the agent prompt as markdown', () => {
+    const { call, sourcePath, targetPath } = setUp()
+    mkdirSync(path.dirname(laneFile(sourcePath, 'AgentPrompt.md')), { recursive: true })
+    writeFileSync(laneFile(sourcePath, 'AgentPrompt.md'), 'Review it.\n', 'utf8')
+    const entry = call('lane-store:save', { projectPath: sourcePath, laneId: 'review' }) as { id: string }
+    call('lane-store:add', { projectPath: targetPath, entryId: entry.id })
+    expect(readFileSync(laneFile(targetPath, 'AgentPrompt.md'), 'utf8')).toBe('')
+  })
+})
+
+describe('lane markdown files (#175)', () => {
+  it('gives a created lane empty default files and stores their paths', () => {
+    const { call, sourcePath } = setUp()
+    const lane = { id: 'qa', name: 'In Review', agentPrompt: '', agentFilePath: '' }
+    const created = call('lane:create', { projectPath: sourcePath, lane }) as { agentFilePath: string; orchestratorFilePath: string }
+    expect(created.agentFilePath).toBe(laneFile(sourcePath, 'AgentPrompt.md'))
+    expect(created.orchestratorFilePath).toBe(laneFile(sourcePath, 'AgentOrchestratorPrompt.md'))
+    expect(readFileSync(created.agentFilePath, 'utf8')).toBe('')
+    expect(readFileSync(created.orchestratorFilePath, 'utf8')).toBe('')
+  })
+
+  it('fills only empty fields of an existing lane and never overwrites a file', () => {
+    const { call, repository, sourcePath } = setUp()
+    mkdirSync(path.dirname(laneFile(sourcePath, 'AgentPrompt.md')), { recursive: true })
+    writeFileSync(laneFile(sourcePath, 'AgentPrompt.md'), 'Hand-written guide.', 'utf8')
+    repository.updateSwimLane(sourcePath, 'review', { orchestratorFilePath: 'docs/orchestrator.txt' })
+
+    const lane = call('lane:ensure-markdown-files', { projectPath: sourcePath, laneId: 'review' }) as {
+      agentFilePath: string
+      orchestratorFilePath: string
+    }
+
+    expect(lane.agentFilePath).toBe(laneFile(sourcePath, 'AgentPrompt.md'))
+    expect(lane.orchestratorFilePath).toBe('docs/orchestrator.txt')
+    expect(readFileSync(lane.agentFilePath, 'utf8')).toBe('Hand-written guide.')
+    expect(existsSync(laneFile(sourcePath, 'AgentOrchestratorPrompt.md'))).toBe(false)
+  })
+
+  it('refuses a project outside the scan directories and skips an unknown lane', () => {
+    const { call, sourcePath } = setUp()
+    expect(() => call('lane:ensure-markdown-files', { projectPath: '/etc', laneId: 'review' })).toThrow('outside configured scan directories')
+    expect(call('lane:ensure-markdown-files', { projectPath: sourcePath, laneId: 'missing' })).toBeNull()
+  })
+
+  it("reads the lane's agent file as context, .txt included", () => {
+    const { call, sourcePath } = setUp()
+    writeFileSync(path.join(sourcePath, 'guide.txt'), 'Run the linter.', 'utf8')
+    const read = (filePath: string) =>
+      call('lane:read-markdown-context', { kind: 'agent', projectPath: sourcePath, laneName: 'In Review', filePath })
+    expect(read('guide.txt')).toEqual({ filePath: path.join(sourcePath, 'guide.txt'), content: 'Run the linter.' })
+    expect(read('missing.md')).toBeNull()
+    expect(() => call('lane:read-markdown-context', { kind: 'other', projectPath: sourcePath, laneName: 'x', filePath: '' })).toThrow(
+      'Invalid read request.'
+    )
   })
 })
