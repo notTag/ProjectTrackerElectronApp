@@ -17,6 +17,7 @@ import {
   sameRow,
   SEEDED_CLOSING_LANE_IDS,
   UNASSIGNED_LANE_ID,
+  laneFolderName,
   type BoardPreferences,
   type MetricWindowCounts,
   type MetricWindows,
@@ -27,6 +28,7 @@ import {
   type SwimLane,
   type Ticket,
   type TicketWritePatch,
+  type LaneStoreEntry,
   type LaneWritePatch,
   type ProjectWritePatch,
   type User
@@ -35,6 +37,7 @@ import {
   ADDED_COLUMNS,
   CLOSED_AT_TRIGGERS_SQL,
   CLOSING_LANES_SCHEMA_VERSION,
+  CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION,
   PATH_KIND_HIDDEN,
   PATH_KIND_SCAN,
   PATH_KIND_THIRD_PARTY,
@@ -62,6 +65,12 @@ export const isSnapshotFileName = (fileName: string) =>
 
 type Row = Record<string, unknown>
 type PositionedLane = { lane: SwimLane; position: number }
+
+export interface StoredLanePrompts {
+  laneName: string
+  agentMarkdown: string
+  orchestratorMarkdown: string
+}
 
 export interface ClosedTicketMetrics {
   projectPath: string
@@ -101,6 +110,30 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 }
 const jsonOrNull = (value: unknown) => (value ? JSON.stringify(value) : null)
 
+const needsOrchestratorOverrideCopy = (laneRow: Row): boolean => {
+  const override = asText(laneRow.orchestrator_prompt_override) ?? ''
+  const current = asText(laneRow.current_agent_orchestrator_prompt) ?? ''
+  return override.trim() !== '' && current === ''
+}
+
+const withOrchestratorOverridesCopied = (lanesJson: string): string => {
+  let laneRows: unknown
+  try {
+    laneRows = JSON.parse(lanesJson)
+  } catch {
+    return lanesJson
+  }
+  if (!Array.isArray(laneRows)) return lanesJson
+  const rows = laneRows as Row[]
+  if (!rows.some(needsOrchestratorOverrideCopy)) return lanesJson
+  const copiedRows = rows.map((laneRow) =>
+    needsOrchestratorOverrideCopy(laneRow)
+      ? { ...laneRow, current_agent_orchestrator_prompt: laneRow.orchestrator_prompt_override }
+      : laneRow
+  )
+  return JSON.stringify(copiedRows)
+}
+
 const keyBy = <T>(items: T[], keyOf: (item: T) => string) => new Map(items.map((item) => [keyOf(item), item]))
 
 const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
@@ -109,7 +142,8 @@ const positionedLanes = (board: ProjectBoard): PositionedLane[] => {
     outputTarget: lane.outputTarget ?? '',
     orchestratorPrompt: lane.orchestratorPrompt ?? '',
     orchestratorFilePath: lane.orchestratorFilePath ?? '',
-    orchestratorPromptOverride: lane.orchestratorPromptOverride ?? ''
+    currentAgentOrchestratorPrompt: lane.currentAgentOrchestratorPrompt ?? '',
+    defaultAgentOrchestratorPrompt: lane.defaultAgentOrchestratorPrompt ?? ''
   })
   // Position -1 keeps the unassigned column ahead of the ordered lanes.
   const unassigned = board.unassignedLane
@@ -173,7 +207,8 @@ const laneFromRow = (row: Row): SwimLane => ({
     outputTarget: String(row.output_target),
     orchestratorPrompt: String(row.orchestrator_prompt),
     orchestratorFilePath: String(row.orchestrator_file_path ?? ''),
-    orchestratorPromptOverride: String(row.orchestrator_prompt_override ?? ''),
+    currentAgentOrchestratorPrompt: String(row.current_agent_orchestrator_prompt ?? ''),
+    defaultAgentOrchestratorPrompt: String(row.default_agent_orchestrator_prompt ?? ''),
     autoRunAgentId: asText(row.auto_run_agent_id),
     autoRunTerminalId: asText(row.auto_run_terminal_id),
     autoRunWorktrees: asBool(row.auto_run_worktrees),
@@ -277,6 +312,8 @@ export class StateRepository {
       this.addMissingColumns()
       this.db.exec(CLOSED_AT_TRIGGERS_SQL)
       this.seedClosingLanesOnce()
+      this.copyOrchestratorOverridesOnce()
+      this.renameLegacyDefaultWorkflow()
       this.removeRowsOfDeletedProjects()
       this.recordSchemaVersion()
       this.ensureUser()
@@ -403,10 +440,44 @@ export class StateRepository {
   // fires swim_lanes_closed_at_on_flag, which backfills closed_at for the
   // tickets already in it — approximate, since updated_at moves on every edit.
   private seedClosingLanesOnce() {
-    const storedVersion = Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
-    if (storedVersion >= CLOSING_LANES_SCHEMA_VERSION) return
+    if (this.storedSchemaVersion() >= CLOSING_LANES_SCHEMA_VERSION) return
     const placeholders = SEEDED_CLOSING_LANE_IDS.map(() => '?').join(', ')
     this.run(`UPDATE swim_lanes SET closes_ticket = 1 WHERE id IN (${placeholders})`, SEEDED_CLOSING_LANE_IDS)
+  }
+
+  private storedSchemaVersion(): number {
+    return Number(this.select('SELECT version FROM schema_meta')[0]?.version ?? 0)
+  }
+
+  private copyOrchestratorOverridesOnce() {
+    if (this.storedSchemaVersion() >= CURRENT_ORCHESTRATOR_PROMPT_SCHEMA_VERSION) return
+    this.run(
+      `UPDATE swim_lanes SET current_agent_orchestrator_prompt = orchestrator_prompt_override
+       WHERE trim(orchestrator_prompt_override) <> '' AND current_agent_orchestrator_prompt = ''`
+    )
+    const workflows = this.select('SELECT project_path, id, lanes_json FROM workflows')
+    for (const workflow of workflows) {
+      const lanesJson = String(workflow.lanes_json)
+      const copiedLanesJson = withOrchestratorOverridesCopied(lanesJson)
+      if (copiedLanesJson === lanesJson) continue
+      this.run('UPDATE workflows SET lanes_json = ? WHERE project_path = ? AND id = ?', [
+        copiedLanesJson,
+        String(workflow.project_path),
+        String(workflow.id)
+      ])
+    }
+  }
+
+  private renameLegacyDefaultWorkflow() {
+    this.run(
+      `UPDATE workflows SET name = ?
+       WHERE id = ? AND name = 'Default'
+         AND NOT EXISTS (
+           SELECT 1 FROM workflows other
+           WHERE other.project_path = workflows.project_path AND lower(other.name) = lower(?)
+         )`,
+      [DEFAULT_WORKFLOW_NAME, DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_NAME]
+    )
   }
 
   private recordSchemaVersion() {
@@ -704,14 +775,119 @@ export class StateRepository {
     // ponytail: JSON.parse throws on corrupt text, rolling the swap back instead of emptying the board.
     const rows = JSON.parse(lanesJson) as Row[]
     if (!Array.isArray(rows)) throw new Error('Workflow lanes are not a list.')
+    for (const row of rows) this.insertLaneRow({ ...row, project_path: projectPath })
+  }
+
+  private insertLaneRow(laneRow: Row) {
     const tableColumns = this.select('PRAGMA table_info(swim_lanes)').map((column) => String(column.name))
-    for (const row of rows) {
-      const laneRow: Row = { ...row, project_path: projectPath }
-      const columns = tableColumns.filter((column) => column in laneRow)
-      const placeholders = columns.map(() => '?').join(', ')
-      const values = columns.map((column) => laneRow[column] as SQLInputValue)
-      this.run(`INSERT INTO swim_lanes (${columns.join(', ')}) VALUES (${placeholders})`, values)
-    }
+    const columns = tableColumns.filter((column) => column in laneRow)
+    const placeholders = columns.map(() => '?').join(', ')
+    const values = columns.map((column) => laneRow[column] as SQLInputValue)
+    this.run(`INSERT INTO swim_lanes (${columns.join(', ')}) VALUES (${placeholders})`, values)
+  }
+
+  listLaneStore(): LaneStoreEntry[] {
+    const rows = this.select(
+      `SELECT id, lane_id, origin_project_path, name, created_at, COALESCE(updated_at, created_at) AS updated_at
+       FROM lane_store ORDER BY lower(name), origin_project_path, id`
+    )
+    return rows.map((row) => ({
+      id: String(row.id),
+      laneId: String(row.lane_id),
+      originProjectPath: String(row.origin_project_path),
+      name: String(row.name),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    }))
+  }
+
+  saveLaneToStore(projectPath: string, laneId: string, markdown: { agent: string; orchestrator: string }): LaneStoreEntry {
+    if (laneId === UNASSIGNED_LANE_ID) throw new Error('The No status lane cannot be saved to the store.')
+    const entryId = this.transaction(() => {
+      const [laneRow] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+      if (!laneRow) throw new Error(`Lane ${laneId} does not exist.`)
+      const { project_path: _projectPath, position: _position, graph_position_json: _graphPosition, ...portableRow } = laneRow
+      const laneJson = JSON.stringify(portableRow)
+      const name = String(laneRow.name)
+      const now = new Date().toISOString()
+      const [existing] = this.select('SELECT id FROM lane_store WHERE origin_project_path = ? AND lane_id = ?', [
+        projectPath,
+        laneId
+      ])
+      if (existing) {
+        this.run(
+          'UPDATE lane_store SET name = ?, lane_json = ?, agent_markdown = ?, orchestrator_markdown = ?, updated_at = ? WHERE id = ?',
+          [name, laneJson, markdown.agent, markdown.orchestrator, now, String(existing.id)]
+        )
+        return String(existing.id)
+      }
+      const newId = randomUUID()
+      this.run(
+        `INSERT INTO lane_store (id, lane_id, origin_project_path, name, lane_json, agent_markdown, orchestrator_markdown, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newId, laneId, projectPath, name, laneJson, markdown.agent, markdown.orchestrator, now, now]
+      )
+      return newId
+    })
+    return this.listLaneStore().find((entry) => entry.id === entryId)!
+  }
+
+  deleteLaneStoreEntry(entryId: string) {
+    this.run('DELETE FROM lane_store WHERE id = ?', [entryId])
+  }
+
+  addLaneFromStore(
+    projectPath: string,
+    entryId: string,
+    writePrompts: (prompts: StoredLanePrompts) => void = () => {}
+  ): StoredLanePrompts {
+    const added = this.transaction(() => {
+      const [entry] = this.select('SELECT * FROM lane_store WHERE id = ?', [entryId])
+      if (!entry) throw new Error('That store entry no longer exists.')
+      const laneId = String(entry.lane_id)
+      const taken = this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+      if (taken.length > 0) throw new Error('A lane with that id is already in this workflow.')
+      const storedRow = JSON.parse(String(entry.lane_json)) as Row
+      const laneName = String(storedRow.name ?? entry.name)
+      const promptFolder = laneFolderName(laneName)
+      const boardLaneNames = this.select('SELECT name FROM swim_lanes WHERE project_path = ?', [projectPath])
+      const promptFolderTaken = boardLaneNames.some((row) => laneFolderName(String(row.name)) === promptFolder)
+      if (promptFolderTaken) throw new Error(`Another lane on this board already uses the "${promptFolder}" prompt folder.`)
+      const nextLaneId = asText(storedRow.next_lane_id)
+      const nextLaneIsNoStatus = nextLaneId === UNASSIGNED_LANE_ID
+      const nextLaneHasRow =
+        nextLaneId !== undefined &&
+        this.select('SELECT 1 FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, nextLaneId]).length > 0
+      const nextLaneOnBoard = nextLaneIsNoStatus || nextLaneHasRow
+      const [positionRow] = this.select(
+        'SELECT COALESCE(MAX(position), -1) + 1 AS next FROM swim_lanes WHERE project_path = ? AND is_unassigned = 0',
+        [projectPath]
+      )
+      this.insertLaneRow({
+        ...storedRow,
+        id: laneId,
+        project_path: projectPath,
+        position: Number(positionRow.next),
+        is_unassigned: 0,
+        next_lane_id: nextLaneOnBoard ? nextLaneId : null,
+        agent_file_path: '',
+        orchestrator_file_path: '',
+        graph_position_json: null
+      })
+      const prompts = {
+        laneName,
+        agentMarkdown: String(entry.agent_markdown),
+        orchestratorMarkdown: String(entry.orchestrator_markdown)
+      }
+      writePrompts(prompts)
+      return prompts
+    })
+    return added
+  }
+
+  lane(projectPath: string, laneId: string): SwimLane | undefined {
+    const [row] = this.select('SELECT * FROM swim_lanes WHERE project_path = ? AND id = ?', [projectPath, laneId])
+    return row ? laneFromRow(row) : undefined
   }
 
   // Only the hand-edited fields: everything else on the row belongs to the scanner.
@@ -777,15 +953,18 @@ export class StateRepository {
   private upsertLaneRow(projectPath: string, lane: SwimLane, position: number) {
     this.run(
       `INSERT INTO swim_lanes (
-         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt, orchestrator_prompt_override,
+         id, project_path, name, agent_prompt, agent_file_path, output_target, orchestrator_prompt,
+         current_agent_orchestrator_prompt, default_agent_orchestrator_prompt,
          auto_run_agent_id, auto_run_terminal_id, auto_run_worktrees, full_auto, agent_sets_version, closes_ticket, position, is_unassigned,
          auto_run_model, orchestrator_agent_id, orchestrator_model, next_lane_id,
          orchestrator_poll_minutes, orchestrator_poll_active, orchestrator_file_path, graph_position_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(project_path, id) DO UPDATE SET
          name = excluded.name, agent_prompt = excluded.agent_prompt,
          agent_file_path = excluded.agent_file_path, output_target = excluded.output_target,
-         orchestrator_prompt = excluded.orchestrator_prompt, orchestrator_prompt_override = excluded.orchestrator_prompt_override,
+         orchestrator_prompt = excluded.orchestrator_prompt,
+         current_agent_orchestrator_prompt = excluded.current_agent_orchestrator_prompt,
+         default_agent_orchestrator_prompt = excluded.default_agent_orchestrator_prompt,
          auto_run_agent_id = excluded.auto_run_agent_id, auto_run_terminal_id = excluded.auto_run_terminal_id,
          auto_run_worktrees = excluded.auto_run_worktrees, full_auto = excluded.full_auto,
          agent_sets_version = excluded.agent_sets_version, closes_ticket = excluded.closes_ticket, position = excluded.position, is_unassigned = excluded.is_unassigned,
@@ -801,7 +980,8 @@ export class StateRepository {
         lane.agentFilePath,
         lane.outputTarget ?? '',
         lane.orchestratorPrompt ?? '',
-        lane.orchestratorPromptOverride ?? '',
+        lane.currentAgentOrchestratorPrompt ?? '',
+        lane.defaultAgentOrchestratorPrompt ?? '',
         lane.autoRunAgentId ?? null,
         lane.autoRunTerminalId ?? null,
         lane.autoRunWorktrees === false ? 0 : 1,
