@@ -181,8 +181,10 @@ const stackTargetAt = (pointerX: number, pointerY: number, draggedLaneId: string
     const insideY = pointerY >= rect.top && pointerY <= rect.bottom
     if (!insideX || !insideY) continue
     const heightFraction = (pointerY - rect.top) / rect.height
-    const side = heightFraction < 1 / 3 ? 'above' : heightFraction > 2 / 3 ? 'below' : null
-    if (!side) return null
+    const inTopThird = heightFraction < 1 / 3
+    const inBottomThird = heightFraction > 2 / 3
+    if (!inTopThird && !inBottomThird) return null
+    const side = inTopThird ? 'above' : 'below'
     const gapAboveTop = Math.max(0, element.offsetTop - HALF_BOARD_GAP_PX)
     const gapBelowTop = element.offsetTop + element.offsetHeight + HALF_BOARD_GAP_PX
     const edgeTop = side === 'above' ? gapAboveTop : gapBelowTop
@@ -307,6 +309,12 @@ const keyboardPlacement = (laneId: string, key: string): LanePlacement | null =>
   return { kind: 'column', beforeLaneId: columnTwoToTheRight?.[0].id ?? null }
 }
 
+const laneKeyShortcuts = (laneId: string, column: SwimLane[]) => {
+  if (!laneCanMove(laneId)) return undefined
+  const columnKeys = 'Alt+ArrowLeft Alt+ArrowRight'
+  return column.length > 1 ? `${columnKeys} Alt+ArrowUp Alt+ArrowDown` : columnKeys
+}
+
 const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   // Keys bubbling up from the ▶ / ⚙ buttons inside the header aren't a lane move.
   const fromHeadingItself = event.target === event.currentTarget
@@ -314,8 +322,6 @@ const moveLaneByKeyboard = async (lane: SwimLane, event: KeyboardEvent) => {
   event.preventDefault()
   const placement = keyboardPlacement(lane.id, event.key)
   if (!placement) return
-  // placeLane places the lane synchronously, so focus is restored after the
-  // re-render rather than after the save; a quick second press still lands.
   const saving = store.placeLane(projectPath.value, lane.id, placement)
   // The keyed v-for may re-insert the moved lane's DOM node, which drops focus.
   await nextTick()
@@ -478,7 +484,7 @@ defineExpose({
           class="lane-heading"
           :class="{ 'lane-heading-movable': laneCanMove(lane.id) }"
           :tabindex="laneCanMove(lane.id) ? 0 : undefined"
-          :aria-keyshortcuts="laneCanMove(lane.id) ? 'Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown' : undefined"
+          :aria-keyshortcuts="laneKeyShortcuts(lane.id, column)"
           @dblclick="startTicketDraftFromHeading(lane.id)"
           @pointerdown="startLaneDrag(lane, $event)"
           @pointermove="trackLaneDrag"

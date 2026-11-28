@@ -246,6 +246,18 @@ describe('stacked lanes', () => {
       expect(placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: null })).toBe(board)
     })
 
+    it('treats a stale flag on the first lane as a column start', () => {
+      const board = boardOf('b^', 'c')
+      expect(placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: null })).toBe(board)
+      const placed = placeLaneInBoard(board, 'c', { kind: 'column', beforeLaneId: 'b' })
+      expect(layout(placed)).toEqual(['c', 'b'])
+    })
+
+    it('keeps the rest of a stack in its column when its top lane is removed', () => {
+      expect(layout(removeLaneFromBoard(boardOf('x', 'a', 'b^'), 'a'))).toEqual(['x', 'b'])
+      expect(stackFlags(removeLaneFromBoard(boardOf('a', 'b^', 'c'), 'a'))).toEqual([false, false])
+    })
+
     it('restores the original layout from the placement read before the move', () => {
       const cases: Array<[string[], string, LanePlacement]> = [
         [['a', 'b^', 'c'], 'b', { kind: 'column', beforeLaneId: null }],
