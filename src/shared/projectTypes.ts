@@ -375,6 +375,10 @@ export interface Ticket {
   readyLaneId?: string
   // The release this ticket ships in, MAJOR.MINOR.PATCH. Absent means unset.
   version?: string
+  // Slot set by a drag, 1-based. It counts only while lanePositionLaneId is the
+  // ticket's laneId; anywhere else the ticket is unplaced and sorts by number.
+  lanePosition?: number
+  lanePositionLaneId?: string
 }
 
 export type TicketPatch = Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
@@ -438,6 +442,21 @@ export const ticketSearchText = (ticket: Ticket) => {
   return `#${ticket.number} ${ticket.title} ${ticket.description} ${labels} ${branchName}`.toLowerCase()
 }
 
+const placedPosition = (ticket: Ticket): number | undefined => {
+  const placedInItsLane = ticket.lanePositionLaneId === ticket.laneId
+  return placedInItsLane ? ticket.lanePosition : undefined
+}
+
+export const compareLaneOrder = (left: Ticket, right: Ticket) => {
+  const leftPosition = placedPosition(left)
+  const rightPosition = placedPosition(right)
+  const byNumber = left.number - right.number
+  if (leftPosition === undefined && rightPosition === undefined) return byNumber
+  if (leftPosition === undefined) return 1
+  if (rightPosition === undefined) return -1
+  return leftPosition - rightPosition || byNumber
+}
+
 export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticket) => boolean) => {
   const ticketsByLane = new Map<string, Ticket[]>()
   for (const ticket of tickets) {
@@ -446,7 +465,56 @@ export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticke
     if (laneTickets) laneTickets.push(ticket)
     else ticketsByLane.set(ticket.laneId, [ticket])
   }
+  for (const laneTickets of ticketsByLane.values()) laneTickets.sort(compareLaneOrder)
   return ticketsByLane
+}
+
+export interface LaneDropAnchor {
+  beforeTicketId: string | null
+  afterTicketId: string | null
+}
+
+const insertIndexFor = (laneOrder: Ticket[], anchor: LaneDropAnchor) => {
+  const beforeIndex = laneOrder.findIndex((ticket) => ticket.id === anchor.beforeTicketId)
+  if (beforeIndex >= 0) return beforeIndex
+  const afterIndex = laneOrder.findIndex((ticket) => ticket.id === anchor.afterTicketId)
+  if (afterIndex >= 0) return afterIndex + 1
+  return laneOrder.length
+}
+
+export const placeTicketsInLane = (
+  tickets: Ticket[],
+  carriedIds: string[],
+  targetLaneId: string,
+  anchor: LaneDropAnchor
+): Ticket[] => {
+  const carriedIdSet = new Set(carriedIds)
+  const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket]))
+  const carriedBlock = carriedIds.flatMap((ticketId) => ticketById.get(ticketId) ?? [])
+  const stayingInLane = tickets.filter((ticket) => ticket.laneId === targetLaneId && !carriedIdSet.has(ticket.id))
+  const laneOrder = stayingInLane.sort(compareLaneOrder)
+  const insertIndex = insertIndexFor(laneOrder, anchor)
+  const nextLaneOrder = [...laneOrder.slice(0, insertIndex), ...carriedBlock, ...laneOrder.slice(insertIndex)]
+  const positionById = new Map(nextLaneOrder.map((ticket, index) => [ticket.id, index + 1]))
+  return tickets.map((ticket) => {
+    const lanePosition = positionById.get(ticket.id)
+    if (lanePosition === undefined) return ticket
+    const alreadyThere =
+      ticket.laneId === targetLaneId && ticket.lanePosition === lanePosition && ticket.lanePositionLaneId === targetLaneId
+    if (alreadyThere) return ticket
+    return { ...ticket, laneId: targetLaneId, lanePosition, lanePositionLaneId: targetLaneId }
+  })
+}
+
+export const clearStaleLanePositions = (board: ProjectBoard): ProjectBoard => {
+  const isStale = (ticket: Ticket) => ticket.lanePositionLaneId != null && ticket.lanePositionLaneId !== ticket.laneId
+  if (!board.tickets.some(isStale)) return board
+  const withoutStale = (ticket: Ticket): Ticket => {
+    if (!isStale(ticket)) return ticket
+    const { lanePosition: _lanePosition, lanePositionLaneId: _lanePositionLaneId, ...unplaced } = ticket
+    return unplaced
+  }
+  return { ...board, tickets: board.tickets.map(withoutStale) }
 }
 
 // A coding agent a ticket can be handed to. `command` is the CLI that takes the
@@ -2301,18 +2369,6 @@ export const carriedTicketIds = (
   selectedTicketIds: ReadonlySet<string>,
   visibleTickets: Ticket[]
 ): string[] => carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets).map((ticket) => ticket.id)
-
-// Tickets already in the target lane are left out so their updatedAt stays put.
-export const ticketIdsToMove = (
-  draggedTicketId: string,
-  selectedTicketIds: ReadonlySet<string>,
-  visibleTickets: Ticket[],
-  targetLaneId: string
-): string[] => {
-  const carried = carriedTickets(draggedTicketId, selectedTicketIds, visibleTickets)
-  const ticketsToMove = carried.filter((ticket) => ticket.laneId !== targetLaneId)
-  return ticketsToMove.map((ticket) => ticket.id)
-}
 
 // Per-entity patches cross IPC as JSON, which drops undefined keys, so an
 // explicit clear travels as null.

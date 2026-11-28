@@ -31,6 +31,10 @@ import {
   availableAgents,
   boardWrites,
   changedFields,
+  clearStaleLanePositions,
+  compareLaneOrder,
+  placeTicketsInLane,
+  type LaneDropAnchor,
   buildAutoRunLaunch,
   buildOrchestratorLaunch,
   orchestratorAgentChoice,
@@ -234,6 +238,20 @@ const boardUpdate =
     const nextBoard = keepParkedLaneIds(currentState.boards?.[projectPath], editedBoard)
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
+
+const laneOrderIds = (tickets: Ticket[], laneId: string) => {
+  const laneTickets = tickets.filter((ticket) => ticket.laneId === laneId)
+  const laneOrder = laneTickets.sort(compareLaneOrder)
+  return laneOrder.map((ticket) => ticket.id).join(',')
+}
+
+const withoutStaleLanePositions =(state: ProjectTrackerState, projectPath: string): ProjectTrackerState => {
+  const board = state.boards?.[projectPath]
+  if (!board) return state
+  const clearedBoard = clearStaleLanePositions(board)
+  if (clearedBoard === board) return state
+  return { ...state, boards: { ...state.boards, [projectPath]: clearedBoard } }
+}
 
 // The board as stored, not getBoard's normalized default: a board that was
 // never saved diffs as empty, so its default lanes are written on first edit.
@@ -542,7 +560,7 @@ export const useProjectsStore = defineStore('projects', {
 
     // Every single-ticket edit funnels through here — modal fields and checklist
     // toggles alike — so this is the only place that has to stamp updatedAt for
-    // them. Lane drags go through moveTickets.
+    // them. Lane drags go through dropTickets.
     async updateTicket(
       projectPath: string,
       ticketId: string,
@@ -563,19 +581,19 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
-    // Drag-and-drop between lanes, for one card or every checked one: a single
-    // board edit, so all moved tickets share one updatedAt. The lane check runs
-    // on the board the save queue hands over, not the one the view saw, so a
-    // ticket that got to the lane in the meantime keeps its updatedAt.
-    async moveTickets(projectPath: string, ticketIds: string[], laneId: string) {
-      if (ticketIds.length === 0) return
-      const movingIds = new Set(ticketIds)
+    async dropTickets(projectPath: string, ticketIds: string[], laneId: string, anchor: LaneDropAnchor) {
+      const ticketsBeforeDrop = getBoard(this.state, projectPath).tickets
+      const placedTickets = placeTicketsInLane(ticketsBeforeDrop, ticketIds, laneId, anchor)
+      const orderBeforeDrop = laneOrderIds(ticketsBeforeDrop, laneId)
+      const orderAfterDrop = laneOrderIds(placedTickets, laneId)
+      if (orderAfterDrop === orderBeforeDrop) return
       const updatedAt = new Date().toISOString()
-      const needsMove = (ticket: Ticket) => movingIds.has(ticket.id) && ticket.laneId !== laneId
-      await this.updateBoard(projectPath, (board) => ({
-        ...board,
-        tickets: board.tickets.map((ticket) => (needsMove(ticket) ? { ...ticket, laneId, updatedAt } : ticket))
-      }))
+      await this.updateBoard(projectPath, (board) => {
+        const placed = placeTicketsInLane(board.tickets, ticketIds, laneId, anchor)
+        const stampLaneChange = (ticket: Ticket, index: number) =>
+          ticket.laneId === board.tickets[index].laneId ? ticket : { ...ticket, updatedAt }
+        return { ...board, tickets: placed.map(stampLaneChange) }
+      })
     },
 
     // Matched against the run saved at write time, not the one the caller saw:
@@ -892,10 +910,11 @@ export const useProjectsStore = defineStore('projects', {
           const persistedState = undo ? undo(rawState) : rawState
           const candidate = update(rawState)
           const ownMoves = withCompletionMoves(rawState, candidate, alsoCompletedIds)
-          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(ownMoves.state, projectPath))
-          const handoffsBeforePatch = handoffsBetween(candidate, ownMoves.state)
-          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, ownMoves.state, projectPath, writes)
-          if (!appliedInPlace) this.state = ownMoves.state
+          const nextState = withoutStaleLanePositions(ownMoves.state, projectPath)
+          const writes = boardWrites(storedBoard(persistedState, projectPath), storedBoard(nextState, projectPath))
+          const handoffsBeforePatch = handoffsBetween(candidate, nextState)
+          const appliedInPlace = !undo && applyTicketWritesInPlace(this.state, nextState, projectPath, writes)
+          if (!appliedInPlace) this.state = nextState
           try {
             await this.dispatchBoardWrites(projectPath, writes)
           } catch (error) {

@@ -293,7 +293,10 @@ From left to right:
 - Double-clicking the header or an empty part of the lane opens the New ticket modal for that lane.
 - **Reordering**: drag a lane by its header to a new position, or focus the header and press Alt+← / Alt+→ to move it one slot. Escape cancels a drag. No status always stays first, and lanes can't move while any lane filter is set.
 - **Resize handle** on the right edge. Width runs from 200 to 900 px (default 260). The width is saved once when you let go, as a per-user preference.
-- You can drop a ticket on any lane to move it there.
+- You can drop a ticket on any lane to move it there, at the drop spot. A line between cards shows where it will land.
+- **Lane order**: dragged tickets keep their slot (`lane_position`, valid only in `lane_position_lane_id`), across reload and restart. Every other move (modal lane picker, Next Lane, move rules, GitHub import, agents writing `lane_id`, new tickets) lands at the bottom; unplaced tickets sort by number, so upgraded boards look unchanged (`compareLaneOrder`, `placeTicketsInLane`, `clearStaleLanePositions` in `projectTypes.ts`; trigger `tickets_lane_position_on_move` in `schema.ts`). A reorder within a lane doesn't stamp `updatedAt`.
+  - Filtered lane: the drop lands next to the visible neighbour; hidden tickets keep their order.
+  - Keyboard: focus a card (Tab), Alt+ArrowUp/Down moves it one visible slot; Enter/Space opens it.
 - **Long lanes are virtualized**: a lane over 50 cards mounts only the cards within one screen of its viewport, with spacers for the rest (estimated height, replaced by measured heights). The header count still shows every matching ticket. A card mid-drag stays mounted. Find on page with a query mounts every card so native find sees them (`LaneCardList.vue`, `src/shared/cardWindow.ts`).
 - Tickets are grouped by lane once per change (`groupTicketsByLane` in `projectTypes.ts`); cards, counts, badges and the graph all read that map. Ticket-only writes patch the one row in place, so unchanged cards don't re-render (`TicketCard.vue`).
 
@@ -301,9 +304,9 @@ From left to right:
 
 - Draggable between lanes. Clicking a card opens the Ticket modal (3.8).
 - **Select checkbox** (title "Select (run / move)"): checked cards feed Auto Run's ticket set and bulk drag. Selection is in memory only and clears when you switch project.
-- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`ticketIdsToMove` in `projectTypes.ts`, `moveTickets` in `stores/projects.ts`).
+- **Bulk drag**: dragging a checked card moves every checked, visible ticket to the drop lane in one save, all with the same `updatedAt` (`carriedTicketIds` + `placeTicketsInLane` in `projectTypes.ts`, `dropTickets` in `stores/projects.ts`).
   - Dragging an unchecked card moves only that card.
-  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Tickets already in the drop lane aren't touched.
+  - Checked tickets hidden by search, the assignee filter, a hidden lane or the lane filter don't move. Carried tickets land together as a block at the drop spot, in their board order; only those that changed lane get a new `updatedAt`.
   - Moved tickets stay checked.
   - **Stack ghost** (2+ tickets carried): the drag image is the dragged card with up to 2 offset card edges behind it (3 layers max) and an accent count badge with the carried count. The other carried cards fade and shrink in place (`.ticket-carried`) until `dragend`. The count is every checked visible ticket, including ones already in the drop lane (`carriedTicketIds` in `projectTypes.ts`, `startTicketDrag` in `board/BoardLanes.vue`). Reduce Motion drops the fade/shrink transition; the ghost and dimming stay. An unchecked card, or the only checked one, uses the browser's default drag image.
 - The title always shows (a locked, checked **Title** row in Display). These fields show only when switched on in Display:

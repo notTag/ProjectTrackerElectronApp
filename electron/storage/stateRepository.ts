@@ -196,7 +196,9 @@ const ticketFromRow = (row: Row): Ticket => ({
   images: parseJson<Ticket['images']>(row.images_json, undefined),
   moveRules: asText(row.move_rules),
   moveRulesPassedLaneId: asText(row.move_rules_passed_lane_id),
-  readyLaneId: asText(row.ready_lane_id)
+  readyLaneId: asText(row.ready_lane_id),
+  lanePosition: row.lane_position == null ? undefined : Number(row.lane_position),
+  lanePositionLaneId: asText(row.lane_position_lane_id)
 })
 
 const laneFromRow = (row: Row): SwimLane => ({
@@ -272,7 +274,9 @@ const ticketValues = (projectPath: string, ticket: Ticket): SQLInputValue[] => [
   jsonOrNull(ticket.images),
   ticket.moveRules ?? null,
   ticket.moveRulesPassedLaneId ?? null,
-  ticket.readyLaneId ?? null
+  ticket.readyLaneId ?? null,
+  ticket.lanePosition ?? null,
+  ticket.lanePositionLaneId ?? null
 ]
 
 export class StateRepository {
@@ -1246,8 +1250,9 @@ export class StateRepository {
          project_path, lane_id, assignee_id, number, title, description, created_at, updated_at,
          branch_name, labels_json, checklist_json, agent_run_json, external_id, external_url,
          worktree_path, pull_request_url, pull_request_state, pull_request_merged_at, full_auto, external_links_json, move_to_lane_id, move_on_complete, version,
-         agent_id, model, images_json, move_rules, move_rules_passed_lane_id, ready_lane_id, id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         agent_id, model, images_json, move_rules, move_rules_passed_lane_id, ready_lane_id,
+         lane_position, lane_position_lane_id, id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
   }
@@ -1261,7 +1266,7 @@ export class StateRepository {
          agent_run_json = ?, external_id = ?, external_url = ?, worktree_path = ?, pull_request_url = ?,
          pull_request_state = ?, pull_request_merged_at = ?, full_auto = ?, external_links_json = ?, move_to_lane_id = ?, move_on_complete = ?,
          version = ?, agent_id = ?, model = ?, images_json = ?, move_rules = ?,
-         move_rules_passed_lane_id = ?, ready_lane_id = ?
+         move_rules_passed_lane_id = ?, ready_lane_id = ?, lane_position = ?, lane_position_lane_id = ?
        WHERE id = ?`,
       [...ticketValues(projectPath, ticket), ticket.id]
     )
