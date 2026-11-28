@@ -2,6 +2,9 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { pageFindActive } from '@/pageFind'
+import type { PageFindResult } from '@/shared/bridgeApi'
+
+const OWN_INPUT_MATCH_ORDINAL = 1
 
 const route = useRoute()
 const visible = ref(false)
@@ -11,20 +14,45 @@ const result = ref({ activeMatchOrdinal: 0, matches: 0 })
 let unsubscribe: (() => void) | undefined
 let previousFocus: HTMLElement | null = null
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+let lastSearchForward = true
 
 function cancelPendingSearch() {
   clearTimeout(searchTimer)
   searchTimer = undefined
 }
 
-function search(forward = true, next = false) {
+function search(forward = true, newSession = true) {
   cancelPendingSearch()
+  lastSearchForward = forward
   if (!query.value) {
     result.value = { activeMatchOrdinal: 0, matches: 0 }
     void window.projectTracker?.stopFindInPage?.()
     return
   }
-  void window.projectTracker?.findInPage?.(query.value, forward, next)
+  void window.projectTracker?.findInPage?.(query.value, forward, newSession)
+}
+function showResult({ activeMatchOrdinal, matches, finalUpdate }: PageFindResult) {
+  if (!visible.value || !query.value) return
+  const landedOnOwnInput = finalUpdate && activeMatchOrdinal === OWN_INPUT_MATCH_ORDINAL
+  const hasPageMatches = matches > 1
+  if (landedOnOwnInput && hasPageMatches) {
+    search(lastSearchForward, false)
+    return
+  }
+  result.value = {
+    activeMatchOrdinal: Math.max(activeMatchOrdinal - 1, 0),
+    matches: Math.max(matches - 1, 0)
+  }
+  if (finalUpdate) input.value?.focus({ preventScroll: true })
+}
+function continueFromActiveMatch() {
+  input.value?.blur()
+  window.getSelection()?.removeAllRanges()
+}
+function step(forward: boolean) {
+  const queryChangedSinceLastSearch = searchTimer !== undefined
+  if (!queryChangedSinceLastSearch) continueFromActiveMatch()
+  search(forward, queryChangedSinceLastSearch)
 }
 function close() {
   cancelPendingSearch()
@@ -51,7 +79,7 @@ async function keydown(event: KeyboardEvent) {
 }
 watch(query, () => {
   cancelPendingSearch()
-  searchTimer = setTimeout(() => search(), 300)
+  searchTimer = setTimeout(() => search(), 100)
 })
 watch(() => route.fullPath, close)
 watch(
@@ -62,9 +90,7 @@ watch(
 )
 onMounted(() => {
   window.addEventListener('keydown', keydown, true)
-  unsubscribe = window.projectTracker?.onFindResult?.(value => {
-    if (visible.value && query.value) result.value = value
-  })
+  unsubscribe = window.projectTracker?.onFindResult?.(showResult)
 })
 onBeforeUnmount(() => {
   pageFindActive.value = false
@@ -77,10 +103,10 @@ onBeforeUnmount(() => {
 
 <template>
   <section v-if="visible" class="page-find" role="search" aria-label="Find on page">
-    <input ref="input" v-model="query" aria-label="Find on page" placeholder="Find on page…" @keydown.enter.prevent="search(!$event.shiftKey, true)" />
+    <input ref="input" v-model="query" aria-label="Find on page" placeholder="Find on page…" @keydown.enter.prevent="step(!$event.shiftKey)" />
     <span aria-live="polite">{{ query ? `${result.activeMatchOrdinal} of ${result.matches}` : '' }}</span>
-    <button class="secondary" title="Previous match (Shift+Enter)" aria-label="Previous match" :disabled="!result.matches" @click="search(false, true)">↑</button>
-    <button class="secondary" title="Next match (Enter)" aria-label="Next match" :disabled="!result.matches" @click="search(true, true)">↓</button>
+    <button class="secondary" title="Previous match (Shift+Enter)" aria-label="Previous match" :disabled="!result.matches" @click="step(false)">↑</button>
+    <button class="secondary" title="Next match (Enter)" aria-label="Next match" :disabled="!result.matches" @click="step(true)">↓</button>
     <button class="secondary" title="Close (Escape)" aria-label="Close search" @click="close">×</button>
   </section>
 </template>

@@ -41,7 +41,7 @@ Features that are present in every view. Sources: `electron/main.ts`, `src/App.v
 ### 1.4 Find on page (⌘F / Ctrl+F) — `src/components/PageFind.vue`
 
 - ⌘F opens a find bar, focuses it and selects any existing text.
-- The search runs 300 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
+- The search runs 100 ms after you stop typing and uses Chromium's built-in find-in-page through IPC.
 - The bar shows a live "N of M" match count.
 - Enter goes to the next match and Shift+Enter to the previous one. There are also ↑ and ↓ buttons, disabled when nothing matches.
 - Escape or × closes the bar, clears the highlights and puts focus back where it was.
