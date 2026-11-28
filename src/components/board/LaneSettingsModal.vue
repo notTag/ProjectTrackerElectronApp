@@ -497,7 +497,7 @@ defineExpose({
       >
         <summary class="eyebrow">Auto Run</summary>
         <div class="lane-settings-section-body ticket-agent">
-          <div class="auto-run-pickers">
+          <div class="field-row">
             <label v-if="showsLaneField('autoRunAgent', lane.id)">
               Agent
               <select
