@@ -60,6 +60,7 @@ import {
   type ProjectRecord,
   type ProjectStatus,
   type ProjectTrackerState,
+  type LaneStoreEntry,
   type ScanProgress,
   type SwimLane,
   type Ticket,
@@ -85,6 +86,7 @@ interface ProjectsStoreState {
   agentRunning: Record<string, boolean>
   // Keyed by lane id: a lane mid-launch can't be launched again by a second click.
   autoRunning: Record<string, boolean>
+  laneStoreEntries: LaneStoreEntry[]
 }
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))]
@@ -336,7 +338,8 @@ export const useProjectsStore = defineStore('projects', {
     readmes: {},
     githubLoading: {},
     agentRunning: {},
-    autoRunning: {}
+    autoRunning: {},
+    laneStoreEntries: []
   }),
 
   getters: {
@@ -453,6 +456,35 @@ export const useProjectsStore = defineStore('projects', {
 
     async createWorkflow(projectPath: string, name: string) {
       return this.writeWorkflow(projectPath, () => projectTrackerApi.createWorkflow(projectPath, name))
+    },
+
+    async saveLaneToStore(projectPath: string, laneId: string): Promise<LaneStoreEntry> {
+      await this.writeBoard(projectPath, boardUpdate(projectPath, (board) => board))
+      const queueSettled = saveQueue.catch(() => undefined)
+      const saved = queueSettled.then(() => projectTrackerApi.saveLaneToStore(projectPath, laneId))
+      saveQueue = saved.then(
+        () => undefined,
+        () => undefined
+      )
+      const entry = await saved
+      await this.loadLaneStore()
+      return entry
+    },
+
+    async loadLaneStore() {
+      this.laneStoreEntries = await projectTrackerApi.listLaneStore()
+    },
+
+    async deleteLaneStoreEntry(entryId: string) {
+      return this.persist(async () => {
+        await projectTrackerApi.deleteLaneStoreEntry(entryId)
+        this.laneStoreEntries = this.laneStoreEntries.filter((entry) => entry.id !== entryId)
+        return []
+      })
+    },
+
+    async addLaneFromStore(projectPath: string, entryId: string) {
+      return this.writeWorkflow(projectPath, () => projectTrackerApi.addLaneFromStore(projectPath, entryId))
     },
 
     // The identity board write first stores a never-saved board's default

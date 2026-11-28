@@ -162,6 +162,21 @@ CREATE TABLE IF NOT EXISTS workflows (
   PRIMARY KEY (project_path, id)
 );
 
+-- Global lane presets (#146), not tied to a board. lane_json holds a
+-- swim_lanes row minus project_path, position and graph_position_json; the
+-- prompts travel as content because file paths are project-relative.
+CREATE TABLE IF NOT EXISTS lane_store (
+  id TEXT PRIMARY KEY,
+  lane_id TEXT NOT NULL,
+  origin_project_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  lane_json TEXT NOT NULL,
+  agent_markdown TEXT NOT NULL DEFAULT '',
+  orchestrator_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS tickets_by_board ON tickets (project_path, lane_id);
 CREATE INDEX IF NOT EXISTS tickets_by_assignee ON tickets (assignee_id);
 CREATE INDEX IF NOT EXISTS tickets_by_external_id ON tickets (external_id);
@@ -205,6 +220,7 @@ export const ADDED_COLUMNS = [
   { table: 'tickets', column: 'move_rules', definition: 'TEXT' },
   { table: 'tickets', column: 'move_rules_passed_lane_id', definition: 'TEXT' },
   { table: 'tickets', column: 'ready_lane_id', definition: 'TEXT' },
+  { table: 'lane_store', column: 'origin_project_path', definition: "TEXT NOT NULL DEFAULT ''" },
   { table: 'swim_lanes', column: 'waits_for_pull_request_merge', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'swim_lanes', column: 'graph_position_json', definition: 'TEXT' },
   { table: 'swim_lanes', column: 'current_agent_orchestrator_prompt', definition: "TEXT NOT NULL DEFAULT ''" },

@@ -205,6 +205,7 @@ watch(
   () => props.lane.id,
   () => {
     laneFieldsMenuOpen.value = false
+    laneStoreStatus.value = idleMarkdownStatus()
     flushMarkdownSave()
     commitTypedPrompts()
     agentMarkdownStatus.value = idleMarkdownStatus()
@@ -220,6 +221,19 @@ onBeforeUnmount(() => {
   flushMarkdownSave()
   commitTypedPrompts()
 })
+
+const laneStoreStatus = ref<LaneMarkdownStatus>(idleMarkdownStatus())
+const saveLaneToStore = async (lane: SwimLane) => {
+  flushMarkdownSave()
+  commitTypedPrompts()
+  await props.saveState.queue
+  try {
+    await store.saveLaneToStore(projectPath.value, lane.id)
+    if (props.lane.id === lane.id) laneStoreStatus.value = { savedMessage: 'Saved to store', error: '' }
+  } catch (error) {
+    if (props.lane.id === lane.id) laneStoreStatus.value = { savedMessage: '', error: ipcErrorMessage(error) }
+  }
+}
 
 // Seeded lane ids repeat across projects, and the save state outlives a board switch.
 const agentMarkdownSavedKey = (boardPath: string, lane: SwimLane) => `${boardPath}:${lane.id}`
@@ -667,15 +681,25 @@ defineExpose({
       </details>
 
       <div class="modal-actions">
-        <button
-          v-if="lane.id !== UNASSIGNED_LANE_ID"
-          class="secondary danger"
-          :title="`Delete ${lane.name} — its tickets move to ${UNASSIGNED_LANE_NAME}`"
-          @click="emit('delete', lane)"
-        >
-          Delete lane
-        </button>
+        <template v-if="lane.id !== UNASSIGNED_LANE_ID">
+          <button
+            class="secondary danger"
+            :title="`Delete ${lane.name} — its tickets move to ${UNASSIGNED_LANE_NAME}`"
+            @click="emit('delete', lane)"
+          >
+            Delete lane
+          </button>
+          <button
+            class="secondary"
+            title="Save this lane's settings and prompts to the Swimlane Store, to add to any board's workflow"
+            @click="saveLaneToStore(lane)"
+          >
+            Save to Store
+          </button>
+        </template>
         <span v-else class="field-hint">This column always exists — it holds tickets with no status.</span>
+        <span v-if="laneStoreStatus.error" class="field-hint field-error">{{ laneStoreStatus.error }}</span>
+        <span v-else-if="laneStoreStatus.savedMessage" class="field-hint">{{ laneStoreStatus.savedMessage }}</span>
         <button @click="emit('close')">Done</button>
       </div>
     </section>

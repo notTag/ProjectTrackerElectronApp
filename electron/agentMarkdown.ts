@@ -87,3 +87,16 @@ export const saveAgentMarkdown = (filePath: string, content: string, previousCon
   if (existing !== content) writeFileSync(filePath, content, 'utf8')
   return { filePath }
 }
+
+export const readLaneMarkdown = (target: AgentMarkdownTarget): string => {
+  const markdownPath = resolveAgentMarkdownPath(target)
+  return readIfExists(markdownPath)
+}
+
+export const writeMissingLaneMarkdown = (target: Omit<AgentMarkdownTarget, 'filePath'>, content: string): string | null => {
+  const filePath = resolveAgentMarkdownPath({ ...target, filePath: '' })
+  if (content === '' || existsSync(filePath)) return null
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  writeFileSync(filePath, content, 'utf8')
+  return filePath
+}

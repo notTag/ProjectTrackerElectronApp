@@ -10,7 +10,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { readOrchestratorContext, resolveAgentMarkdownPath, saveAgentMarkdown } from './agentMarkdown.js'
+import {
+  readLaneMarkdown,
+  readOrchestratorContext,
+  resolveAgentMarkdownPath,
+  saveAgentMarkdown,
+  writeMissingLaneMarkdown
+} from './agentMarkdown.js'
 import { runAgentHeadlessWithRetry } from './agentRun.js'
 import { createGithubRequest } from './githubRequest.js'
 import { metricWindows, prCounts, runningAgentsByProject } from './metrics.js'
@@ -50,7 +56,8 @@ import {
   type TicketWritePatch,
   type LaneWritePatch,
   type ProjectWritePatch,
-  type ScanProgress
+  type ScanProgress,
+  type LaneMarkdownKind
 } from '../src/shared/projectTypes.js'
 
 const realPathOrSelf = (directory: string) => {
@@ -493,6 +500,61 @@ export const createIpcHandlers = (dependencies: HandlerDependencies): Record<Ipc
       const { projectPath, name } = (payload ?? {}) as { projectPath?: unknown; name?: unknown }
       if (typeof projectPath !== 'string' || typeof name !== 'string') throw new Error('Invalid workflow create payload.')
       return toPlainJson(repository.createWorkflow(normalizePath(projectPath), name))
+    },
+
+    'lane-store:list': (_payload, { repository }) => toPlainJson(repository.listLaneStore()),
+
+    'lane-store:save': (payload, { repository }) => {
+      const { projectPath, laneId } = (payload ?? {}) as { projectPath?: unknown; laneId?: unknown }
+      if (typeof projectPath !== 'string' || typeof laneId !== 'string') throw new Error('Invalid lane store save payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const lane = repository.lane(normalized, laneId)
+      if (!lane) throw new Error(`Lane ${laneId} does not exist.`)
+      const scanDirectories = scanDirectoriesOf(repository)
+      const readMarkdown = (kind: LaneMarkdownKind, filePath: string) => {
+        const markdownTarget = { kind, projectPath: normalized, laneName: lane.name, filePath }
+        let resolvedPath: string
+        try {
+          resolvedPath = resolveAgentMarkdownPath(markdownTarget)
+        } catch {
+          return ''
+        }
+        const readable = isInsideAny(resolvedPath, scanDirectories)
+        if (!readable) return ''
+        return kind === 'orchestrator' ? readOrchestratorContext(resolvedPath) : readLaneMarkdown(markdownTarget)
+      }
+      const markdown = {
+        agent: readMarkdown('agent', lane.agentFilePath),
+        orchestrator: readMarkdown('orchestrator', lane.orchestratorFilePath ?? '')
+      }
+      return toPlainJson(repository.saveLaneToStore(normalized, laneId, markdown))
+    },
+
+    'lane-store:delete': (payload, { repository }) => {
+      const { entryId } = (payload ?? {}) as { entryId?: unknown }
+      if (typeof entryId !== 'string') throw new Error('Invalid lane store delete payload.')
+      repository.deleteLaneStoreEntry(entryId)
+    },
+
+    'lane-store:add': (payload, { repository }) => {
+      const { projectPath, entryId } = (payload ?? {}) as { projectPath?: unknown; entryId?: unknown }
+      if (typeof projectPath !== 'string' || typeof entryId !== 'string') throw new Error('Invalid lane store add payload.')
+      const normalized = assertScannedProjectPath(repository, projectPath)
+      const writtenFiles: string[] = []
+      try {
+        repository.addLaneFromStore(normalized, entryId, (prompts) => {
+          const laneFolder = { projectPath: normalized, laneName: prompts.laneName }
+          for (const kind of ['agent', 'orchestrator'] as const) {
+            const markdown = kind === 'agent' ? prompts.agentMarkdown : prompts.orchestratorMarkdown
+            const written = writeMissingLaneMarkdown({ ...laneFolder, kind }, markdown)
+            if (written) writtenFiles.push(written)
+          }
+        })
+      } catch (error) {
+        for (const filePath of writtenFiles) rmSync(filePath, { force: true })
+        throw error
+      }
+      return toPlainJson(repository.getState())
     },
 
     'project:update': (payload, { repository }) => {
