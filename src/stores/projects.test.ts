@@ -726,11 +726,10 @@ describe('dropTickets', () => {
   it('skips the save for a drop that lands where the tickets already are', async () => {
     const store = useProjectsStore()
     store.state = stateWithThreeTickets()
-    await store.dropTickets(PROJECT_PATH, ['ticket-1'], 'idea', { beforeTicketId: 'ticket-2', afterTicketId: null })
-    vi.clearAllMocks()
     const updateBoard = vi.spyOn(store, 'updateBoard')
 
     await store.dropTickets(PROJECT_PATH, ['ticket-1'], 'idea', { beforeTicketId: 'ticket-2', afterTicketId: null })
+    await store.dropTickets(PROJECT_PATH, ['ticket-2'], 'idea', toBottom)
     await store.dropTickets(PROJECT_PATH, [], 'dev', toBottom)
 
     expect(updateBoard).not.toHaveBeenCalled()

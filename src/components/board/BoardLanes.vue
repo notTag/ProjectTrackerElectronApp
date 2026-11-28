@@ -323,33 +323,61 @@ const endTicketDrag = () => {
   ticketDrop.value = null
 }
 
-// Half the 8px card gap, so the line sits centered between two cards.
 const HALF_CARD_GAP_PX = 4
 
-// Mirrors laneAnchorAt on Y: the first visible, uncarried card whose midpoint
-// is below the pointer is the one the drop lands in front of.
+const isBelowPointer = (card: HTMLElement, pointerY: number) => {
+  const rect = card.getBoundingClientRect()
+  const cardMidpoint = rect.top + rect.height / 2
+  return cardMidpoint > pointerY
+}
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const isInsideViewport = (card: HTMLElement, viewport: DOMRect) => {
+  const rect = card.getBoundingClientRect()
+  return rect.bottom > viewport.top && rect.top < viewport.bottom
+}
+
+const indicatorViewportY = (viewport: DOMRect, beforeCard?: HTMLElement, lastCard?: HTMLElement) => {
+  if (beforeCard) return beforeCard.getBoundingClientRect().top - HALF_CARD_GAP_PX
+  if (lastCard) return lastCard.getBoundingClientRect().bottom + HALF_CARD_GAP_PX
+  return viewport.top
+}
+
 const ticketAnchorAt = (laneElement: HTMLElement, pointerY: number) => {
-  const cards = Array.from(laneElement.querySelectorAll<HTMLElement>('.ticket[data-ticket-id]'))
-  const neighbours = cards.filter((card) => !carriedIds.value.has(card.dataset.ticketId ?? ''))
-  const beforeCard = neighbours.find((card) => {
-    const rect = card.getBoundingClientRect()
-    return rect.top + rect.height / 2 > pointerY
-  })
+  const laneBody = laneElement.querySelector<HTMLElement>('.lane-body') ?? laneElement
+  const viewport = laneBody.getBoundingClientRect()
+  const cards = Array.from(laneBody.querySelectorAll<HTMLElement>('.ticket[data-ticket-id]'))
+  const neighbours = cards.filter(
+    (card) => !carriedIds.value.has(card.dataset.ticketId ?? '') && isInsideViewport(card, viewport)
+  )
+  const pointerInViewport = clamp(pointerY, viewport.top, viewport.bottom)
+  const beforeCard = neighbours.find((card) => isBelowPointer(card, pointerInViewport))
   const lastCard = neighbours.at(-1)
   const afterCard = beforeCard ? undefined : lastCard
-  const laneTop = laneElement.getBoundingClientRect().top
-  const indicatorCard = beforeCard ?? lastCard
-  let indicatorTop = laneElement.querySelector<HTMLElement>('.lane-body')?.offsetTop ?? 0
-  if (beforeCard) indicatorTop = beforeCard.getBoundingClientRect().top - laneTop - HALF_CARD_GAP_PX
-  else if (indicatorCard) indicatorTop = indicatorCard.getBoundingClientRect().bottom - laneTop + HALF_CARD_GAP_PX
-  const anchor = { beforeTicketId: beforeCard?.dataset.ticketId ?? null, afterTicketId: afterCard?.dataset.ticketId ?? null }
+  const anchor: LaneDropAnchor = {
+    beforeTicketId: beforeCard?.dataset.ticketId ?? null,
+    afterTicketId: afterCard?.dataset.ticketId ?? null
+  }
+  const indicatorY = clamp(indicatorViewportY(viewport, beforeCard, lastCard), viewport.top, viewport.bottom)
+  const indicatorTop = indicatorY - laneElement.getBoundingClientRect().top
   return { anchor, indicatorTop }
 }
+
+const isSameDrop = (
+  current: typeof ticketDrop.value,
+  next: { laneId: string; anchor: LaneDropAnchor; indicatorTop: number }
+) =>
+  current?.laneId === next.laneId &&
+  current.indicatorTop === next.indicatorTop &&
+  current.anchor.beforeTicketId === next.anchor.beforeTicketId &&
+  current.anchor.afterTicketId === next.anchor.afterTicketId
 
 const trackTicketDrop = (laneId: string, event: DragEvent) => {
   if (!draggedTicketId.value) return
   const laneElement = event.currentTarget as HTMLElement
-  ticketDrop.value = { laneId, ...ticketAnchorAt(laneElement, event.clientY) }
+  const nextDrop = { laneId, ...ticketAnchorAt(laneElement, event.clientY) }
+  if (!isSameDrop(ticketDrop.value, nextDrop)) ticketDrop.value = nextDrop
 }
 
 const leaveTicketDrop = (laneId: string, event: DragEvent) => {
@@ -373,9 +401,10 @@ const focusTicketCard = (ticketId: string) => {
   boardElement.value?.querySelector<HTMLElement>(cardSelector)?.focus()
 }
 
-// One slot among the cards the user can see: moving down lands after the next
-// visible card, moving up lands before the previous one.
+let keyboardMoveSaving: Promise<void> | null = null
+
 const moveTicketByKeyboard = async (ticket: Ticket, direction: 'up' | 'down') => {
+  if (keyboardMoveSaving) return
   const laneTickets = props.ticketsInLane(ticket.laneId)
   const position = laneTickets.findIndex((entry) => entry.id === ticket.id)
   const neighbour = laneTickets[direction === 'up' ? position - 1 : position + 1]
@@ -384,10 +413,14 @@ const moveTicketByKeyboard = async (ticket: Ticket, direction: 'up' | 'down') =>
     direction === 'up'
       ? { beforeTicketId: neighbour.id, afterTicketId: null }
       : { beforeTicketId: null, afterTicketId: neighbour.id }
-  const saving = store.dropTickets(projectPath.value, [ticket.id], ticket.laneId, anchor)
-  await nextTick()
-  focusTicketCard(ticket.id)
-  await saving
+  keyboardMoveSaving = store.dropTickets(projectPath.value, [ticket.id], ticket.laneId, anchor)
+  try {
+    await nextTick()
+    focusTicketCard(ticket.id)
+    await keyboardMoveSaving
+  } finally {
+    keyboardMoveSaving = null
+  }
 }
 
 const readyLaneNameByTicketId = computed(() => {

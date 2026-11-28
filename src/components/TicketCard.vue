@@ -33,7 +33,6 @@ const emit = defineEmits<{
 
 const ARROW_DIRECTIONS: Record<string, 'up' | 'down'> = { ArrowUp: 'up', ArrowDown: 'down' }
 
-// Keys from the checkbox or the PR link inside the card are theirs, not the card's.
 const handleCardKey = (event: KeyboardEvent) => {
   if (event.target !== event.currentTarget) return
   const direction = ARROW_DIRECTIONS[event.key]

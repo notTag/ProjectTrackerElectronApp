@@ -32,6 +32,7 @@ import {
   boardWrites,
   changedFields,
   clearStaleLanePositions,
+  compareLaneOrder,
   placeTicketsInLane,
   type LaneDropAnchor,
   buildAutoRunLaunch,
@@ -234,9 +235,13 @@ const boardUpdate =
     return { ...currentState, boards: { ...currentState.boards, [projectPath]: nextBoard } }
   }
 
-// Every board edit and completion move passes through writeBoard, so this is
-// the one place a slot left behind in another lane gets dropped.
-const withoutStaleLanePositions = (state: ProjectTrackerState, projectPath: string): ProjectTrackerState => {
+const laneOrderIds = (tickets: Ticket[], laneId: string) => {
+  const laneTickets = tickets.filter((ticket) => ticket.laneId === laneId)
+  const laneOrder = laneTickets.sort(compareLaneOrder)
+  return laneOrder.map((ticket) => ticket.id).join(',')
+}
+
+const withoutStaleLanePositions =(state: ProjectTrackerState, projectPath: string): ProjectTrackerState => {
   const board = state.boards?.[projectPath]
   if (!board) return state
   const clearedBoard = clearStaleLanePositions(board)
@@ -539,7 +544,7 @@ export const useProjectsStore = defineStore('projects', {
 
     // Every single-ticket edit funnels through here — modal fields and checklist
     // toggles alike — so this is the only place that has to stamp updatedAt for
-    // them. Lane drags go through moveTickets.
+    // them. Lane drags go through dropTickets.
     async updateTicket(
       projectPath: string,
       ticketId: string,
@@ -560,15 +565,12 @@ export const useProjectsStore = defineStore('projects', {
       )
     },
 
-    // Drag-and-drop, for one card or every checked one, within a lane or into
-    // another: a single board edit, so all moved tickets share one updatedAt.
-    // Placement runs on the board the save queue hands over, not the one the
-    // view saw. Only a lane change stamps updatedAt; a reorder isn't an edit.
     async dropTickets(projectPath: string, ticketIds: string[], laneId: string, anchor: LaneDropAnchor) {
       const ticketsBeforeDrop = getBoard(this.state, projectPath).tickets
       const placedTickets = placeTicketsInLane(ticketsBeforeDrop, ticketIds, laneId, anchor)
-      const dropMovesNothing = placedTickets.every((ticket, index) => ticket === ticketsBeforeDrop[index])
-      if (dropMovesNothing) return
+      const orderBeforeDrop = laneOrderIds(ticketsBeforeDrop, laneId)
+      const orderAfterDrop = laneOrderIds(placedTickets, laneId)
+      if (orderAfterDrop === orderBeforeDrop) return
       const updatedAt = new Date().toISOString()
       await this.updateBoard(projectPath, (board) => {
         const placed = placeTicketsInLane(board.tickets, ticketIds, laneId, anchor)

@@ -125,8 +125,6 @@ CREATE TABLE IF NOT EXISTS tickets (
   version TEXT,
   agent_id TEXT,
   model TEXT NOT NULL DEFAULT '',
-  -- A slot only in the lane named beside it; tickets_lane_position_on_move clears
-  -- both when anything but a drag moves the ticket.
   lane_position INTEGER,
   lane_position_lane_id TEXT,
   UNIQUE (project_path, number)
@@ -262,8 +260,6 @@ BEGIN
   UPDATE tickets SET closed_at = ${NOW} WHERE id = NEW.id;
 END;
 
--- Same reason as closed_at: an agent's sqlite3 lane move must send the ticket to
--- the bottom of its new lane, not back to a slot it once held there.
 CREATE TRIGGER IF NOT EXISTS tickets_lane_position_on_move
 AFTER UPDATE OF lane_id ON tickets
 WHEN NEW.lane_id IS NOT OLD.lane_id AND NEW.lane_position_lane_id IS NOT NEW.lane_id

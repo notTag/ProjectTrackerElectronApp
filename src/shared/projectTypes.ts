@@ -444,11 +444,9 @@ export const ticketSearchText = (ticket: Ticket) => {
 
 const placedPosition = (ticket: Ticket): number | undefined => {
   const placedInItsLane = ticket.lanePositionLaneId === ticket.laneId
-  return placedInItsLane ? ticket.lanePosition ?? undefined : undefined
+  return placedInItsLane ? ticket.lanePosition : undefined
 }
 
-// Dragged tickets first by slot, then everything else by number, so a ticket
-// any other writer moves (or creates) lands at the bottom without a slot.
 export const compareLaneOrder = (left: Ticket, right: Ticket) => {
   const leftPosition = placedPosition(left)
   const rightPosition = placedPosition(right)
@@ -471,8 +469,6 @@ export const groupTicketsByLane = (tickets: Ticket[], keepTicket: (ticket: Ticke
   return ticketsByLane
 }
 
-// Neighbours the user saw at the drop: land before beforeTicketId, else after
-// afterTicketId, else (nothing visible, or the neighbour is gone) at the bottom.
 export interface LaneDropAnchor {
   beforeTicketId: string | null
   afterTicketId: string | null
@@ -486,8 +482,6 @@ const insertIndexFor = (laneOrder: Ticket[], anchor: LaneDropAnchor) => {
   return laneOrder.length
 }
 
-// ponytail: renumbers the whole target lane 1..n, so a drop writes up to one
-// row per ticket in it. Switch to fractional midpoints if lanes grow to hundreds.
 export const placeTicketsInLane = (
   tickets: Ticket[],
   carriedIds: string[],
@@ -512,8 +506,6 @@ export const placeTicketsInLane = (
   })
 }
 
-// The renderer's copy of tickets_lane_position_on_move: a slot left behind in
-// another lane is dropped, so moving back later doesn't revive it.
 export const clearStaleLanePositions = (board: ProjectBoard): ProjectBoard => {
   const isStale = (ticket: Ticket) => ticket.lanePositionLaneId != null && ticket.lanePositionLaneId !== ticket.laneId
   if (!board.tickets.some(isStale)) return board
