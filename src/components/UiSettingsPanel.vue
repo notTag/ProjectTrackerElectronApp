@@ -16,10 +16,22 @@ import {
 
 import InfoTip from './InfoTip.vue'
 
-const SECTIONS: { id: SettingsSection; icon: string; label: string }[] = [
-  { id: 'display', icon: '👁', label: 'Display' },
-  { id: 'metrics', icon: '📊', label: 'Metrics' },
-  { id: 'ui', icon: '🎨', label: 'UI Settings' }
+type SidebarSection = { id: SettingsSection; icon: string; label: string }
+
+const SECTION_GROUPS: { id: string; label: string; sections: SidebarSection[] }[] = [
+  {
+    id: 'board',
+    label: 'Board Settings',
+    sections: [
+      { id: 'display', icon: '👁', label: 'Display' },
+      { id: 'metrics', icon: '📊', label: 'Metrics' }
+    ]
+  },
+  {
+    id: 'ui',
+    label: 'UI Settings',
+    sections: [{ id: 'ui', icon: '🎨', label: 'UI Settings' }]
+  }
 ]
 
 const panel = ref<HTMLElement | null>(null)
@@ -137,18 +149,27 @@ onBeforeUnmount(() => window.removeEventListener('resize', keepInViewport))
     </header>
     <div class="settings-layout">
       <nav class="settings-sidebar" aria-label="Settings sections">
-        <button
-          v-for="section in SECTIONS"
-          :key="section.id"
-          type="button"
-          class="settings-sidebar-item"
-          :class="{ selected: selectedSettingsSection === section.id }"
-          :aria-current="selectedSettingsSection === section.id ? 'true' : undefined"
-          @click="selectedSettingsSection = section.id"
+        <div
+          v-for="group in SECTION_GROUPS"
+          :key="group.id"
+          role="group"
+          class="settings-sidebar-group"
+          :aria-labelledby="`settings-group-${group.id}`"
         >
-          <span class="settings-sidebar-icon" aria-hidden="true">{{ section.icon }}</span>
-          {{ section.label }}
-        </button>
+          <span :id="`settings-group-${group.id}`" class="eyebrow settings-sidebar-group-heading">{{ group.label }}</span>
+          <button
+            v-for="section in group.sections"
+            :key="section.id"
+            type="button"
+            class="settings-sidebar-item"
+            :class="{ selected: selectedSettingsSection === section.id }"
+            :aria-current="selectedSettingsSection === section.id ? 'true' : undefined"
+            @click="selectedSettingsSection = section.id"
+          >
+            <span class="settings-sidebar-icon" aria-hidden="true">{{ section.icon }}</span>
+            {{ section.label }}
+          </button>
+        </div>
       </nav>
       <div class="ui-demo-body">
         <slot v-if="selectedSettingsSection === 'metrics'" name="metrics" />
