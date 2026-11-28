@@ -420,18 +420,20 @@ In graph view this opens as a side panel instead of a centered modal.
 
 **Agent completion**
 
+One section, three captioned groups laid out in wrapping rows that span the modal (`.field-row`): **Who runs it** (Agent | Model | Full auto), **When it's done** (Next Lane | Move to Next Lane, then Move rules and Move rules pass), **Run** (command, buttons, last run). A caption hides when every control in its group is hidden.
+
 - **Agent** select: Claude Code (the default), Codex, Hermes, opencode, and any custom agents saved in state. The pick is saved with the ticket.
 - **Model** select (`src/components/ModelField.vue`): "CLI default", then every model the agent lists (`Agent.models`), then **Custom…** to type any other id. A saved id that isn't in the list still shows as an option. Switching agent clears it. Agents that take no model (Hermes) show a disabled "No models configured". Empty adds no flag. Used by ▶ Run and Run in, not by Auto Run.
-- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it. An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119). The tip bubble is a manual popover in the top layer, anchored to its ⓘ with CSS anchor positioning, so a modal's overflow never clips it; near the right or bottom edge it flips to stay on screen (#138).
-- **Next Lane** select, under Full auto: **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
+- **Full auto** checkbox: in every lane, when an agent moves this ticket on, the next lane's agent starts on it (said in its ⓘ tip). An ⓘ icon (`InfoTip.vue`) beside it shows a tooltip on hover or keyboard focus. Esc always hides a showing tip; when the ⓘ itself has focus that Esc is claimed (second Esc closes the modal), otherwise it passes on to the Find bar, custom Model entry, fields menus, lane drag, or modal close (#102, #119). Label text sits in a `<span id>` and the control uses `aria-labelledby`, so "More info" stays out of its accessible name — same for every ⓘ below (#119). The tip bubble is a manual popover in the top layer, anchored to its ⓘ with CSS anchor positioning, so a modal's overflow never clips it; near the right or bottom edge it flips to stay on screen (#138).
+- **Next Lane** select (ⓘ tip beside its caption): **Lane default: <lane>** (or **None** when the lane has no Next Lane), No status, or any lane. Where the ticket goes when it completes: its checklist goes from not-all-done to all-done, or a ▶ Run succeeds.
   - The ticket's own pick overrides its lane's Next Lane (3.9). The first option drops the override and inherits.
   - Picking a lane arms the move. Picking the lane default arms it only when the lane has a Next Lane. Inheritance alone never arms a ticket, so existing tickets don't start moving on their own.
-  - The footer checkbox **Move to Next Lane: <lane>** shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
+  - The checkbox **Move to Next Lane: <lane>**, beside the select, shows the resolved lane and toggles the arming. Untick it to keep the ticket where it is.
   - After the move the box unticks and the override is cleared, so the ticket then inherits its new lane's Next Lane. Deleting the target lane clears it.
-  - **Move rules** textarea under the footer checkbox (shown with it): one rule per line or bullet, saved on change. With rules, the ticket completes only when the rules pass AND every checklist item is done; an empty checklist then passes.
+  - **Move rules** textarea under that row (shown when there's a Next Lane or saved rules): one rule per line or bullet, saved on change. With rules, the ticket completes only when the rules pass AND every checklist item is done; an empty checklist then passes.
   - **Move rules pass** checkbox, shown when there are rules: confirms them for the current lane only (`move_rules_passed_lane_id`). Ticking it can be the edit that completes and moves the ticket. Any lane change or rules edit resets it.
   - Lane agents get the rules in their prompt plus a `sqlite3` command that confirms them.
-- A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4).
+- A preview of the exact shell command, built from the lane's prompt and the ticket (see 4.4). The **Run** caption's ⓘ says what the agent gets and how Run differs from Run in.
 - **▶ Run** / **Running…** runs the agent in the background in the project folder.
   - Claude Code and Codex runs can write files but can't run shell commands.
   - Other agents follow their own CLI's permission config. opencode allows everything, shell included, unless `opencode.json` says otherwise.
@@ -446,12 +448,12 @@ In graph view this opens as a side panel instead of a centered modal.
   - Editors open the folder and put the command on the clipboard.
   - The command is copied to the clipboard in both cases.
 
-**Last agent run** (shown once the ticket has one)
+**Last agent run** (shown once the ticket has one, under the Run buttons)
 
-- Shows the lane it ran in, a timestamp, and the full output, including stderr and the reason when the run failed.
+- Shows the lane it ran in, a timestamp, and the full output, including stderr and the reason when the run failed. Blank output shows a muted "No output" line.
 - Only the latest run is kept.
 
-**View on GitHub (#N)**: shown only on tickets imported from GitHub. Opens the issue in the browser.
+**View on GitHub (#N)**: shown only on tickets imported from GitHub, at the top of External Links (directly above Agent completion when External Links is hidden). Opens the issue in the browser.
 
 **Actions**
 
@@ -588,6 +590,7 @@ In graph view this opens as a side panel instead of a centered modal.
 - Text written as a BLOB, for example with a bare `readfile()`, is decoded as UTF-8 when read.
 - When a board is read, any ticket whose lane no longer exists moves to No status, and tickets without a number get one.
 - The web build (4.8) reaches the same file through the local web server, one repository connection per browser tab.
+- Local only today. Cloud provider costs for 1 → 1M users (AWS, Azure, GCP, Cloudflare): `docs/research/t78-cloud-db-cost-analysis.pdf`, re-runnable via `python3 -I docs/research/t78-cost-model.py` (#78).
 
 ### 4.3 Agents — `src/shared/projectTypes.ts`, `electron/agentRun.ts`
 
