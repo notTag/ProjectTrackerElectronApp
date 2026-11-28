@@ -47,9 +47,16 @@ const lastLine = (text: string): string => text.trim().split('\n').pop() ?? ''
 export const RUN_STATUS_INSTRUCTION =
   'When you stop, end your reply with one final line: "RUN STATUS: done" if this task is complete, ' +
   'or "RUN STATUS: blocked — <reason>" if you could not finish it.'
-const BLOCKED_MARKER_PATTERN = /^\W*RUN STATUS:\s*blocked/i
+const BLOCKED_MARKER_PATTERN = /^[\W_]*RUN STATUS:[\W_]*blocked/i
+const CODE_FENCE_LINE = /^\s*`{3,}\s*$/
 
-const reportsBlocked = (stdout: string): boolean => BLOCKED_MARKER_PATTERN.test(lastLine(stdout))
+const lastLineOutsideFence = (stdout: string): string => {
+  const lines = stdout.trim().split('\n')
+  const contentLines = lines.filter((line) => !CODE_FENCE_LINE.test(line))
+  return contentLines.pop() ?? ''
+}
+
+const reportsBlocked = (stdout: string): boolean => BLOCKED_MARKER_PATTERN.test(lastLineOutsideFence(stdout))
 
 const withRunStatusInstruction = (prompt: string): string => `${prompt}\n\n${RUN_STATUS_INSTRUCTION}`
 

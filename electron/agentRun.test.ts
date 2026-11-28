@@ -64,6 +64,12 @@ describe('runAgentHeadlessWithRetry run status marker', () => {
     expect(result.blocked).toBe(true)
   })
 
+  it('reads a markdown-wrapped blocked marker as blocked', async () => {
+    expect(await run(['RUN STATUS: **blocked** — need gh'])).toMatchObject({ blocked: true })
+    expect(await run(['`RUN STATUS:` blocked — need gh'])).toMatchObject({ blocked: true })
+    expect(await run(['```', 'RUN STATUS: blocked — need gh', '```'])).toMatchObject({ blocked: true })
+  })
+
   it('never retries a blocked run, even when its reason mentions the network', async () => {
     const result = await run(['RUN STATUS: blocked — network sandbox denied'])
     expect(result).toMatchObject({ blocked: true, attempts: 1 })
