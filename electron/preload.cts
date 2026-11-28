@@ -29,7 +29,7 @@ const invokePlain = async <T,>(channel: IpcChannel, payload?: unknown): Promise<
 }
 
 contextBridge.exposeInMainWorld('projectTracker', {
-  findInPage: (text: string, forward = true, next = false) => ipcRenderer.invoke('page-find:search', text, forward, next),
+  findInPage: (text: string, forward = true, newSession = true) => ipcRenderer.invoke('page-find:search', text, forward, newSession),
   stopFindInPage: () => ipcRenderer.invoke('page-find:stop'),
   onFindResult: (callback: (result: PageFindResult) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, result: PageFindResult) => callback(result)

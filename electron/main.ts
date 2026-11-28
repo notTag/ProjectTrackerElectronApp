@@ -72,7 +72,7 @@ const createWindow = async () => {
   })
 
   mainWindow.webContents.on('found-in-page', (_event, result) => {
-    mainWindow?.webContents.send('page-find:result', { activeMatchOrdinal: result.activeMatchOrdinal, matches: result.matches })
+    mainWindow?.webContents.send('page-find:result', { activeMatchOrdinal: result.activeMatchOrdinal, matches: result.matches, finalUpdate: result.finalUpdate })
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -177,10 +177,10 @@ const configureApplicationMenu = () => {
 }
 
 const registerIpc = () => {
-  ipcMain.handle('page-find:search', (event, text: unknown, forward: unknown, next: unknown) => {
+  ipcMain.handle('page-find:search', (event, text: unknown, forward: unknown, newSession: unknown) => {
     assertTrustedSender(event)
     if (typeof text !== 'string' || !text) return
-    event.sender.findInPage(text, { forward: forward !== false, findNext: next === true })
+    event.sender.findInPage(text, { forward: forward !== false, findNext: newSession !== false })
   })
   ipcMain.handle('page-find:stop', (event) => {
     assertTrustedSender(event)

@@ -65,14 +65,14 @@ export const IPC_CHANNELS = [
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
-export type PageFindResult = { activeMatchOrdinal: number; matches: number }
+export type PageFindResult = { activeMatchOrdinal: number; matches: number; finalUpdate: boolean }
 
 // window.projectTracker. The preload and src/services/webBridge.ts both
 // `satisfies` this, so neither can drift from what the renderer calls.
 export interface ProjectTrackerBridge {
   // Electron-only: the web build leaves them out and the browser's own find and
   // theme handling take over.
-  findInPage?(text: string, forward?: boolean, next?: boolean): Promise<void>
+  findInPage?(text: string, forward?: boolean, newSession?: boolean): Promise<void>
   stopFindInPage?(): Promise<void>
   onFindResult?(callback: (result: PageFindResult) => void): () => void
   setNativeTheme?(type: 'light' | 'dark'): Promise<void>
