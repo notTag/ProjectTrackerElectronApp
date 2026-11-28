@@ -249,7 +249,7 @@ From left to right:
 | **+ Ticket** | Opens the New ticket modal (3.6) in the first lane, or No status if there are no lanes |
 | **⇣ Pull issues** / **Pulling…** | Imports the repo's open GitHub issues (3.10). Disabled when the project has no GitHub URL; the tooltip explains why |
 | **+ Swim lane** | Opens the New swim lane modal (3.7) |
-| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists **Metrics** (the Dashboard's panel (2.1) for this project only, inline), **Display** (3.5) and **UI Settings**; the selected one shows on the right. The selection lasts for the app session, never saved |
+| **⚙ Settings** | Toggles the floating Settings panel (see Settings panel below). A sidebar lists, under a **Board Settings** heading, **Display** (3.5) and **Metrics** (the Dashboard's panel (2.1) for this project only, inline), then under a **UI Settings** heading, **UI Settings**; the selected one shows on the right. Headings aren't clickable or focusable. The selection lasts for the app session, never saved |
 
 ### 3.2 Notices and errors
 
@@ -334,7 +334,7 @@ From left to right:
 
 #### Settings panel (⚙ Settings) — `src/components/UiSettingsPanel.vue`, `src/uiDemo.ts`
 
-- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Display (default, top) / Metrics / UI Settings; Metrics shows its table directly, no toggle button; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
+- **⚙ Settings** opens a floating panel, centered every time. Left sidebar (icon + label, selected one highlighted) picks Display (default, top) / Metrics under a Board Settings heading, then UI Settings under a UI Settings heading; Metrics shows its table directly, no toggle button; the content pane on the right scrolls. Resizable from the bottom-right corner (min 420×280, never past the window's right/bottom edge); size and position reset on reopen. No backdrop, so the board stays clickable while you tune. The panel stays on top of open modals (z-index 250, above modal backdrops at 200, below toasts at 300), so modal knobs can be tuned live while a modal is open. Open the panel first, then the modal you want to tune: the ⚙ Settings button sits under a full-screen modal's backdrop (graph view's side-panel ticket modal leaves it clickable).
 - Drag it by its title bar; it stays inside the window. ✕ or Escape closes it (Escape closes open modals/menus first). Position isn't remembered.
 - UI Settings section: each row is a slider plus a number box bound to the same value; typed values clamp to the range, non-numbers revert.
   - Radius 0–24px: swimlanes, ticket cards, modals, buttons.
@@ -489,13 +489,14 @@ One section, three captioned groups laid out in wrapping rows that span the moda
     - **Restore app default** button, only while the lane has a saved default: clears default and current, so the lane goes back to the app-generated prompt. No confirm.
     - Migration: opening a pre-#168 database copies each lane's non-blank `orchestrator_prompt_override` into `current_agent_orchestrator_prompt` once (schema version 7), inactive workflow snapshots included. The old column stays in the schema, unread and unwritten.
   - **Agent Orchestrator markdown file** (`swim_lanes.orchestrator_file_path`): additional prompt context. Nothing is ever written to it. At launch main reads it (default `<project>/SwimlaneAgentPrompt/<LANE>/AgentOrchestratorPrompt.md`, a typed path must end in `.md` and sit inside a scan directory) and, when it has text, appends it after the prompt under `Additional context (from <path>):`. It never replaces the box text. Missing, blank, unreadable or refused files are skipped and the launch runs without them (`lane:read-orchestrator-context`). Ticket agents never see it. The field hint and the Orchestrator prompt ⓘ tip both say so.
-  - **Orchestrator poll (minutes)** stepper pill (`−` · minutes · `+`) one row under the Orchestrator prompt (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
+  - **Poll (minutes)**, **Agent** and **Model** share one row under the markdown file field, in that order (#179). They wrap when the modal is narrow; a hidden one leaves the others on the row. Display Settings and the lane eye menu still name them "Orchestrator poll/agent/model".
+  - **Poll (minutes)** stepper pill (`−` · minutes · `+`) (#101). Center is typeable (whole minutes ≥ 1). `−` from 1 shows `∞` = never polls; `+` from `∞` turns polling back on at 1 (not the old interval). Defaults: 2 minutes, on.
     - Hovering the stepper shows "The Orchestrator agent will poll running agents every N minute(s)." or, at ∞, "The Orchestrator agent never polls: it waits for messages from the ticket agents."
     - The orchestrator's Loop runs `every <N> minutes (sleep <N*60>)`; at `∞` it gathers state once, then waits for ticket-agent messages (#114).
     - Whole minutes, 1 or more. Anything else isn't saved and the field shows the stored value again.
     - `∞`: Auto Run still opens the orchestrator tab; it never polls, sleeps or schedules wake-ups. `−` is disabled. A saved current or default prompt follows it through `{{poll_step}}`; one with a hardcoded sleep loop instead still loops.
     - Saved per lane (`swim_lanes.orchestrator_poll_minutes`, `orchestrator_poll_active`).
-  - **Orchestrator agent** select: "Same as ticket agent" (the default) or any agent. **Orchestrator model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
+  - **Agent** select: "Same as ticket agent" (the default) or any agent. **Model** select lists the effective orchestrator agent's models: empty means the ticket model when the agent is "Same as", otherwise the CLI default.
 - **Auto Run** section (also holds the two Auto Run hints):
   - **Agent** select, plus **Model** select (same picker as the ticket's). Full auto handoffs into the lane use both.
   - **Terminal** select: Warp, Terminal, Ghostty or iTerm2. With no saved choice, it uses the Open In app if that's a terminal, otherwise Warp.
