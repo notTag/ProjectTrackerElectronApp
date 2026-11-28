@@ -25,6 +25,7 @@ import {
   pullRequestStatusLabel,
   removeChecklistItem,
   removeExternalLink,
+  runningAgentRuns,
   setChecklistItemDone,
   ticketAgentPrompt,
   ticketShellCommand,
@@ -343,6 +344,8 @@ const ticketCanResume = (ticket: Ticket) => {
 
 const resumeTicketAgent = (ticket: Ticket) => void store.resumeTicketAgent(projectPath.value, ticket)
 
+const hasLiveAgentInLane = (ticket: Ticket) => runningAgentRuns([ticket]).length > 0
+
 const runTicketAgent = (ticket: Ticket) => {
   const agent = agentForTicket(ticket, agents.value)
   const prompt = ticketAgentPrompt(ticket, laneOfTicket(ticket), promptContext(ticket))
@@ -645,8 +648,12 @@ defineExpose({
         <pre class="agent-command">{{ ticketCommand(ticket) }}</pre>
         <div class="agent-actions">
           <button
-            :disabled="store.agentRunning[ticket.id]"
-            :title="`Run ${agentForTicket(ticket, agents).name} in the background`"
+            :disabled="store.agentRunning[ticket.id] || hasLiveAgentInLane(ticket)"
+            :title="
+              hasLiveAgentInLane(ticket)
+                ? 'An agent is already running on this ticket in this lane'
+                : `Run ${agentForTicket(ticket, agents).name} in the background`
+            "
             @click="runTicketAgent(ticket)"
           >
             {{ store.agentRunning[ticket.id] ? 'Running…' : '▶ Run' }}
