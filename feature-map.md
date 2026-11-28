@@ -560,6 +560,7 @@ One section, three captioned groups laid out in wrapping rows that span the moda
 - **+ Add swim lane** (sidebar, nothing selected) opens the same name prompt as the swimlane view's +; the new lane's node lands one column right of the rightmost node, and it is added as the last swimlane column.
 - **State markers**: the first lane has an entry arrow (start state). Lanes with no Next Lane, or that close tickets, have a double border (terminal). Any other lane that no lane points to is dimmed. Tickets can still be dragged there, so this is only a hint.
 - It uses the same visible lanes as the swimlane view. Hidden or filtered-out lanes are not drawn and can't be connected to.
+- **Resizable side panel**: drag the left edge of the details sidebar or the docked ticket panel (or focus it and press ←/→, 16px a step). Both share one width, clamped to 280px .. window width − 320px and re-clamped when the window shrinks. Kept until the app restarts. (`src/components/GraphPanelResizeHandle.vue`, `graphPanelWidth` in `src/modalWidth.ts`) (#177)
 - **Details sidebar**:
   - Nothing selected: the number of swim lanes, **+ Add swim lane**, a list of lanes with ticket counts that you can click to select, and a **Transitions** list ("In Development → Merge Request").
   - With a lane selected: a back button to the project, then its ticket count, its Next Lane ("None — tickets stop here" when unset, "(hidden)" when the target is hidden), its incoming lanes, then **Agent prompt** and **Orchestrator prompt** sections.

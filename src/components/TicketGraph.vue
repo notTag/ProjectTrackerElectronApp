@@ -10,6 +10,8 @@ import {
   type SwimLane,
   type Ticket
 } from '@/shared/projectTypes'
+import { graphPanelStyle } from '@/modalWidth'
+import GraphPanelResizeHandle from '@/components/GraphPanelResizeHandle.vue'
 
 type PromptField = 'agentPrompt' | 'orchestratorPrompt'
 type LaneGraphPatch = Partial<Pick<SwimLane, PromptField | 'nextLaneId' | 'graphPosition'>>
@@ -351,8 +353,9 @@ function selectLane(id: string | null) {
         </div>
       </div>
     </div>
-    <div v-if="ticketOpen" class="graph-ticket-space" aria-hidden="true" />
-    <aside v-if="!ticketOpen" class="graph-details" aria-label="Graph selection">
+    <div v-if="ticketOpen" class="graph-ticket-space" :style="graphPanelStyle" aria-hidden="true" />
+    <GraphPanelResizeHandle v-if="!ticketOpen" />
+    <aside v-if="!ticketOpen" class="graph-details" :style="graphPanelStyle" aria-label="Graph selection">
       <button v-if="selectedLane" class="secondary graph-back" @click="selectLane(null)">← {{ projectName }}</button>
       <p class="eyebrow">{{ selectedLane ? 'Swim lane' : 'Project' }}</p>
       <h2>{{ selectedLane?.name ?? projectName }}</h2>
